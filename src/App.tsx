@@ -40,8 +40,11 @@ function App() {
       localStorage.setItem(sessionKey, 'google-user')
       setSignedIn(true)
       setView('dashboard')
-    } catch {
-      setAuthMessage('Não foi possível concluir o login Google. Verifique o domínio autorizado no Firebase e tente novamente.')
+    } catch (error) {
+      const code = error instanceof Error && 'code' in error ? String((error as { code?: string }).code) : ''
+      setAuthMessage(code === 'auth/unauthorized-domain'
+        ? 'Este endereço ainda não está autorizado no Firebase. Adicione harmonious-belekoy-fd4647.netlify.app em Authentication > Settings > Authorized domains.'
+        : `Não foi possível concluir o login Google${code ? ` (${code})` : ''}. Confirme o provedor Google no Firebase e tente novamente.`)
     }
   }
   const demoSignIn = () => { localStorage.setItem(sessionKey, 'demo-user'); setSignedIn(true); setView('dashboard') }
