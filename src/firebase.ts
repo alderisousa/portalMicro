@@ -1,4 +1,5 @@
 import { getApps, initializeApp } from 'firebase/app'
+import { getAnalytics, isSupported } from 'firebase/analytics'
 import { getAuth, GoogleAuthProvider } from 'firebase/auth'
 
 const firebaseConfig = {
@@ -8,8 +9,13 @@ const firebaseConfig = {
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 }
 
 export const firebaseConfigured = Object.values(firebaseConfig).every(Boolean)
-export const auth = firebaseConfigured ? getAuth(getApps().length ? getApps()[0] : initializeApp(firebaseConfig)) : null
+export const firebaseApp = firebaseConfigured ? (getApps().length ? getApps()[0] : initializeApp(firebaseConfig)) : null
+export const auth = firebaseApp ? getAuth(firebaseApp) : null
+export const analytics = firebaseApp && typeof window !== 'undefined' && firebaseConfig.measurementId
+  ? isSupported().then((supported) => supported ? getAnalytics(firebaseApp) : null)
+  : Promise.resolve(null)
 export const googleProvider = new GoogleAuthProvider()

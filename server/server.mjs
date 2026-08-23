@@ -44,4 +44,5 @@ app.post('/api/clients/:slug/upload', upload.array('photos', 10), (request, resp
   response.json({ ok: true, files })
 })
 
-app.listen(4000, () => console.log('Portal Micro API: http://localhost:4000'))
+const port = process.env.PORT || 4000
+app.listen(port, () => console.log(`Portal Micro API: http://localhost:${port}`))
