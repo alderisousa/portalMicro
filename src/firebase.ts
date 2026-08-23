@@ -12,7 +12,16 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 }
 
-export const firebaseConfigured = Object.values(firebaseConfig).every(Boolean)
+const requiredFirebaseConfig = [
+  firebaseConfig.apiKey,
+  firebaseConfig.authDomain,
+  firebaseConfig.projectId,
+  firebaseConfig.storageBucket,
+  firebaseConfig.messagingSenderId,
+  firebaseConfig.appId,
+]
+
+export const firebaseConfigured = requiredFirebaseConfig.every(Boolean)
 export const firebaseApp = firebaseConfigured ? (getApps().length ? getApps()[0] : initializeApp(firebaseConfig)) : null
 export const auth = firebaseApp ? getAuth(firebaseApp) : null
 export const analytics = firebaseApp && typeof window !== 'undefined' && firebaseConfig.measurementId
