@@ -39,6 +39,19 @@ const requireAuth = async (request, response, next) => {
 }
 
 app.get('/api/health', (request, response) => response.json({ ok: true }))
+app.get('/api/clients', async (request, response) => {
+  try {
+    const entries = await fs.readdir(dataRoot, { withFileTypes: true })
+    const clients = await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+      try {
+        const content = await fs.readFile(path.join(dataRoot, entry.name, 'data.json'), 'utf8')
+        const business = JSON.parse(content)
+        return business.published ? { slug: entry.name, name: business.name || 'Negócio', area: business.area || '', logo: business.logo || '' } : null
+      } catch { return null }
+    }))
+    response.json(clients.filter(Boolean))
+  } catch { response.json([]) }
+})
 app.get('/api/account/business', requireAuth, async (request, response) => {
   try {
     const content = await fs.readFile(path.join(accountRoot, `${safeSlug(request.user.uid)}.json`), 'utf8')

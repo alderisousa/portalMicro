@@ -1,5 +1,5 @@
 import { ArrowLeft, ArrowRight, Check, Globe, ImagePlus, Menu, MessageCircle, Save, Sparkles, UserRound, X } from 'lucide-react'
-import { onAuthStateChanged, signInWithPopup } from 'firebase/auth'
+import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
 import { ChangeEvent, useEffect, useState } from 'react'
 import { auth, firebaseConfigured, googleProvider } from './firebase'
 
@@ -13,8 +13,9 @@ const requestedSite = new URLSearchParams(window.location.search).get('site')
 type Photo = { url: string; description: string }
 type Business = {
   area: string; name: string; logo: string; location: 'fisico' | 'online' | 'ambos' | ''
-  address: string; cep: string; street: string; neighborhood: string; city: string; number: string; complement: string; showAddress: boolean; story: string; photos: Photo[]; whatsapp: string; email: string; published: boolean; publicUrl: string; step: number
+  address: string; cep: string; street: string; neighborhood: string; city: string; number: string; complement: string; showAddress: boolean; story: string; photos: Photo[]; whatsapp: string; email: string; published: boolean; publicUrl: string; step: number; ownerId?: string
 }
+type ClientSummary = { slug: string; name: string; area: string; logo: string }
 const emptyBusiness: Business = { area: '', name: '', logo: '', location: '', address: '', cep: '', street: '', neighborhood: '', city: '', number: '', complement: '', showAddress: true, story: '', photos: [], whatsapp: '', email: '', published: false, publicUrl: '', step: 0 }
 const formatCep = (value: string) => { const digits = value.replace(/\D/g, '').slice(0, 8); return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits }
 const formatAddress = (business: Business) => [business.street, business.number && `Nº ${business.number}`, business.complement, business.neighborhood, business.city, business.cep && `CEP: ${formatCep(business.cep)}`].filter(Boolean).join(', ') || business.address
@@ -25,6 +26,7 @@ function App() {
   const [signedIn, setSignedIn] = useState(() => localStorage.getItem(sessionKey) === 'demo-user')
   const [accountName, setAccountName] = useState('empreendedor')
   const [authMessage, setAuthMessage] = useState('')
+  const [clients, setClients] = useState<ClientSummary[]>([])
   const [business, setBusiness] = useState<Business>(() => { const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || {}; return { ...emptyBusiness, ...saved, cep: saved.cep || '', email: saved.email || '' } })
   useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify(business))
@@ -39,11 +41,15 @@ function App() {
       .catch(() => undefined)
   }, [])
   useEffect(() => {
+    if (requestedSite) return
+    fetch(`${apiUrl}/api/clients`).then((response) => response.ok ? response.json() : []).then((data: ClientSummary[]) => setClients(data)).catch(() => undefined)
+  }, [])
+  useEffect(() => {
     if (!auth) return
     return onAuthStateChanged(auth, (user) => {
       setAccountName(user?.displayName || user?.email?.split('@')[0] || 'empreendedor')
       setSignedIn(Boolean(user))
-      if (user) {
+      if (user && !requestedSite) {
         user.getIdToken().then((token) => fetch(`${apiUrl}/api/account/business`, { headers: { Authorization: `Bearer ${token}` } }))
           .then((response) => response?.ok ? response.json() : null)
           .then((data: Business | null) => data && setBusiness((current) => ({ ...current, ...data, email: data.email || current.email || user.email || '' })))
@@ -53,7 +59,9 @@ function App() {
     })
   }, [])
   const update = (patch: Partial<Business>) => setBusiness((current) => { const next = { ...current, ...patch }; return { ...next, address: formatAddress(next) } })
-  const start = () => setView(signedIn ? 'dashboard' : 'login')
+  const pageOwner = Boolean(requestedSite && auth?.currentUser && business.ownerId === auth.currentUser.uid)
+  const start = () => setView(signedIn && (!requestedSite || pageOwner) ? 'dashboard' : 'login')
+  const logout = async () => { if (auth) await signOut(auth); localStorage.removeItem(sessionKey); setSignedIn(false); setView('home'); window.history.pushState({}, '', window.location.origin) }
   const signIn = async () => {
     setAuthMessage('')
     if (!firebaseConfigured || !auth) {
@@ -61,7 +69,12 @@ function App() {
       return
     }
     try {
-      await signInWithPopup(auth, googleProvider)
+      const credential = await signInWithPopup(auth, googleProvider)
+      if (requestedSite && business.ownerId && credential.user.uid !== business.ownerId) {
+        await signOut(auth)
+        setAuthMessage('Este login não tem acesso à página selecionada.')
+        return
+      }
       localStorage.setItem(sessionKey, 'google-user')
       setSignedIn(true)
       setView('dashboard')
@@ -97,7 +110,7 @@ function App() {
     event.target.value = ''
   }
   const brand = <button className="brand brand-button" onClick={() => setView('home')} aria-label={`${selectedCity} portalMicro - início`}><span className="brand-mark">M</span><span><b className="brand-city">{selectedCity}</b> portal<span>micro</span></span></button>
-  const header = <nav className="nav container">{brand}<button className="menu-button" onClick={() => setMenuOpen(!menuOpen)} aria-label="Abrir menu"><Menu size={22} /></button><div className={`nav-links ${menuOpen ? 'is-open' : ''}`}><a href="#como-funciona">Como funciona</a><button className="nav-login" onClick={start}><UserRound size={15} /> {signedIn ? 'Meu painel' : 'Entrar'}</button><button className="button button-small" onClick={start}>Criar minha página <ArrowRight size={16} /></button></div></nav>
+  const header = <><nav className={`nav container ${requestedSite ? 'public-nav' : ''}`}>{requestedSite ? <button className="brand brand-button" onClick={() => { window.history.pushState({}, '', window.location.origin); setView('home') }} aria-label="Voltar à página inicial"><span className="brand-mark">M</span><span>portal<span>micro</span></span></button> : brand}<button className="menu-button" onClick={() => setMenuOpen(!menuOpen)} aria-label="Abrir menu"><Menu size={22} /></button><div className={`nav-links ${menuOpen ? 'is-open' : ''}`}>{requestedSite ? <button className="button button-small" onClick={pageOwner ? logout : start}>{pageOwner ? 'Sair' : 'Login'} <UserRound size={15} /></button> : <><a href="#como-funciona">Como funciona</a>{signedIn && <button className="nav-login button button-small" onClick={() => setView('dashboard')}><UserRound size={15} /> Meu painel</button>}{signedIn && <button className="button button-small" onClick={logout}>Sair</button>}{!signedIn && <button className="nav-login button button-small" onClick={start}><UserRound size={15} /> Entrar</button>}<button className="button button-small" onClick={start}>Criar minha página <ArrowRight size={16} /></button></>}</div></nav>{!requestedSite && clients.length > 0 && <section className="client-list container"><div className="section-heading"><p className="eyebrow">Visite nossos clientes</p><h2>Negócios que já estão <em>online.</em></h2></div><div className="client-grid">{clients.map((client) => <a className="client-card" key={client.slug} href={`/?site=${client.slug}`}>{client.logo && <img src={client.logo} alt="" />}<span><strong>{client.name}</strong><small>{client.area}</small></span><ArrowRight size={18} /></a>)}</div></section>}</>
 
   if (view === 'login') return <main>{header}<section className="auth-shell"><div className="auth-card"><span className="brand-mark large">M</span><p className="eyebrow centered-eyebrow">Seu espaço em {selectedCity}</p><h1>Vamos começar<br /><em>pelo seu negócio.</em></h1><p>Entre com sua conta Google para salvar seu progresso e criar sua página institucional.</p><button className="google-button" onClick={signIn}><span className="google-g">G</span> Continuar com Google</button>{authMessage && <p className="auth-message">{authMessage}</p>}<button className="demo-button" onClick={demoSignIn}>Continuar em modo demonstração</button><small>O modo demonstração salva os dados apenas neste navegador. O login Google será ativado quando o Firebase for configurado.</small><button className="back-link" onClick={() => setView('home')}><ArrowLeft size={15} /> Voltar</button></div></section></main>
 
@@ -105,7 +118,7 @@ function App() {
 
   if (view === 'wizard') return <main>{header}<section className="wizard-shell container"><div className="wizard-intro"><button className="back-link" onClick={() => setView('dashboard')}><ArrowLeft size={15} /> Meu painel</button><p className="eyebrow"><Sparkles size={16} /> Assistente portalMicro</p><h1>Vamos dar voz ao<br /><em>seu negócio.</em></h1><p>Você pode voltar quando quiser. Nós salvamos cada resposta.</p></div><div className="wizard-card"><div className="stepper">{stepNames.map((step, index) => <button key={step} className={index === business.step ? 'active' : index < business.step ? 'done' : ''} onClick={() => index <= business.step && update({ step: index })}><span>{index < business.step ? <Check size={14} /> : index + 1}</span>{step}</button>)}</div><WizardQuestion business={business} update={update} addPhotos={addPhotos} /><div className="wizard-footer"><button className="button button-outline" onClick={back}><ArrowLeft size={16} /> Voltar</button>{business.step < 5 ? <button className="button" onClick={next}>Salvar e continuar <ArrowRight size={16} /></button> : <button className="button" onClick={() => setView('dashboard')}><Check size={16} /> Concluir cadastro</button>}</div></div></section></main>
 
-  if (view === 'preview') return <main>{header}<section className="public-preview container"><div className="preview-toolbar"><button className="back-link" onClick={() => setView('dashboard')}><ArrowLeft size={15} /> Meu painel</button><span className={`status ${business.published ? 'published' : ''}`}>{business.published ? 'Site público' : 'Prévia privada'}</span><button className="button button-small" onClick={publish}>{business.published ? 'Atualizar site' : 'Publicar site'} <Globe size={15} /></button></div><article className="business-site"><div className="business-cover">{business.logo && <img src={business.logo} alt="Logo" />}<span>{business.area || 'Seu negócio'}</span><h1>{business.name || 'Nome da sua empresa'}</h1>{business.showAddress !== false && <small>{business.address || 'Endereço não informado'}</small>}</div><div className="business-body"><StoryContent story={business.story} /><div className="business-photos">{business.photos.map((photo) => <figure key={photo.url}><img src={photo.url} alt={photo.description} /><figcaption>{photo.description}</figcaption></figure>)}</div>{business.whatsapp && <a className="button whatsapp-button" href={`https://wa.me/${business.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><MessageCircle size={18} /> Fale conosco no WhatsApp</a>}{business.publicUrl && <p className="share-note">Endereço público: <a href={business.publicUrl}>{business.publicUrl}</a></p>}</div></article></section></main>
+  if (view === 'preview') return <main>{header}<section className="public-preview container"><div className="preview-toolbar">{pageOwner && <button className="back-link" onClick={() => setView('dashboard')}><ArrowLeft size={15} /> Meu painel</button>}<span className={`status ${business.published ? 'published' : ''}`}>{business.published ? 'Site público' : 'Prévia privada'}</span>{pageOwner && <button className="button button-small" onClick={publish}>{business.published ? 'Atualizar site' : 'Publicar site'} <Globe size={15} /></button>}</div><article className="business-site"><div className="business-cover"><div className="business-identity">{business.logo && <img src={business.logo} alt="Logo" />}<h1>{business.name || 'Nome da sua empresa'}</h1></div><span>{business.area || 'Seu negócio'}</span>{business.showAddress !== false && <small>{formatAddress(business) || 'Endereço não informado'}</small>}</div><div className="business-body"><StoryContent story={business.story} /><div className="business-photos">{business.photos.map((photo) => <figure key={photo.url}><img src={photo.url} alt={photo.description} /><figcaption>{photo.description}</figcaption></figure>)}</div>{business.whatsapp && <a className="button whatsapp-button" href={`https://wa.me/${business.whatsapp.replace(/\D/g, '')}`} target="_blank" rel="noreferrer"><MessageCircle size={18} /> Fale conosco no WhatsApp</a>}{business.publicUrl && <p className="share-note">Endereço público: <a href={business.publicUrl}>{business.publicUrl}</a></p>}</div></article></section></main>
 
   return <main>{header}<section className="hero container" id="inicio"><div className="hero-copy"><p className="eyebrow"><Sparkles size={16} /> {selectedCity} · Feito para quem faz acontecer</p><h1>Seu negócio merece um lugar <em>à altura.</em></h1><p className="hero-text">Crie uma presença profissional em {selectedCity}, divulgue o que você faz e encontre novos clientes sem complicação.</p><div className="hero-actions"><button className="button" onClick={start}>Começar de graça <ArrowRight size={18} /></button><a className="text-link" href="#como-funciona">Ver como funciona <ArrowRight size={16} /></a></div><p className="trust-note">Sem cartão de crédito · Configuração em poucos minutos</p></div><div className="hero-art"><div className="art-label">Sua página, do seu jeito</div><div className="preview-window"><div className="preview-top"><span /><span /><span /><b>minhanegocio.com.br</b></div><div className="preview-content"><div className="preview-avatar">AF</div><div><strong>Ateliê Flor de Anis</strong><small>Doces artesanais · {selectedCity}</small></div><div className="preview-line" /><div className="preview-pills"><span>Encomendas</span><span>Cardápio</span><span>Contato</span></div></div></div><div className="floating-note"><span>●</span> Página publicada</div></div></section><section className="proof-band"><div className="container proof-content"><span>Para todos os tipos de negócio</span><strong>comércio</strong><strong>serviços</strong><strong>autônomos</strong><strong>criadores</strong></div></section><section className="section container" id="como-funciona"><div className="section-heading"><p className="eyebrow">Comece hoje</p><h2>Da ideia para a internet,<br /><em>sem perder tempo.</em></h2></div><div className="steps"><article><b>01</b><h3>Conte quem você é</h3><p>Cadastre os dados da sua empresa, seus serviços e os canais de contato.</p></article><article><b>02</b><h3>Escolha seu estilo</h3><p>Selecione um modelo e personalize a página com as cores da sua marca.</p></article><article><b>03</b><h3>Compartilhe por aí</h3><p>Publique seu endereço e envie para seus clientes pelo WhatsApp ou redes sociais.</p></article></div></section><section className="final-cta container"><div><p className="eyebrow">Seu próximo cliente está procurando</p><h2>Vamos colocar seu negócio<br /><em>no mapa?</em></h2></div><button className="button" onClick={start}>Criar minha página <ArrowRight size={18} /></button></section><footer className="footer container">{brand}<span>Presença digital para quem empreende.</span><span>© 2026 {selectedCity} portalMicro</span></footer></main>
 }
