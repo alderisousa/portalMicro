@@ -41,7 +41,7 @@ function App() {
   const [currentUserId, setCurrentUserId] = useState('')
   const [saveMessage, setSaveMessage] = useState('')
   const [clients, setClients] = useState<ClientSummary[]>([])
-  const [business, setBusiness] = useState<Business>(() => { const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || {}; return { ...emptyBusiness, ...saved, cep: saved.cep || '', email: saved.email || '' } })
+  const [business, setBusiness] = useState<Business>(() => { if (requestedSite) return emptyBusiness; const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || {}; return { ...emptyBusiness, ...saved, cep: saved.cep || '', email: saved.email || '' } })
   useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify(business))
     if (!auth?.currentUser || (requestedSite && business.ownerId !== auth.currentUser.uid)) return
