@@ -19,6 +19,13 @@ a { color: inherit; text-decoration: none; }
 .button-small { padding: 10px 15px; font-size: 13px; }
 .button-outline { color: var(--green); border: 1px solid #b7ccc0; background: transparent; }
 .button-outline:hover { color: white; background: var(--green); }
+.google-button, .back-link, .next-panel .text-link { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; padding: 14px 20px; border-radius: 5px; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.google-button { width: 100%; background: var(--coral); color: white; }
+.google-button:hover { background: #db634d; }
+.back-link { border: 1px solid #b7ccc0; background: transparent; color: var(--green); }
+.back-link:hover { background: var(--green); color: white; }
+.next-panel .text-link { width: 100%; border: 1px solid #b7ccc0; background: transparent; }
+.next-panel .text-link:hover { background: var(--green); color: white; }
 .menu-button { display: none; border: 0; background: transparent; color: var(--ink); }
 .public-nav .brand { color: var(--ink); }
 .client-list { padding: 72px 0; }
@@ -33,6 +40,9 @@ a { color: inherit; text-decoration: none; }
 .business-identity { display: flex; align-items: center; justify-content: center; gap: 18px; width: min(100%, 700px); margin: 0 auto 16px; }
 .business-identity h1 { max-width: none; font-size: clamp(34px, 5vw, 62px); text-align: center; }
 .business-identity img { width: 90px; height: 90px; max-width: 90px; max-height: 90px; border-radius: 8px; object-fit: contain; background: rgba(255,255,255,.7); }
+.business-cover { padding: 48px 32px 40px; text-align: center; }
+.business-cover > span { display: block; margin-top: 8px; color: var(--coral); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+.business-cover small { display: block; max-width: 760px; margin: 22px auto 0; padding-top: 18px; border-top: 1px solid rgba(45,107,85,.18); color: var(--muted); font-size: 14px; line-height: 1.55; }
 .hero { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 70px; min-height: 620px; padding: 60px 0 100px; }
 .eyebrow { display: flex; align-items: center; gap: 8px; margin: 0 0 18px; color: var(--coral); font-size: 12px; font-weight: 700; letter-spacing: 1.3px; text-transform: uppercase; }
 h1, h2 { margin: 0; color: var(--ink); font-weight: 600; letter-spacing: -1.7px; line-height: .99; }
