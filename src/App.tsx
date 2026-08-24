@@ -27,10 +27,9 @@ function App() {
   const [authMessage, setAuthMessage] = useState('')
   const [business, setBusiness] = useState<Business>(() => { const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || {}; return { ...emptyBusiness, ...saved, cep: saved.cep || '', email: saved.email || '' } })
   useEffect(() => {
-    if (requestedSite) return
     localStorage.setItem(storageKey, JSON.stringify(business))
-    const slug = business.name || business.area
-    if (slug) fetch(`${apiUrl}/api/clients/${encodeURIComponent(slug)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(business) }).catch(() => undefined)
+    if (requestedSite || !auth?.currentUser) return
+    auth.currentUser.getIdToken().then((token) => fetch(`${apiUrl}/api/account/business`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(business) })).catch(() => undefined)
   }, [business])
   useEffect(() => {
     if (!requestedSite) return
@@ -44,6 +43,12 @@ function App() {
     return onAuthStateChanged(auth, (user) => {
       setAccountName(user?.displayName || user?.email?.split('@')[0] || 'empreendedor')
       setSignedIn(Boolean(user))
+      if (user) {
+        user.getIdToken().then((token) => fetch(`${apiUrl}/api/account/business`, { headers: { Authorization: `Bearer ${token}` } }))
+          .then((response) => response?.ok ? response.json() : null)
+          .then((data: Business | null) => data && setBusiness((current) => ({ ...current, ...data, email: data.email || current.email || user.email || '' })))
+          .catch(() => undefined)
+      }
       if (user?.email) setBusiness((current) => ({ ...current, email: current.email || user.email || '' }))
     })
   }, [])

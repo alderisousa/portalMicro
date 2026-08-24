@@ -24,3 +24,7 @@ O frontend fica em `http://localhost:5173` e a API em `http://localhost:4000`.
 ## Configuração do Firebase
 
 Copie `.env.example` para `.env.local` e preencha as variáveis do projeto Firebase. O provedor Google também precisa ser ativado no Firebase Authentication.
+
+## Persistência online
+
+O cadastro autenticado é salvo no servidor por usuário Google. No Render, configure a variável `FIREBASE_SERVICE_ACCOUNT_JSON` com o conteúdo JSON de uma conta de serviço do Firebase. Sem essa variável, o modo demonstração continua local e a API não aceita gravações autenticadas.

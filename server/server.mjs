@@ -4,10 +4,17 @@ import multer from 'multer'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { getApps, initializeApp, cert } from 'firebase-admin/app'
+import { getAuth } from 'firebase-admin/auth'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
 const dataRoot = path.join(root, '..', 'data', 'clients')
+const accountRoot = path.join(root, '..', 'data', 'accounts')
 const app = express()
+
+const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_JSON ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON) : null
+const adminApp = serviceAccount ? (getApps().length ? getApps()[0] : initializeApp({ credential: cert(serviceAccount) })) : null
+const firebaseAuth = adminApp ? getAuth(adminApp) : null
 
 app.use(cors())
 app.use(express.json({ limit: '2mb' }))
@@ -24,8 +31,30 @@ const storage = multer.diskStorage({
   filename: (request, file, callback) => callback(null, `${Date.now()}-${safeSlug(path.parse(file.originalname).name)}${path.extname(file.originalname).toLowerCase()}`),
 })
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024, files: 10 } })
+const requireAuth = async (request, response, next) => {
+  if (!firebaseAuth) return response.status(503).json({ error: 'Autenticação do servidor não configurada' })
+  const token = request.headers.authorization?.startsWith('Bearer ') ? request.headers.authorization.slice(7) : ''
+  try { request.user = await firebaseAuth.verifyIdToken(token); next() } catch { response.status(401).json({ error: 'Token inválido ou ausente' }) }
+}
 
 app.get('/api/health', (request, response) => response.json({ ok: true }))
+app.get('/api/account/business', requireAuth, async (request, response) => {
+  try {
+    const content = await fs.readFile(path.join(accountRoot, `${safeSlug(request.user.uid)}.json`), 'utf8')
+    response.json(JSON.parse(content))
+  } catch { response.status(404).json({ error: 'Cadastro não encontrado' }) }
+})
+app.post('/api/account/business', requireAuth, async (request, response) => {
+  const business = request.body
+  const slug = safeSlug(business.name || business.area)
+  const folder = clientDirectory(slug)
+  await fs.mkdir(folder, { recursive: true })
+  await fs.mkdir(accountRoot, { recursive: true })
+  const saved = { ...business, slug, ownerId: request.user.uid, updatedAt: new Date().toISOString() }
+  await fs.writeFile(path.join(folder, 'data.json'), JSON.stringify(saved, null, 2))
+  await fs.writeFile(path.join(accountRoot, `${safeSlug(request.user.uid)}.json`), JSON.stringify(saved, null, 2))
+  response.json({ ok: true, slug })
+})
 app.get('/api/clients/:slug', async (request, response) => {
   try {
     const content = await fs.readFile(path.join(clientDirectory(request.params.slug), 'data.json'), 'utf8')
