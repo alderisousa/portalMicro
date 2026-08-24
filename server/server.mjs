@@ -66,9 +66,14 @@ app.post('/api/account/business', requireAuth, async (request, response) => {
   const folder = clientDirectory(slug)
   await fs.mkdir(folder, { recursive: true })
   await fs.mkdir(accountRoot, { recursive: true })
+  const accountPath = path.join(accountRoot, `${safeSlug(request.user.uid)}.json`)
+  try {
+    const previous = JSON.parse(await fs.readFile(accountPath, 'utf8'))
+    if (previous.slug && previous.slug !== slug) await fs.rm(clientDirectory(previous.slug), { recursive: true, force: true })
+  } catch { }
   const saved = { ...business, address: formatAddress(business), slug, ownerId: request.user.uid, updatedAt: new Date().toISOString() }
   await fs.writeFile(path.join(folder, 'data.json'), JSON.stringify(saved, null, 2))
-  await fs.writeFile(path.join(accountRoot, `${safeSlug(request.user.uid)}.json`), JSON.stringify(saved, null, 2))
+  await fs.writeFile(accountPath, JSON.stringify(saved, null, 2))
   response.json({ ok: true, slug })
 })
 app.get('/api/clients/:slug', async (request, response) => {
