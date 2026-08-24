@@ -38,12 +38,13 @@ function App() {
   const [signedIn, setSignedIn] = useState(() => localStorage.getItem(sessionKey) === 'demo-user')
   const [accountName, setAccountName] = useState('empreendedor')
   const [authMessage, setAuthMessage] = useState('')
+  const [saveMessage, setSaveMessage] = useState('')
   const [clients, setClients] = useState<ClientSummary[]>([])
   const [business, setBusiness] = useState<Business>(() => { const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || {}; return { ...emptyBusiness, ...saved, cep: saved.cep || '', email: saved.email || '' } })
   useEffect(() => {
     localStorage.setItem(storageKey, JSON.stringify(business))
     if (!auth?.currentUser || (requestedSite && business.ownerId !== auth.currentUser.uid)) return
-    auth.currentUser.getIdToken().then((token) => fetch(`${apiUrl}/api/account/business`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(business) })).catch(() => undefined)
+    auth.currentUser.getIdToken().then((token) => fetch(`${apiUrl}/api/account/business`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(business) })).then(async (response) => { if (!response.ok) throw new Error(await response.text()) }).then(() => setSaveMessage('Alterações salvas')).catch((error) => { console.error('Falha ao salvar cadastro:', error); setSaveMessage('Não foi possível salvar as alterações') })
   }, [business])
   useEffect(() => {
     if (!requestedSite) return
