@@ -8,6 +8,7 @@ const storageKey = 'portalmicro-business'
 const sessionKey = 'portalmicro-session'
 const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000'
 const stepNames = ['Atuação', 'Identidade', 'Local', 'Sua história', 'Fotos', 'Contato']
+const requestedSite = new URLSearchParams(window.location.search).get('site')
 
 type Photo = { url: string; description: string }
 type Business = {
@@ -19,17 +20,25 @@ const formatCep = (value: string) => { const digits = value.replace(/\D/g, '').s
 const formatAddress = (business: Business) => [business.street, business.number && `Nº ${business.number}`, business.complement, business.neighborhood, business.city, business.cep && `CEP: ${formatCep(business.cep)}`].filter(Boolean).join(', ') || business.address
 
 function App() {
-  const [view, setView] = useState<'home' | 'login' | 'dashboard' | 'wizard' | 'preview'>(() => new URLSearchParams(window.location.search).has('site') ? 'preview' : 'home')
+  const [view, setView] = useState<'home' | 'login' | 'dashboard' | 'wizard' | 'preview'>(() => requestedSite ? 'preview' : 'home')
   const [menuOpen, setMenuOpen] = useState(false)
   const [signedIn, setSignedIn] = useState(() => localStorage.getItem(sessionKey) === 'demo-user')
   const [accountName, setAccountName] = useState('empreendedor')
   const [authMessage, setAuthMessage] = useState('')
   const [business, setBusiness] = useState<Business>(() => { const saved = JSON.parse(localStorage.getItem(storageKey) || 'null') || {}; return { ...emptyBusiness, ...saved, cep: saved.cep || '', email: saved.email || '' } })
   useEffect(() => {
+    if (requestedSite) return
     localStorage.setItem(storageKey, JSON.stringify(business))
     const slug = business.name || business.area
     if (slug) fetch(`${apiUrl}/api/clients/${encodeURIComponent(slug)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(business) }).catch(() => undefined)
   }, [business])
+  useEffect(() => {
+    if (!requestedSite) return
+    fetch(`${apiUrl}/api/clients/${encodeURIComponent(requestedSite)}`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('Site não encontrado')))
+      .then((data: Partial<Business>) => setBusiness((current) => ({ ...current, ...data })))
+      .catch(() => undefined)
+  }, [])
   useEffect(() => {
     if (!auth) return
     return onAuthStateChanged(auth, (user) => {
