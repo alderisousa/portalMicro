@@ -8,8 +8,9 @@ import { getApps, initializeApp, cert } from 'firebase-admin/app'
 import { getAuth } from 'firebase-admin/auth'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
-const dataRoot = path.join(root, '..', 'data', 'clients')
-const accountRoot = path.join(root, '..', 'data', 'accounts')
+const persistentRoot = process.env.DATA_ROOT ? path.resolve(process.env.DATA_ROOT) : path.join(root, '..', 'data')
+const dataRoot = path.join(persistentRoot, 'clients')
+const accountRoot = path.join(persistentRoot, 'accounts')
 const app = express()
 
 const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_JSON ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON) : null

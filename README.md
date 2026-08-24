@@ -28,3 +28,5 @@ Copie `.env.example` para `.env.local` e preencha as variáveis do projeto Fireb
 ## Persistência online
 
 O cadastro autenticado é salvo no servidor por usuário Google. No Render, configure a variável `FIREBASE_SERVICE_ACCOUNT_JSON` com o conteúdo JSON de uma conta de serviço do Firebase. Sem essa variável, o modo demonstração continua local e a API não aceita gravações autenticadas.
+
+No Render, adicione um **Persistent Disk** montado em `/var/data` e configure a variável `DATA_ROOT=/var/data`. Esse disco é necessário para preservar cadastros e imagens durante novos deploys ou reinícios do serviço.
