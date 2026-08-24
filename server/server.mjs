@@ -22,6 +22,7 @@ app.use('/files', express.static(dataRoot))
 
 const safeSlug = (value = 'meu-negocio') => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'meu-negocio'
 const clientDirectory = (slug) => path.join(dataRoot, safeSlug(slug))
+const formatAddress = (business) => [business.street, business.number && `Nº ${business.number}`, business.complement, business.neighborhood, business.city, business.cep && `CEP: ${business.cep}`].filter(Boolean).join(', ') || business.address || ''
 const storage = multer.diskStorage({
   destination: async (request, file, callback) => {
     const folder = clientDirectory(request.params.slug)
@@ -41,7 +42,8 @@ app.get('/api/health', (request, response) => response.json({ ok: true }))
 app.get('/api/account/business', requireAuth, async (request, response) => {
   try {
     const content = await fs.readFile(path.join(accountRoot, `${safeSlug(request.user.uid)}.json`), 'utf8')
-    response.json(JSON.parse(content))
+    const business = JSON.parse(content)
+    response.json({ ...business, address: formatAddress(business) })
   } catch { response.status(404).json({ error: 'Cadastro não encontrado' }) }
 })
 app.post('/api/account/business', requireAuth, async (request, response) => {
@@ -50,7 +52,7 @@ app.post('/api/account/business', requireAuth, async (request, response) => {
   const folder = clientDirectory(slug)
   await fs.mkdir(folder, { recursive: true })
   await fs.mkdir(accountRoot, { recursive: true })
-  const saved = { ...business, slug, ownerId: request.user.uid, updatedAt: new Date().toISOString() }
+  const saved = { ...business, address: formatAddress(business), slug, ownerId: request.user.uid, updatedAt: new Date().toISOString() }
   await fs.writeFile(path.join(folder, 'data.json'), JSON.stringify(saved, null, 2))
   await fs.writeFile(path.join(accountRoot, `${safeSlug(request.user.uid)}.json`), JSON.stringify(saved, null, 2))
   response.json({ ok: true, slug })
@@ -58,7 +60,8 @@ app.post('/api/account/business', requireAuth, async (request, response) => {
 app.get('/api/clients/:slug', async (request, response) => {
   try {
     const content = await fs.readFile(path.join(clientDirectory(request.params.slug), 'data.json'), 'utf8')
-    response.json(JSON.parse(content))
+    const business = JSON.parse(content)
+    response.json({ ...business, address: formatAddress(business) })
   } catch { response.status(404).json({ error: 'Cliente não encontrado' }) }
 })
 app.post('/api/clients/:slug', async (request, response) => {
@@ -71,6 +74,10 @@ app.post('/api/clients/:slug', async (request, response) => {
 app.post('/api/clients/:slug/upload', upload.array('photos', 10), (request, response) => {
   const files = (request.files || []).map((file) => ({ name: file.filename, path: `/files/${safeSlug(request.params.slug)}/${file.filename}` }))
   response.json({ ok: true, files })
+})
+app.post('/api/clients/:slug/logo', upload.single('logo'), (request, response) => {
+  if (!request.file) return response.status(400).json({ error: 'Logo não enviada' })
+  response.json({ ok: true, path: `/files/${safeSlug(request.params.slug)}/${request.file.filename}` })
 })
 
 const port = process.env.PORT || 4000
