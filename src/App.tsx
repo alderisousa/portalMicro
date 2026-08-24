@@ -7,6 +7,9 @@ const selectedCity = 'Itanhém'
 const storageKey = 'portalmicro-business'
 const sessionKey = 'portalmicro-session'
 const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+const cloudinaryCloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'm2ut6tpd'
+const cloudinaryUploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'portalMicro'
+const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/image/upload`
 const stepNames = ['Atuação', 'Identidade', 'Local', 'Sua história', 'Fotos', 'Contato']
 const requestedSite = new URLSearchParams(window.location.search).get('site')
 
@@ -19,6 +22,15 @@ type ClientSummary = { slug: string; name: string; area: string; logo: string }
 const emptyBusiness: Business = { area: '', name: '', logo: '', location: '', address: '', cep: '', street: '', neighborhood: '', city: '', number: '', complement: '', showAddress: true, story: '', photos: [], whatsapp: '', email: '', published: false, publicUrl: '', step: 0 }
 const formatCep = (value: string) => { const digits = value.replace(/\D/g, '').slice(0, 8); return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits }
 const formatAddress = (business: Business) => [business.street, business.number && `Nº ${business.number}`, business.complement, business.neighborhood, business.city, business.cep && `CEP: ${formatCep(business.cep)}`].filter(Boolean).join(', ') || business.address
+const uploadToCloudinary = async (file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('upload_preset', cloudinaryUploadPreset)
+  const response = await fetch(cloudinaryUrl, { method: 'POST', body: formData })
+  if (!response.ok) throw new Error('Falha no upload para o Cloudinary')
+  const data = await response.json() as { secure_url: string }
+  return data.secure_url
+}
 
 function App() {
   const [view, setView] = useState<'home' | 'login' | 'dashboard' | 'wizard' | 'preview'>(() => requestedSite ? 'preview' : 'home')
@@ -97,13 +109,9 @@ function App() {
   const back = () => business.step === 0 ? setView('dashboard') : update({ step: business.step - 1 })
   const addPhotos = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []).slice(0, 10 - business.photos.length)
-    const formData = new FormData()
-    files.forEach((file) => formData.append('photos', file))
-    const slug = business.name || business.area || selectedCity
     try {
-      const result = await fetch(`${apiUrl}/api/clients/${encodeURIComponent(slug)}/upload`, { method: 'POST', body: formData })
-      const uploaded = await result.json() as { files: { path: string }[] }
-      update({ photos: [...business.photos, ...uploaded.files.map((file) => ({ url: `${apiUrl}${file.path}`, description: '' }))] })
+      const urls = await Promise.all(files.map(uploadToCloudinary))
+      update({ photos: [...business.photos, ...urls.map((url) => ({ url, description: '' }))] })
     } catch {
       update({ photos: [...business.photos, ...files.map((file) => ({ url: URL.createObjectURL(file), description: '' }))] })
     }
@@ -186,7 +194,7 @@ function WizardQuestion({ business, update, addPhotos }: QuestionProps) {
     finally { setCepLoading(false) }
   }
   if (business.step === 0) return <div className="question"><h2>Qual a área de atuação da sua empresa?</h2><p>Conte para encontrarmos as melhores palavras para apresentar seu trabalho.</p><input autoFocus value={business.area} onChange={(event) => update({ area: event.target.value })} placeholder="Ex.: confeitaria, eletricista, loja de roupas..." /></div>
-  if (business.step === 1) return <div className="question"><h2>Como as pessoas vão reconhecer sua marca?</h2><p>Adicione uma foto ou logo e o nome fantasia.</p><label className="upload-logo">{business.logo ? <img src={business.logo} alt="Logo da empresa" /> : <ImagePlus size={25} />}<span>{business.logo ? 'Logo adicionada' : 'Adicionar foto ou logo'}</span><input type="file" accept="image/*" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; const formData = new FormData(); formData.append('logo', file); try { const result = await fetch(`${apiUrl}/api/clients/${encodeURIComponent(business.name || business.area || selectedCity)}/logo`, { method: 'POST', body: formData }); const uploaded = await result.json() as { path: string }; if (!result.ok) throw new Error('Falha no upload'); update({ logo: `${apiUrl}${uploaded.path}` }) } catch { update({ logo: URL.createObjectURL(file) }) } event.target.value = '' }} /></label><input value={business.name} onChange={(event) => update({ name: event.target.value })} placeholder="Nome fantasia" /></div>
+  if (business.step === 1) return <div className="question"><h2>Como as pessoas vão reconhecer sua marca?</h2><p>Adicione uma foto ou logo e o nome fantasia.</p><label className="upload-logo">{business.logo ? <img src={business.logo} alt="Logo da empresa" /> : <ImagePlus size={25} />}<span>{business.logo ? 'Logo adicionada' : 'Adicionar foto ou logo'}</span><input type="file" accept="image/*" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; try { update({ logo: await uploadToCloudinary(file) }) } catch { update({ logo: URL.createObjectURL(file) }) } event.target.value = '' }} /></label><input value={business.name} onChange={(event) => update({ name: event.target.value })} placeholder="Nome fantasia" /></div>
   if (business.step === 2) return <div className="question"><h2>Onde você atende?</h2><p>Selecione uma ou as duas opções.</p><div className="choice-grid"><button className={business.location === 'fisico' || business.location === 'ambos' ? 'selected' : ''} onClick={() => toggleLocation('fisico')} aria-pressed={business.location === 'fisico' || business.location === 'ambos'}><strong>Local físico</strong><span>Recebo clientes em um endereço</span>{(business.location === 'fisico' || business.location === 'ambos') && <Check className="choice-check" size={18} />}</button><button className={business.location === 'online' || business.location === 'ambos' ? 'selected' : ''} onClick={() => toggleLocation('online')} aria-pressed={business.location === 'online' || business.location === 'ambos'}><strong>Atendimento online</strong><span>Atendo pela internet ou delivery</span>{(business.location === 'online' || business.location === 'ambos') && <Check className="choice-check" size={18} />}</button></div><div className="cep-row"><input value={formatCep(business.cep || '')} onChange={(event) => update({ cep: event.target.value.replace(/\D/g, '').slice(0, 8) })} placeholder="CEP" inputMode="numeric" pattern="[0-9]{5}-[0-9]{3}" maxLength={9} /><button className="button button-outline" type="button" onClick={lookupCep} disabled={cepLoading}>{cepLoading ? 'Buscando...' : 'Buscar endereço'}</button></div>{cepMessage && <p className="field-message">{cepMessage}</p>}<input className="address-part" value={business.street} onChange={(event) => update({ street: event.target.value })} placeholder="Logradouro" required /><input className="address-part" value={business.neighborhood} onChange={(event) => update({ neighborhood: event.target.value })} placeholder="Bairro" required /><input className="address-part" value={business.city} onChange={(event) => update({ city: event.target.value })} placeholder="Cidade - UF" required /><div className="address-details"><input className="address-part" value={business.number} onChange={(event) => update({ number: event.target.value })} placeholder="Número" required /><input className="address-part" value={business.complement} onChange={(event) => update({ complement: event.target.value })} placeholder="Complemento (opcional)" /></div><label className="address-visibility"><input type="checkbox" checked={business.showAddress !== false} onChange={(event) => update({ showAddress: event.target.checked })} /> <span>Apresentar este endereço na página</span></label></div>
   if (business.step === 3) return <div className="question"><h2>Conte um pouco de você e da sua empresa.</h2><p>Capriche: esse texto ajuda as pessoas a se interessarem pelo seu trabalho.</p><textarea autoFocus value={business.story} onChange={(event) => update({ story: event.target.value })} placeholder="Como começou? O que torna seu trabalho especial?" rows={5} /></div>
   if (business.step === 4) return <div className="question"><h2>Mostre o que você faz.</h2><p>Você pode adicionar até 10 fotos e descrever cada produto ou serviço.</p><label className="photo-drop"><ImagePlus size={25} /><strong>Adicionar fotos</strong><span>{business.photos.length}/10 fotos adicionadas</span><input type="file" accept="image/*" multiple onChange={addPhotos} /></label><div className="photo-list">{business.photos.map((photo, index) => <div className="photo-item" key={photo.url}><img src={photo.url} alt="" /><input value={photo.description} onChange={(event) => update({ photos: business.photos.map((item, itemIndex) => itemIndex === index ? { ...item, description: event.target.value } : item) })} placeholder="Descreva este produto ou serviço" /><button onClick={() => update({ photos: business.photos.filter((_, itemIndex) => itemIndex !== index) })} aria-label="Remover foto"><X size={16} /></button></div>)}</div></div>
