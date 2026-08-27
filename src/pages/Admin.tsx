@@ -1,8 +1,9 @@
-import { Eye, RefreshCw, ShieldCheck } from 'lucide-react'
+import { Eye, Pencil, RefreshCw, ShieldCheck } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import type { AdminBusinessSummary } from '../types/business'
+import { AdminBusinessEdit } from './AdminBusinessEdit'
 
 interface AdminProps {
   header: ReactNode
@@ -65,6 +66,7 @@ export function Admin({ header, onBack }: AdminProps) {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [processingBusinessId, setProcessingBusinessId] = useState('')
   const [actionFeedback, setActionFeedback] = useState<ActionFeedback | null>(null)
+  const [editingBusinessId, setEditingBusinessId] = useState('')
 
   const loadBusinesses = useCallback(async () => {
     setLoading(true)
@@ -161,6 +163,28 @@ export function Admin({ header, onBack }: AdminProps) {
     },
     { total: 0, published: 0, draft: 0, suspended: 0, paused: 0 }
   )
+
+  if (editingBusinessId) {
+    return (
+      <main>
+        {header}
+        <section className="admin-page container">
+          <AdminBusinessEdit
+            businessId={editingBusinessId}
+            onCancel={() => setEditingBusinessId('')}
+            onSaved={async () => {
+              await loadBusinesses()
+              setEditingBusinessId('')
+              setActionFeedback({
+                type: 'success',
+                message: 'Negócio atualizado com sucesso.',
+              })
+            }}
+          />
+        </section>
+      </main>
+    )
+  }
 
   return (
     <main>
@@ -259,6 +283,19 @@ export function Admin({ header, onBack }: AdminProps) {
                     </div>
 
                     <div className="admin-business-actions">
+                      <button
+                        className="button button-small button-outline"
+                        onClick={() => {
+                          setActionFeedback(null)
+                          setPendingAction(null)
+                          setEditingBusinessId(business.id)
+                        }}
+                        disabled={Boolean(processingBusinessId)}
+                      >
+                        <Pencil size={15} />
+                        Editar
+                      </button>
+
                       {isPublic && (
                         <a
                           className="button button-small button-outline"

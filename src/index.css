@@ -237,6 +237,19 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .admin-action-confirmation strong { color: var(--ink); font-size: 15px; }
 .admin-action-confirmation p { max-width: 650px; margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .admin-confirmation-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+.admin-edit-form { padding: 30px; border: 1px solid var(--line); border-radius: 12px; background: #fffaf2; }
+.admin-edit-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; margin-bottom: 34px; }
+.admin-edit-heading .hero-text { margin-bottom: 0; }
+.admin-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.admin-edit-grid label { display: grid; align-content: start; gap: 8px; color: var(--ink); font-size: 13px; font-weight: 700; }
+.admin-edit-grid label strong { color: var(--coral); }
+.admin-edit-grid input, .admin-edit-grid select, .admin-edit-grid textarea { width: 100%; min-height: 48px; padding: 12px 14px; border: 1px solid #b9c7bc; border-radius: 5px; background: #fff; color: var(--ink); font: inherit; font-size: 14px; outline: 0; }
+.admin-edit-grid textarea { min-height: 150px; line-height: 1.55; resize: vertical; }
+.admin-edit-grid input:focus, .admin-edit-grid select:focus, .admin-edit-grid textarea:focus { border-color: var(--coral); }
+.admin-edit-wide, .admin-edit-checkbox { grid-column: 1 / -1; }
+.admin-edit-grid .admin-edit-checkbox { display: flex; align-items: center; grid-template-columns: none; gap: 9px; font-weight: 500; cursor: pointer; }
+.admin-edit-checkbox input { width: 18px; min-height: 18px; height: 18px; padding: 0; accent-color: var(--green); }
+.admin-edit-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--line); }
 .story-content { color: var(--muted); font-size: 16px; line-height: 1.8; }
 .story-content h2 { margin: 38px 0 12px; color: var(--ink); font-size: 32px; letter-spacing: -.8px; }
 .story-content h3 { margin: 28px 0 10px; color: var(--green); font-size: 19px; letter-spacing: 0; }
@@ -254,6 +267,12 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 	.admin-business-actions .button { flex: 1; }
 	.admin-action-confirmation { align-items: stretch; flex-direction: column; }
 	.admin-confirmation-actions { flex-direction: column; }
+	.admin-edit-form { padding: 24px; }
+	.admin-edit-heading { align-items: flex-start; flex-direction: column; }
+	.admin-edit-grid { grid-template-columns: 1fr; }
+	.admin-edit-wide, .admin-edit-checkbox { grid-column: auto; }
+	.admin-edit-footer { flex-direction: column-reverse; }
+	.admin-edit-footer .button { width: 100%; }
 	.admin-business-details { grid-template-columns: 1fr; }
 	.client-list { padding: 55px 0; }
 	.client-grid { grid-template-columns: 1fr; }

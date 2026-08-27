@@ -51,3 +51,20 @@ export type AdminBusinessSummary = {
   created_at: string
   updated_at: string
 }
+
+export type AdminBusinessEdit = {
+  id: string
+  name: string | null
+  category: string | null
+  story: string | null
+  service_type: 'physical' | 'online' | 'both' | null
+  cep: string | null
+  street: string | null
+  number: string | null
+  complement: string | null
+  neighborhood: string | null
+  city: string | null
+  show_address: boolean | null
+  contact_email: string | null
+  whatsapp: string | null
+}
