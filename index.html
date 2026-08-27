@@ -3,8 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Presenca digital simples para o seu negocio." />
-    <title>Itanhém portalMicro | Seu negócio, online</title>
+    <meta name="description" content="Encontre negócios, profissionais e serviços da sua região ou crie uma página profissional para divulgar seu negócio no PortalMicro." />
+    <meta name="robots" content="index, follow" />
+    <meta name="theme-color" content="#18332e" />
+
+    <link rel="canonical" href="https://portal-micro.vercel.app/" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="PortalMicro | Negócios e serviços da sua região" />
+    <meta property="og:description" content="Encontre negócios, profissionais e serviços da sua região ou crie uma página profissional para divulgar seu negócio no PortalMicro." />
+    <meta property="og:url" content="https://portal-micro.vercel.app/" />
+    <meta property="og:site_name" content="PortalMicro" />
+    <meta property="og:locale" content="pt_BR" />
+
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="PortalMicro | Negócios e serviços da sua região" />
+    <meta name="twitter:description" content="Encontre negócios, profissionais e serviços da sua região ou crie uma página profissional para divulgar seu negócio no PortalMicro." />
+
+    <title>PortalMicro | Negócios e serviços da sua região</title>
+
+    <script>
+      if (new URLSearchParams(window.location.search).has('site')) {
+        document.querySelector('link[rel="canonical"]')?.remove()
+        document.querySelector('meta[name="robots"]')?.setAttribute('content', 'noindex, follow')
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
