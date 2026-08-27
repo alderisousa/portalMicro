@@ -54,6 +54,8 @@ export type AdminBusinessSummary = {
 
 export type AdminBusinessEdit = {
   id: string
+  owner_id: string
+  logo_path: string | null
   name: string | null
   category: string | null
   story: string | null

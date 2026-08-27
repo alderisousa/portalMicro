@@ -20,6 +20,7 @@ import type { Business, ClientSummary } from './types/business'
 import { formatAddress, formatCep } from './utils/formatters'
 import {
   BusinessMediaValidationError,
+  getBusinessMediaUrl,
   uploadBusinessMedia,
   validateBusinessImage,
 } from './utils/storage'
@@ -84,13 +85,7 @@ type BusinessItemRecord = {
   description: string | null
 }
 
-const publicMediaUrl = (path: string | null) => {
-  if (!path || path.startsWith('blob:')) return path ?? ''
-
-  return supabase.storage
-    .from('business-media')
-    .getPublicUrl(path).data.publicUrl
-}
+const publicMediaUrl = getBusinessMediaUrl
 
 const createSlug = (value: string) =>
   value

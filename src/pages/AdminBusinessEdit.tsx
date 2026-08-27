@@ -1,8 +1,16 @@
-import { ArrowLeft, Save, ShieldCheck } from 'lucide-react'
-import { FormEvent, useEffect, useState } from 'react'
+import { ArrowLeft, ImagePlus, Save, ShieldCheck, X } from 'lucide-react'
+import { ChangeEvent, FormEvent, useEffect, useState } from 'react'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { supabase } from '../lib/supabase'
+import { businessPhotoDescriptionLimit } from '../constants/portal'
 import type { AdminBusinessEdit as AdminBusinessEditData } from '../types/business'
 import { formatCep } from '../utils/formatters'
+import {
+  BusinessMediaValidationError,
+  getBusinessMediaUrl,
+  uploadBusinessMedia,
+  validateBusinessImage,
+} from '../utils/storage'
 
 interface AdminBusinessEditProps {
   businessId: string
@@ -12,6 +20,8 @@ interface AdminBusinessEditProps {
 
 const emptyForm: AdminBusinessEditData = {
   id: '',
+  owner_id: '',
+  logo_path: null,
   name: '',
   category: '',
   story: '',
@@ -27,6 +37,13 @@ const emptyForm: AdminBusinessEditData = {
   whatsapp: '',
 }
 
+type AdminPhoto = {
+  id: string
+  image_path: string
+  description: string
+  position: number
+}
+
 export function AdminBusinessEdit({
   businessId,
   onCancel,
@@ -36,26 +53,51 @@ export function AdminBusinessEdit({
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [photos, setPhotos] = useState<AdminPhoto[]>([])
+  const [mediaProcessing, setMediaProcessing] = useState('')
+  const [mediaMessage, setMediaMessage] = useState('')
+  const [photoPendingRemoval, setPhotoPendingRemoval] = useState<AdminPhoto | null>(null)
 
   useEffect(() => {
     let active = true
 
     const loadBusiness = async () => {
-      const { data, error } = await supabase
-        .from('businesses')
-        .select(
-          'id, name, category, story, service_type, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp'
-        )
-        .eq('id', businessId)
-        .single()
+      const [businessResult, itemsResult] = await Promise.all([
+        supabase
+          .from('businesses')
+          .select(
+            'id, owner_id, logo_path, name, category, story, service_type, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp'
+          )
+          .eq('id', businessId)
+          .single(),
+        supabase
+          .from('business_items')
+          .select('id, image_path, description, position')
+          .eq('business_id', businessId)
+          .order('position', { ascending: true }),
+      ])
 
       if (!active) return
 
-      if (error) {
-        console.error('Falha ao carregar negócio para edição:', error)
+      if (businessResult.error || itemsResult.error) {
+        console.error(
+          'Falha ao carregar negócio para edição:',
+          businessResult.error ?? itemsResult.error
+        )
         setMessage('Não foi possível carregar os dados do negócio.')
       } else {
-        setForm(data)
+        setForm(businessResult.data)
+        setPhotos(
+          (itemsResult.data ?? [])
+            .filter((item) => Boolean(item.image_path))
+            .slice(0, 5)
+            .map((item, index) => ({
+              id: item.id,
+              image_path: item.image_path ?? '',
+              description: item.description ?? '',
+              position: item.position ?? index,
+            }))
+        )
       }
 
       setLoading(false)
@@ -70,6 +112,227 @@ export function AdminBusinessEdit({
 
   const update = (patch: Partial<AdminBusinessEditData>) => {
     setForm((current) => ({ ...current, ...patch }))
+  }
+
+  const removeStorageObjectIfUnused = async (path: string) => {
+    const [businessReferences, itemReferences] = await Promise.all([
+      supabase.from('businesses').select('id').eq('logo_path', path).limit(1),
+      supabase.from('business_items').select('id').eq('image_path', path).limit(1),
+    ])
+
+    if (businessReferences.error || itemReferences.error) {
+      console.error(
+        'Falha ao verificar referências do arquivo:',
+        businessReferences.error ?? itemReferences.error
+      )
+      return false
+    }
+
+    if (businessReferences.data?.length || itemReferences.data?.length) {
+      return true
+    }
+
+    const { error } = await supabase.storage
+      .from('business-media')
+      .remove([path])
+
+    if (error) {
+      console.error('Falha ao remover arquivo sem referências:', error)
+      return false
+    }
+
+    return true
+  }
+
+  const replaceLogo = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || mediaProcessing) return
+
+    try {
+      validateBusinessImage(file)
+      setMediaProcessing('logo')
+      setMediaMessage('Enviando novo logo...')
+
+      const newPath = await uploadBusinessMedia(
+        file,
+        form.owner_id,
+        businessId,
+        'logo'
+      )
+      const previousPath = form.logo_path
+      const { error } = await supabase.rpc('update_business_admin_logo', {
+        target_business_id: businessId,
+        new_logo_path: newPath,
+      })
+
+      if (error) {
+        await supabase.storage.from('business-media').remove([newPath])
+        throw error
+      }
+
+      update({ logo_path: newPath })
+
+      if (previousPath && !(await removeStorageObjectIfUnused(previousPath))) {
+        setMediaMessage(
+          'Logo substituído. O arquivo anterior foi preservado por segurança.'
+        )
+      } else {
+        setMediaMessage('Logo substituído com sucesso.')
+      }
+    } catch (error) {
+      console.error('Falha ao substituir logo administrativamente:', error)
+      setMediaMessage(
+        error instanceof BusinessMediaValidationError
+          ? error.message
+          : 'Não foi possível substituir o logo.'
+      )
+    } finally {
+      setMediaProcessing('')
+    }
+  }
+
+  const addPhotos = async (event: ChangeEvent<HTMLInputElement>) => {
+    const availableSlots = Math.max(0, 5 - photos.length)
+    const files = Array.from(event.target.files ?? []).slice(0, availableSlots)
+    event.target.value = ''
+    if (!files.length || mediaProcessing) return
+
+    setMediaProcessing('gallery')
+    setMediaMessage('Enviando fotos...')
+    const addedPhotos: AdminPhoto[] = []
+
+    for (const file of files) {
+      let uploadedPath = ''
+
+      try {
+        validateBusinessImage(file)
+        uploadedPath = await uploadBusinessMedia(
+          file,
+          form.owner_id,
+          businessId,
+          'gallery'
+        )
+
+        const position = photos.length + addedPhotos.length
+        const { data, error } = await supabase
+          .from('business_items')
+          .insert({
+            business_id: businessId,
+            image_path: uploadedPath,
+            description: '',
+            position,
+          })
+          .select('id, image_path, description, position')
+          .single()
+
+        if (error) throw error
+
+        addedPhotos.push({
+          id: data.id,
+          image_path: data.image_path ?? uploadedPath,
+          description: data.description ?? '',
+          position: data.position ?? position,
+        })
+      } catch (error) {
+        if (uploadedPath) {
+          await supabase.storage.from('business-media').remove([uploadedPath])
+        }
+        console.error('Falha ao adicionar foto administrativamente:', error)
+        setMediaMessage(
+          error instanceof BusinessMediaValidationError
+            ? error.message
+            : 'Uma ou mais fotos não puderam ser adicionadas.'
+        )
+      }
+    }
+
+    if (addedPhotos.length) {
+      setPhotos((current) => [...current, ...addedPhotos].slice(0, 5))
+      if (addedPhotos.length === files.length) {
+        setMediaMessage('Fotos adicionadas com sucesso.')
+      }
+    }
+
+    setMediaProcessing('')
+  }
+
+  const savePhotoDescriptions = async () => {
+    if (mediaProcessing || !photos.length) return
+
+    setMediaProcessing('descriptions')
+    setMediaMessage('Salvando descrições...')
+
+    const results = await Promise.all(
+      photos.map((photo, position) =>
+        supabase
+          .from('business_items')
+          .update({ description: photo.description, position })
+          .eq('id', photo.id)
+          .eq('business_id', businessId)
+      )
+    )
+    const error = results.find((result) => result.error)?.error
+
+    if (error) {
+      console.error('Falha ao salvar descrições das fotos:', error)
+      setMediaMessage('Não foi possível salvar todas as descrições.')
+    } else {
+      setMediaMessage('Descrições salvas com sucesso.')
+    }
+
+    setMediaProcessing('')
+  }
+
+  const removePhoto = async (photo: AdminPhoto) => {
+    if (mediaProcessing) return
+
+    setMediaProcessing(photo.id)
+    setMediaMessage('Removendo foto...')
+
+    const { error } = await supabase
+      .from('business_items')
+      .delete()
+      .eq('id', photo.id)
+      .eq('business_id', businessId)
+
+    if (error) {
+      console.error('Falha ao remover foto da galeria:', error)
+      setMediaMessage('Não foi possível remover a foto.')
+      setMediaProcessing('')
+      return
+    }
+
+    const remainingPhotos = photos
+      .filter((item) => item.id !== photo.id)
+      .map((item, position) => ({ ...item, position }))
+    setPhotos(remainingPhotos)
+
+    const positionResults = await Promise.all(
+      remainingPhotos.map((item) =>
+        supabase
+          .from('business_items')
+          .update({ position: item.position })
+          .eq('id', item.id)
+          .eq('business_id', businessId)
+      )
+    )
+    const positionError = positionResults.find((result) => result.error)?.error
+    const storageRemoved = await removeStorageObjectIfUnused(photo.image_path)
+
+    if (positionError) {
+      console.error('Falha ao reorganizar posições da galeria:', positionError)
+    }
+
+    setMediaMessage(
+      positionError
+        ? 'Foto removida, mas não foi possível reorganizar toda a galeria.'
+        : storageRemoved
+          ? 'Foto removida com sucesso.'
+          : 'Foto removida da galeria; o arquivo foi preservado por segurança.'
+    )
+    setPhotoPendingRemoval(null)
+    setMediaProcessing('')
   }
 
   const validate = () => {
@@ -98,7 +361,7 @@ export function AdminBusinessEdit({
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (saving) return
+    if (saving || mediaProcessing) return
 
     const validationMessage = validate()
     if (validationMessage) {
@@ -167,7 +430,7 @@ export function AdminBusinessEdit({
           <h1>Editar negócio</h1>
           <p className="hero-text">Altere somente os dados cadastrais autorizados.</p>
         </div>
-        <button type="button" className="button button-outline" onClick={onCancel} disabled={saving}>
+        <button type="button" className="button button-outline" onClick={onCancel} disabled={saving || Boolean(mediaProcessing)}>
           <ArrowLeft size={16} /> Cancelar
         </button>
       </div>
@@ -190,9 +453,100 @@ export function AdminBusinessEdit({
         <label className="admin-edit-checkbox"><input type="checkbox" checked={form.show_address ?? true} onChange={(event) => update({ show_address: event.target.checked })} /> Exibir endereço na página pública</label>
       </div>
 
+      <section className="admin-media-section">
+        <div className="admin-media-heading">
+          <div>
+            <span className="panel-kicker">MÍDIA</span>
+            <h2>Logo e fotos</h2>
+          </div>
+          <span>{photos.length}/5 fotos</span>
+        </div>
+
+        {mediaMessage && (
+          <p className="admin-media-message" role="status">{mediaMessage}</p>
+        )}
+
+        <div className="admin-logo-editor">
+          <div className="admin-logo-preview">
+            {form.logo_path ? (
+              <img src={getBusinessMediaUrl(form.logo_path)} alt="Logo atual do negócio" />
+            ) : (
+              <ImagePlus size={28} />
+            )}
+          </div>
+          <div>
+            <strong>Logo do negócio</strong>
+            <p>JPEG, PNG ou WebP, com no máximo 5 MB.</p>
+            <label className={`button button-small button-outline${mediaProcessing ? ' is-disabled' : ''}`}>
+              {mediaProcessing === 'logo' ? 'Enviando...' : form.logo_path ? 'Substituir logo' : 'Adicionar logo'}
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={replaceLogo} disabled={Boolean(mediaProcessing) || saving} />
+            </label>
+          </div>
+        </div>
+
+        <div className="admin-gallery-heading">
+          <div>
+            <strong>Galeria</strong>
+            <p>Adicione até 5 fotos e edite suas descrições.</p>
+          </div>
+          <label className={`button button-small button-outline${photos.length >= 5 || mediaProcessing ? ' is-disabled' : ''}`}>
+            {mediaProcessing === 'gallery' ? 'Enviando...' : 'Adicionar fotos'}
+            <input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={addPhotos} disabled={photos.length >= 5 || Boolean(mediaProcessing) || saving} />
+          </label>
+        </div>
+
+        {photos.length === 0 ? (
+          <div className="admin-media-empty">Nenhuma foto na galeria.</div>
+        ) : (
+          <div className="admin-media-list">
+            {photos.map((photo, index) => (
+              <article className="admin-media-item" key={photo.id}>
+                <img src={getBusinessMediaUrl(photo.image_path)} alt="" />
+                <div>
+                  <textarea
+                    value={photo.description}
+                    onChange={(event) => setPhotos((current) => current.map((item) => item.id === photo.id ? { ...item, description: event.target.value } : item))}
+                    aria-label={`Descrição da foto ${index + 1}`}
+                    placeholder="Descreva este produto ou serviço"
+                    rows={3}
+                    maxLength={businessPhotoDescriptionLimit}
+                    disabled={Boolean(mediaProcessing) || saving}
+                  />
+                  <span className={`field-counter${photo.description.length > businessPhotoDescriptionLimit * .9 ? ' near-limit' : ''}`}>{photo.description.length} / {businessPhotoDescriptionLimit} caracteres</span>
+                </div>
+                <button type="button" onClick={() => setPhotoPendingRemoval(photo)} disabled={Boolean(mediaProcessing) || saving} aria-label={`Remover foto ${index + 1}`}>
+                  {mediaProcessing === photo.id ? '...' : <X size={16} />}
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
+
+        {photos.length > 0 && (
+          <div className="admin-media-actions">
+            <button type="button" className="button button-small button-outline" onClick={() => void savePhotoDescriptions()} disabled={Boolean(mediaProcessing) || saving}>
+              {mediaProcessing === 'descriptions' ? 'Salvando...' : 'Salvar descrições'}
+            </button>
+          </div>
+        )}
+      </section>
+
+      {photoPendingRemoval && (
+        <ConfirmDialog
+          title="Remover foto?"
+          description="Esta foto será removida da galeria deste negócio."
+          confirmLabel="Remover foto"
+          processingLabel="Removendo..."
+          processing={mediaProcessing === photoPendingRemoval.id}
+          previewUrl={getBusinessMediaUrl(photoPendingRemoval.image_path)}
+          onCancel={() => setPhotoPendingRemoval(null)}
+          onConfirm={() => void removePhoto(photoPendingRemoval)}
+        />
+      )}
+
       <div className="admin-edit-footer">
-        <button type="button" className="button button-outline" onClick={onCancel} disabled={saving}>Cancelar</button>
-        <button type="submit" className="button" disabled={saving}><Save size={16} /> {saving ? 'Salvando...' : 'Salvar alterações'}</button>
+        <button type="button" className="button button-outline" onClick={onCancel} disabled={saving || Boolean(mediaProcessing)}>Cancelar</button>
+        <button type="submit" className="button" disabled={saving || Boolean(mediaProcessing)}><Save size={16} /> {saving ? 'Salvando...' : 'Salvar alterações'}</button>
       </div>
     </form>
   )

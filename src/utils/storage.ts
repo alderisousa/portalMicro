@@ -10,6 +10,14 @@ const maximumImageSize = 5 * 1024 * 1024
 
 export class BusinessMediaValidationError extends Error {}
 
+export const getBusinessMediaUrl = (path: string | null) => {
+  if (!path || path.startsWith('blob:')) return path ?? ''
+
+  return supabase.storage
+    .from('business-media')
+    .getPublicUrl(path).data.publicUrl
+}
+
 export const validateBusinessImage = (file: File) => {
   if (!allowedImageTypes.has(file.type)) {
     throw new BusinessMediaValidationError(
