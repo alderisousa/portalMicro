@@ -4,20 +4,21 @@ import {
   Check,
   EyeOff,
   Globe,
-  MessageCircle,
   Save,
   Sparkles,
 } from 'lucide-react'
 import { ChangeEvent, useEffect, useRef, useState } from 'react'
 import { Brand } from './components/Brand'
+import { BusinessTemplateEssential } from './components/BusinessTemplateEssential'
+import { BusinessTemplateFeatured } from './components/BusinessTemplateFeatured'
 import { Header } from './components/Header'
-import { StoryContent } from './components/StoryContent'
 import { WizardQuestion } from './components/WizardQuestion'
 import { selectedCity, stepNames } from './constants/portal'
 import { supabase } from './lib/supabase'
 import { Admin } from './pages/Admin'
+import { BusinessTemplateSelection } from './pages/BusinessTemplateSelection'
 import { Home } from './pages/Home'
-import type { Business, ClientSummary } from './types/business'
+import type { Business, BusinessTemplateKey, ClientSummary } from './types/business'
 import { formatAddress, formatCep } from './utils/formatters'
 import {
   BusinessMediaValidationError,
@@ -29,7 +30,7 @@ import {
 const storageKey = 'portalmicro-business'
 const sessionKey = 'portalmicro-session'
 
-const requestedSite =
+const initialRequestedSite =
   new URLSearchParams(window.location.search).get('site')
 
 const emptyBusiness: Business = {
@@ -52,6 +53,7 @@ const emptyBusiness: Business = {
   published: false,
   isSuspended: false,
   isOwnerPaused: false,
+  templateKey: null,
   publicUrl: '',
   step: 0,
 }
@@ -78,6 +80,7 @@ type BusinessRecord = {
   wizard_step?: number | null
   is_suspended?: boolean | null
   is_owner_paused?: boolean | null
+  template_key?: string | null
 }
 
 type BusinessItemRecord = {
@@ -140,10 +143,14 @@ const mapBusinessRecord = (
     ownerId: data.owner_id,
     published: data.status === 'published',
     step: data.status === 'published'
-      ? 5
-      : Math.min(Math.max(data.wizard_step ?? 0, 0), 5),
+      ? 6
+      : Math.min(Math.max(data.wizard_step ?? 0, 0), 6),
     isSuspended: data.is_suspended ?? false,
     isOwnerPaused: data.is_owner_paused ?? false,
+    templateKey:
+      data.template_key === 'featured' || data.template_key === 'essential'
+        ? data.template_key
+        : null,
   }
 
   mappedBusiness.address = formatAddress({
@@ -155,9 +162,11 @@ const mapBusinessRecord = (
 }
 
 function App() {
+  const [requestedSite, setRequestedSite] = useState(initialRequestedSite)
+
   const [view, setView] = useState<
-    'home' | 'login' | 'dashboard' | 'wizard' | 'preview' | 'admin'
-  >(() => (requestedSite ? 'preview' : 'home'))
+    'home' | 'login' | 'dashboard' | 'wizard' | 'preview' | 'admin' | 'template'
+  >(() => (initialRequestedSite ? 'preview' : 'home'))
 
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -173,6 +182,8 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
   const [savingBusiness, setSavingBusiness] = useState(false)
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  const [templateMessage, setTemplateMessage] = useState('')
   const [showTakeOfflineConfirmation, setShowTakeOfflineConfirmation] = useState(false)
 
   const [clients, setClients] = useState<ClientSummary[]>([])
@@ -213,7 +224,7 @@ function App() {
     const { data: businesses, error } = await supabase
       .from('businesses')
       .select(
-        'id, owner_id, slug, name, category, story, service_type, logo_path, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp, status, wizard_step, is_suspended, is_owner_paused'
+        'id, owner_id, slug, name, category, story, service_type, logo_path, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp, status, wizard_step, is_suspended, is_owner_paused, template_key'
       )
       .eq('owner_id', userId)
       .order('created_at', { ascending: false })
@@ -802,7 +813,7 @@ function App() {
     if (requestedSite || view !== 'home') return
 
     void loadPublicClients()
-  }, [view])
+  }, [view, requestedSite])
 
   /*
    * ============================================================
@@ -818,7 +829,7 @@ function App() {
       const { data, error } = await supabase
         .from('businesses')
         .select(
-          'id, owner_id, name, slug, category, story, service_type, logo_path, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp, status'
+          'id, owner_id, name, slug, category, story, service_type, logo_path, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp, status, is_suspended, is_owner_paused, template_key'
         )
         .eq('slug', requestedSite)
         .eq('status', 'published')
@@ -880,6 +891,18 @@ function App() {
       business.ownerId === currentUserId
   )
 
+  const wizardProgress = business.published
+    ? 100
+    : Math.round(
+        (Math.min(business.step, business.templateKey ? 6 : 5) / 6) * 100
+      )
+
+  const leavePublicPreview = (targetView: 'dashboard' | 'template') => {
+    window.history.pushState({}, '', window.location.origin)
+    setRequestedSite(null)
+    setView(targetView)
+  }
+
   const start = () =>
     setView(
       signedIn &&
@@ -940,6 +963,7 @@ function App() {
     setAccountName('empreendedor')
     setAccountEmail('')
     setAccountAvatarUrl('')
+    setRequestedSite(null)
     setView('home')
 
     window.history.pushState(
@@ -965,7 +989,7 @@ function App() {
   }
 
   const next = async () => {
-    const nextStep = Math.min(business.step + 1, 5)
+    const nextStep = Math.min(business.step + 1, 6)
 
     if (business.step === 3 && business.story.trim().length < 30) {
       setSaveMessage(
@@ -1052,6 +1076,14 @@ function App() {
   }
 
   const publish = async () => {
+    if (!business.templateKey) {
+      setSaveMessage('Escolha e confirme um modelo antes de publicar.')
+      setTemplateMessage('Escolha e confirme um modelo antes de publicar.')
+      update({ step: 6 })
+      setView('wizard')
+      return
+    }
+
     if (!currentUserId) {
       if (localStorage.getItem(sessionKey) !== 'demo-user') {
         setSaveMessage('Entre na sua conta para publicar o negócio.')
@@ -1135,7 +1167,7 @@ function App() {
         isOwnerPaused: data.is_owner_paused,
         publicUrl,
       }))
-      furthestWizardStep.current = 5
+      furthestWizardStep.current = 6
       await loadPublicClients()
       setSaveMessage('Negócio publicado com sucesso.')
       window.history.pushState({}, '', publicUrl)
@@ -1178,6 +1210,46 @@ function App() {
 
     await loadPublicClients()
     setSaveMessage('Site público atualizado com sucesso.')
+  }
+
+  const saveTemplate = async (templateKey: BusinessTemplateKey) => {
+    if (savingTemplate) return
+
+    setTemplateMessage('')
+
+    if (localStorage.getItem(sessionKey) === 'demo-user') {
+      update({ templateKey })
+      setTemplateMessage('Modelo alterado no modo demonstração.')
+      return
+    }
+
+    if (!currentUserId || !business.id) {
+      setTemplateMessage('Conclua o cadastro do negócio antes de escolher um modelo.')
+      return
+    }
+
+    setSavingTemplate(true)
+    setTemplateMessage('Salvando modelo...')
+
+    try {
+      const { data, error } = await supabase
+        .from('businesses')
+        .update({ template_key: templateKey })
+        .eq('id', business.id)
+        .eq('owner_id', currentUserId)
+        .select('template_key')
+        .single()
+
+      if (error) throw error
+
+      update({ templateKey: data.template_key === 'featured' ? 'featured' : 'essential' })
+      setTemplateMessage('Modelo da página atualizado com sucesso.')
+    } catch (error) {
+      console.error('Falha ao salvar modelo da página:', error)
+      setTemplateMessage('Não foi possível salvar o modelo. Tente novamente.')
+    } finally {
+      setSavingTemplate(false)
+    }
   }
 
   const setSiteOwnerPaused = async (isOwnerPaused: boolean) => {
@@ -1471,7 +1543,7 @@ function App() {
             </button>
           </div>
 
-          <div className={`dashboard-grid${business.step === 5 && business.published ? ' is-complete' : ''}`}>
+          <div className={`dashboard-grid${business.published ? ' is-complete' : ''}`}>
             <article className="status-panel">
               <div className="panel-heading">
                 <div className="panel-title-block">
@@ -1524,13 +1596,7 @@ function App() {
                 </span>
 
                 <strong>
-                  {business.step === 5
-                    ? '100'
-                    : Math.round(
-                        (business.step /
-                          6) *
-                          100
-                      )}
+                  {wizardProgress}
                   %
                 </strong>
               </div>
@@ -1538,13 +1604,7 @@ function App() {
               <div className="progress">
                 <span
                   style={{
-                    width: `${
-                      business.step === 5
-                        ? 100
-                        : (business.step /
-                            6) *
-                          100
-                    }%`,
+                    width: `${wizardProgress}%`,
                   }}
                 />
               </div>
@@ -1611,21 +1671,45 @@ function App() {
                   </a>
                 </div>
               )}
+
+              <div className="dashboard-template-summary">
+                <div>
+                  <span>Modelo da página</span>
+                  <strong>{business.templateKey === 'featured' ? 'Destaque' : business.templateKey === 'essential' ? 'Essencial' : 'Não escolhido'}</strong>
+                </div>
+                <button
+                  className="template-dashboard-link"
+                  onClick={() => {
+                    setTemplateMessage('')
+                    setView(business.published ? 'template' : 'wizard')
+                    if (!business.published && business.step >= 5) update({ step: 6 })
+                  }}
+                >
+                  {business.step < 5 && !business.published
+                    ? 'Concluir cadastro'
+                    : business.templateKey
+                      ? 'Alterar modelo'
+                      : 'Escolher modelo'}
+                  <ArrowRight size={16} />
+                </button>
+              </div>
             </article>
 
-            {!(business.step === 5 && business.published) && <aside className="next-panel">
+            {!business.published && <aside className="next-panel">
               <span className="step-number">
                 {String(
                   Math.min(
                     business.step + 1,
-                    6
+                    7
                   )
                 ).padStart(2, '0')}
               </span>
 
               <h3>
-                {business.step === 5
-                  ? 'Tudo pronto para publicar'
+                {business.step === 6
+                  ? business.templateKey
+                    ? 'Tudo pronto para publicar'
+                    : 'Escolha um modelo para publicar'
                   : `Próximo: ${
                       stepNames[
                         business.step
@@ -1668,6 +1752,33 @@ function App() {
           )}
         </section>
       </main>
+    )
+  }
+
+  if (view === 'template' && signedIn) {
+    return (
+      <BusinessTemplateSelection
+        header={
+          <Header
+            requestedSite={requestedSite}
+            signedIn={signedIn}
+            isAdmin={isAdmin}
+            accountName={accountName}
+            accountEmail={accountEmail}
+            accountAvatarUrl={accountAvatarUrl}
+            menuOpen={menuOpen}
+            setMenuOpen={setMenuOpen}
+            start={start}
+            logout={logout}
+            setView={setView}
+          />
+        }
+        business={business}
+        saving={savingTemplate}
+        message={templateMessage}
+        onBack={() => setView('dashboard')}
+        onSave={(templateKey) => void saveTemplate(templateKey)}
+      />
     )
   }
 
@@ -1767,6 +1878,9 @@ function App() {
               addPhotos={addPhotos}
               uploadLogo={uploadLogo}
               mediaUrl={publicMediaUrl}
+              savingTemplate={savingTemplate}
+              templateMessage={templateMessage}
+              onSaveTemplate={(templateKey) => void saveTemplate(templateKey)}
               validationMessage={
                 business.step === 2 &&
                 saveMessage === 'Selecione como você atende seus clientes.'
@@ -1804,7 +1918,7 @@ function App() {
                 Voltar
               </button>
 
-              {business.step < 5 ? (
+              {business.step < 6 ? (
                 <button
                   className="button"
                   onClick={next}
@@ -1819,12 +1933,14 @@ function App() {
                 <button
                   className="button"
                   onClick={publish}
-                  disabled={savingBusiness}
+                  disabled={savingBusiness || savingTemplate || !business.templateKey}
                 >
                   <Check size={16} />
                   {savingBusiness
                     ? 'Salvando...'
-                    : 'Concluir cadastro'}
+                    : business.templateKey
+                      ? 'Publicar site'
+                      : 'Escolha um modelo'}
                 </button>
               )}
             </div>
@@ -1857,154 +1973,72 @@ function App() {
         />
 
         <section className="public-preview container">
-          <div className="preview-toolbar">
-            {pageOwner && (
-              <button
-                className="back-link"
-                onClick={() =>
-                  setView('dashboard')
-                }
-              >
-                <ArrowLeft size={15} />
-                Meu painel
-              </button>
-            )}
-
-            <span
-              className={`status ${
-                business.published && !business.isSuspended && !business.isOwnerPaused
-                  ? 'published'
-                  : ''
-              }`}
-            >
-              {!business.published
-                ? 'Prévia privada'
-                : business.isSuspended
-                  ? 'Suspenso'
-                  : business.isOwnerPaused
-                    ? 'Fora do ar'
-                    : 'Site público'}
-            </span>
-
-            {pageOwner && (
-              <button
-                className="button button-small"
-                onClick={
+          {pageOwner && (
+            <aside className="owner-preview-context" aria-label="Controles da pré-visualização">
+              <div className="owner-preview-heading">
+                <div>
+                  <span>Área do proprietário</span>
+                  <strong>Pré-visualização do seu site</strong>
+                </div>
+                <span className={`preview-context-status ${
                   !business.published
-                    ? publish
+                    ? 'private'
                     : business.isSuspended
-                      ? () => setView('wizard')
+                      ? 'suspended'
                       : business.isOwnerPaused
-                        ? () => setSiteOwnerPaused(false)
-                        : updatePublicSite
-                }
-                disabled={savingBusiness}
-              >
-                {!business.published
-                  ? 'Publicar site'
-                  : business.isSuspended
-                    ? 'Editar informações'
-                    : business.isOwnerPaused
-                      ? 'Publicar novamente'
-                      : 'Atualizar site público'}{' '}
-                <Globe size={15} />
-              </button>
-            )}
-          </div>
+                        ? 'paused'
+                        : 'published'
+                }`}>
+                  {!business.published
+                    ? 'Prévia privada'
+                    : business.isSuspended
+                      ? 'Suspenso'
+                      : business.isOwnerPaused
+                        ? 'Fora do ar'
+                        : 'Publicado'}
+                </span>
+              </div>
+
+              <div className="owner-preview-actions">
+                <button className="button button-small button-outline" onClick={() => leavePublicPreview('dashboard')}>
+                  <ArrowLeft size={15} /> Meu painel
+                </button>
+                <button className="button button-small button-outline" onClick={() => leavePublicPreview('template')}>
+                  Alterar modelo
+                </button>
+                <button
+                  className="button button-small"
+                  onClick={
+                    !business.published
+                      ? publish
+                      : business.isSuspended
+                        ? () => setView('wizard')
+                        : business.isOwnerPaused
+                          ? () => setSiteOwnerPaused(false)
+                          : updatePublicSite
+                  }
+                  disabled={savingBusiness}
+                >
+                  {!business.published
+                    ? 'Publicar site'
+                    : business.isSuspended
+                      ? 'Editar informações'
+                      : business.isOwnerPaused
+                        ? 'Publicar novamente'
+                        : 'Atualizar site público'}
+                  <Globe size={15} />
+                </button>
+              </div>
+            </aside>
+          )}
 
           {saveMessage && (
             <p className="field-message">{saveMessage}</p>
           )}
 
-          <article className="business-site">
-            <div className="business-cover">
-              <div className="business-identity">
-                {business.logo && (
-                  <img
-                    src={publicMediaUrl(business.logo)}
-                    alt="Logo"
-                  />
-                )}
-
-                <h1>
-                  {business.name ||
-                    'Nome da sua empresa'}
-                </h1>
-              </div>
-
-              <span>
-                {business.area ||
-                  'Seu negócio'}
-              </span>
-
-              {business.showAddress !==
-                false && (
-                <small>
-                  {formatAddress(
-                    business
-                  ) ||
-                    'Endereço não informado'}
-                </small>
-              )}
-            </div>
-
-            <div className="business-body">
-              <StoryContent
-                story={business.story}
-              />
-
-              <div className="business-photos">
-                {business.photos.map(
-                  (photo) => (
-                    <figure
-                      key={photo.url}
-                    >
-                      <img
-                        src={publicMediaUrl(photo.url)}
-                        alt={
-                          photo.description
-                        }
-                      />
-
-                      <figcaption>
-                        {
-                          photo.description
-                        }
-                      </figcaption>
-                    </figure>
-                  )
-                )}
-              </div>
-
-              {business.whatsapp && (
-                <a
-                  className="button whatsapp-button"
-                  href={`https://wa.me/${business.whatsapp.replace(
-                    /\D/g,
-                    ''
-                  )}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <MessageCircle size={18} />
-                  Fale conosco no WhatsApp
-                </a>
-              )}
-
-              {business.publicUrl && (
-                <p className="share-note">
-                  Endereço público:{' '}
-                  <a
-                    href={
-                      business.publicUrl
-                    }
-                  >
-                    {business.publicUrl}
-                  </a>
-                </p>
-              )}
-            </div>
-          </article>
+          {business.templateKey === 'featured'
+            ? <BusinessTemplateFeatured business={business} />
+            : <BusinessTemplateEssential business={business} />}
         </section>
       </main>
     )

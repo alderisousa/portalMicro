@@ -9,4 +9,5 @@ export const stepNames = [
   'Sua história',
   'Fotos',
   'Contato',
+  'Modelo da página',
 ]

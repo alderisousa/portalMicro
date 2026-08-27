@@ -4,6 +4,8 @@ export type Photo = {
   description: string
 }
 
+export type BusinessTemplateKey = 'essential' | 'featured'
+
 export type Business = {
   id?: string
   slug?: string
@@ -26,6 +28,7 @@ export type Business = {
   published: boolean
   isSuspended?: boolean
   isOwnerPaused?: boolean
+  templateKey: BusinessTemplateKey | null
   publicUrl: string
   step: number
   ownerId?: string
