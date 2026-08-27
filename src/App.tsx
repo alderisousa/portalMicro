@@ -73,6 +73,7 @@ type BusinessRecord = {
   contact_email: string | null
   whatsapp: string | null
   status: string
+  wizard_step?: number | null
   is_suspended?: boolean | null
   is_owner_paused?: boolean | null
 }
@@ -142,6 +143,9 @@ const mapBusinessRecord = (
     email: data.contact_email ?? '',
     ownerId: data.owner_id,
     published: data.status === 'published',
+    step: data.status === 'published'
+      ? 5
+      : Math.min(Math.max(data.wizard_step ?? 0, 0), 5),
     isSuspended: data.is_suspended ?? false,
     isOwnerPaused: data.is_owner_paused ?? false,
   }
@@ -197,6 +201,7 @@ function App() {
 
   const loadedOwnedBusinessUserId = useRef('')
   const authenticatedUserId = useRef('')
+  const furthestWizardStep = useRef(business.step)
   const savingBusinessRef = useRef(false)
   const pendingLogoFile = useRef<File | null>(null)
 
@@ -210,7 +215,7 @@ function App() {
     const { data: businesses, error } = await supabase
       .from('businesses')
       .select(
-        'id, owner_id, slug, name, category, story, service_type, logo_path, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp, status, is_suspended, is_owner_paused'
+        'id, owner_id, slug, name, category, story, service_type, logo_path, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp, status, wizard_step, is_suspended, is_owner_paused'
       )
       .eq('owner_id', userId)
       .order('created_at', { ascending: false })
@@ -246,10 +251,11 @@ function App() {
       items ?? []
     )
 
+    furthestWizardStep.current = mappedBusiness.step ?? 0
+
     setBusiness((current) => ({
       ...current,
       ...mappedBusiness,
-      step: current.step,
       publicUrl: current.publicUrl,
     }))
   }
@@ -270,7 +276,7 @@ function App() {
     setIsAdmin(!error && data?.role === 'admin')
   }
 
-  const saveBusiness = async () => {
+  const saveBusiness = async (wizardStep = furthestWizardStep.current) => {
     if (!currentUserId) return 'local-only' as const
 
     if (business.story.length > 1000) {
@@ -342,6 +348,7 @@ function App() {
       show_address: business.showAddress,
       contact_email: business.email || null,
       whatsapp: business.whatsapp || null,
+      wizard_step: wizardStep,
     }
 
     const operation = business.id ? 'UPDATE' : 'INSERT'
@@ -944,6 +951,8 @@ function App() {
   }
 
   const next = async () => {
+    const nextStep = Math.min(business.step + 1, 5)
+
     if (business.step === 3 && business.story.trim().length < 30) {
       setSaveMessage(
         'Conte um pouco mais sobre seu negócio. Use pelo menos 30 caracteres.'
@@ -964,6 +973,10 @@ function App() {
     }
 
     if (currentUserId) {
+      const nextFurthestStep = Math.max(
+        furthestWizardStep.current,
+        nextStep
+      )
       const saveResult = await saveBusiness()
 
       if (saveResult === 'error') return
@@ -992,15 +1005,33 @@ function App() {
       ) {
         return
       }
+
+      if (
+        typeof saveResult === 'object' &&
+        nextFurthestStep > furthestWizardStep.current
+      ) {
+        const { error } = await supabase
+          .from('businesses')
+          .update({ wizard_step: nextFurthestStep })
+          .eq('id', saveResult.businessId)
+          .eq('owner_id', currentUserId)
+
+        if (error) {
+          console.error('Falha ao salvar o progresso do Wizard:', error)
+          setSaveMessage(
+            'Os dados foram salvos, mas não foi possível atualizar o progresso.'
+          )
+          return
+        }
+      }
+
+      furthestWizardStep.current = nextFurthestStep
     }
 
     setSaveMessage('')
 
     update({
-      step: Math.min(
-        business.step + 1,
-        5
-      ),
+      step: nextStep,
     })
 
     setView('wizard')
@@ -1090,6 +1121,7 @@ function App() {
         isOwnerPaused: data.is_owner_paused,
         publicUrl,
       }))
+      furthestWizardStep.current = 5
       await loadPublicClients()
       setSaveMessage('Negócio publicado com sucesso.')
       window.history.pushState({}, '', publicUrl)

@@ -187,15 +187,17 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .photo-drop.is-disabled input { cursor: not-allowed; }
 .photo-drop span { color: var(--muted); font-size: 12px; }
 .photo-list { display: grid; gap: 12px; margin-top: 18px; }
-.photo-item { display: grid; grid-template-columns: 96px minmax(0, 1fr) 34px; align-items: center; gap: 12px; padding: 10px; border: 1px solid var(--line); background: #fff; }
+.photo-item { display: grid; grid-template-columns: 96px minmax(0, 1fr) 34px; align-items: start; gap: 12px; padding: 10px; border: 1px solid var(--line); background: #fff; }
 .photo-item img { width: 96px; height: 72px; border-radius: 3px; background: #edf3eb; object-fit: contain; }
-.photo-item input { min-height: 48px !important; height: 48px; padding: 12px !important; border: 1px solid #b9c7bc !important; background: #fff !important; }
+.photo-description { min-width: 0; }
+.question .photo-description textarea { width: 100%; min-height: 78px; padding: 11px 12px; border: 1px solid #b9c7bc; background: #fff; font-size: 14px; line-height: 1.45; resize: vertical; }
+.photo-description .field-counter { margin-top: 5px; }
 .photo-item button { display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
 .photo-item button:hover { background: #fbe9e5; color: var(--coral); }
 .business-photos { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 34px 0; }
 .business-photos figure { min-width: 0; margin: 0; }
 .business-photos img { display: block; width: 100%; height: clamp(180px, 24vw, 300px); border-radius: 5px; background: #edf3eb; object-fit: contain; }
-.business-photos figcaption { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.business-photos figcaption { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; white-space: pre-wrap; }
 .upload-logo + input { min-height: 58px; padding: 16px 2px; border: 0; border-bottom: 1px solid #b9c7bc; background: transparent; line-height: normal; }
 .question .cep-row input, .question .cep-row .button { height: 58px; min-height: 58px; }
 .wizard-footer { display: flex; justify-content: space-between; gap: 15px; padding: 20px 48px; border-top: 1px solid var(--line); }
@@ -263,4 +265,9 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 	.question textarea { min-height: 165px; }
 	.wizard-footer { padding: 18px 24px; }
 	.wizard-footer .button { flex: 1; }
+}
+
+@media (max-width: 480px) {
+	.photo-item { grid-template-columns: 72px minmax(0, 1fr) 32px; }
+	.photo-item .photo-description { grid-column: 1 / -1; grid-row: 2; }
 }
