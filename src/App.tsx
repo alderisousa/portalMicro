@@ -14,6 +14,7 @@ import { StoryContent } from './components/StoryContent'
 import { WizardQuestion } from './components/WizardQuestion'
 import { selectedCity, stepNames } from './constants/portal'
 import { supabase } from './lib/supabase'
+import { Admin } from './pages/Admin'
 import { Home } from './pages/Home'
 import type { Business, ClientSummary } from './types/business'
 import { formatAddress, formatCep } from './utils/formatters'
@@ -155,7 +156,7 @@ const mapBusinessRecord = (
 
 function App() {
   const [view, setView] = useState<
-    'home' | 'login' | 'dashboard' | 'wizard' | 'preview'
+    'home' | 'login' | 'dashboard' | 'wizard' | 'preview' | 'admin'
   >(() => (requestedSite ? 'preview' : 'home'))
 
   const [menuOpen, setMenuOpen] = useState(false)
@@ -167,6 +168,7 @@ function App() {
   const [accountName, setAccountName] = useState('empreendedor')
   const [authMessage, setAuthMessage] = useState('')
   const [currentUserId, setCurrentUserId] = useState('')
+  const [isAdmin, setIsAdmin] = useState(false)
   const [saveMessage, setSaveMessage] = useState('')
   const [savingBusiness, setSavingBusiness] = useState(false)
   const [showTakeOfflineConfirmation, setShowTakeOfflineConfirmation] = useState(false)
@@ -194,6 +196,7 @@ function App() {
   })
 
   const loadedOwnedBusinessUserId = useRef('')
+  const authenticatedUserId = useRef('')
   const savingBusinessRef = useRef(false)
   const pendingLogoFile = useRef<File | null>(null)
 
@@ -249,6 +252,22 @@ function App() {
       step: current.step,
       publicUrl: current.publicUrl,
     }))
+  }
+
+  const loadUserRole = async (userId: string) => {
+    const { data, error } = await supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    if (authenticatedUserId.current !== userId) return
+
+    if (error) {
+      console.error('Falha ao carregar a role do usuário:', error)
+    }
+
+    setIsAdmin(!error && data?.role === 'admin')
   }
 
   const saveBusiness = async () => {
@@ -632,6 +651,7 @@ function App() {
       const user = session?.user
 
       if (user) {
+        authenticatedUserId.current = user.id
         setSignedIn(true)
         setCurrentUserId(user.id)
 
@@ -649,9 +669,12 @@ function App() {
         }))
 
         loadOwnedBusiness(user.id)
+        void loadUserRole(user.id)
       } else {
+        authenticatedUserId.current = ''
         setSignedIn(false)
         setCurrentUserId('')
+        setIsAdmin(false)
       }
     }
 
@@ -666,6 +689,7 @@ function App() {
         const user = session?.user
 
         if (user) {
+          authenticatedUserId.current = user.id
           setSignedIn(true)
           setCurrentUserId(user.id)
 
@@ -683,9 +707,12 @@ function App() {
           }))
 
           loadOwnedBusiness(user.id)
+          void loadUserRole(user.id)
         } else {
+          authenticatedUserId.current = ''
           setSignedIn(false)
           setCurrentUserId('')
+          setIsAdmin(false)
           setAccountName('empreendedor')
           loadedOwnedBusinessUserId.current = ''
         }
@@ -694,9 +721,16 @@ function App() {
 
     return () => {
       mounted = false
+      authenticatedUserId.current = ''
       subscription.unsubscribe()
     }
   }, [])
+
+  useEffect(() => {
+    if (view === 'admin' && (!signedIn || !isAdmin)) {
+      setView(signedIn ? 'dashboard' : 'home')
+    }
+  }, [view, signedIn, isAdmin])
 
   /*
    * ============================================================
@@ -881,8 +915,10 @@ function App() {
 
     localStorage.removeItem(sessionKey)
 
+    authenticatedUserId.current = ''
     setSignedIn(false)
     setCurrentUserId('')
+    setIsAdmin(false)
     setView('home')
 
     window.history.pushState(
@@ -1252,6 +1288,28 @@ function App() {
    * LOGIN
    * ============================================================
    */
+  if (view === 'admin' && signedIn && isAdmin) {
+    return (
+      <Admin
+        header={
+          <Header
+            selectedCity={selectedCity}
+            requestedSite={requestedSite}
+            signedIn={signedIn}
+            isAdmin={isAdmin}
+            pageOwner={pageOwner}
+            menuOpen={menuOpen}
+            setMenuOpen={setMenuOpen}
+            start={start}
+            logout={logout}
+            setView={setView}
+          />
+        }
+        onBack={() => setView('dashboard')}
+      />
+    )
+  }
+
   if (view === 'login') {
     return (
       <main>
@@ -1259,6 +1317,7 @@ function App() {
           selectedCity={selectedCity}
           requestedSite={requestedSite}
           signedIn={signedIn}
+          isAdmin={isAdmin}
           pageOwner={pageOwner}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
@@ -1345,6 +1404,7 @@ function App() {
           selectedCity={selectedCity}
           requestedSite={requestedSite}
           signedIn={signedIn}
+          isAdmin={isAdmin}
           pageOwner={pageOwner}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
@@ -1596,6 +1656,7 @@ function App() {
           selectedCity={selectedCity}
           requestedSite={requestedSite}
           signedIn={signedIn}
+          isAdmin={isAdmin}
           pageOwner={pageOwner}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
@@ -1757,6 +1818,7 @@ function App() {
           selectedCity={selectedCity}
           requestedSite={requestedSite}
           signedIn={signedIn}
+          isAdmin={isAdmin}
           pageOwner={pageOwner}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
@@ -1926,6 +1988,7 @@ function App() {
           selectedCity={selectedCity}
           requestedSite={requestedSite}
           signedIn={signedIn}
+          isAdmin={isAdmin}
           pageOwner={pageOwner}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}

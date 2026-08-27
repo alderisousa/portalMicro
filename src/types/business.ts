@@ -37,3 +37,17 @@ export type ClientSummary = {
   area: string
   logo: string
 }
+
+export type AdminBusinessSummary = {
+  id: string
+  name: string | null
+  slug: string | null
+  category: string | null
+  city: string | null
+  status: string
+  is_suspended: boolean
+  is_owner_paused: boolean
+  owner_id: string
+  created_at: string
+  updated_at: string
+}

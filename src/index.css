@@ -202,6 +202,39 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .wizard-footer .button { min-height: 52px; padding: 15px 24px; }
 .public-url, .share-note { display: block; margin-top: 18px; color: var(--green); font-size: 12px; line-height: 1.5; word-break: break-all; }
 .public-url:hover, .share-note a:hover { color: var(--coral); }
+.admin-page { padding-top: 58px; padding-bottom: 90px; }
+.admin-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; margin-bottom: 36px; }
+.admin-heading .hero-text { margin-bottom: 0; }
+.admin-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin-bottom: 52px; }
+.admin-summary article { padding: 22px; border: 1px solid var(--line); border-radius: 10px; background: #fffaf2; }
+.admin-summary span { display: block; margin-bottom: 12px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; }
+.admin-summary strong { color: var(--ink); font-family: 'Fraunces', serif; font-size: 34px; }
+.admin-list-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+.admin-list-heading h2 { font-size: clamp(32px, 4vw, 46px); }
+.admin-business-list { display: grid; gap: 14px; }
+.admin-business-card { padding: 24px; border: 1px solid var(--line); border-radius: 10px; background: #fffaf2; }
+.admin-business-main { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.admin-business-main h3 { margin: 12px 0 7px; color: var(--ink); font-size: 21px; }
+.admin-business-main p { margin: 0; color: var(--muted); font-size: 14px; }
+.admin-business-actions { display: flex; flex: 0 0 auto; gap: 9px; }
+.admin-suspend-button { background: #9f3f2f; }
+.admin-suspend-button:hover { background: #843326; }
+.admin-status { display: inline-flex; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: #edf0eb; color: var(--muted); font-size: 11px; font-weight: 700; }
+.admin-status.published { border-color: #b7d5c3; background: var(--mint); color: var(--green); }
+.admin-status.paused, .admin-status.suspended { border-color: #efb6aa; background: #fbe9e5; color: #9f3f2f; }
+.admin-business-details { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 18px; margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--line); }
+.admin-business-details div { min-width: 0; }
+.admin-business-details dt { margin-bottom: 6px; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; }
+.admin-business-details dd { margin: 0; overflow-wrap: anywhere; color: var(--ink); font-size: 12px; }
+.admin-message { padding: 42px 24px; border: 1px dashed #b7ccc0; border-radius: 10px; background: #fffaf2; color: var(--muted); text-align: center; }
+.admin-message.is-error { border-color: #efb6aa; background: #fff7f3; color: #9f3f2f; }
+.admin-message p { margin: 0 0 18px; }
+.admin-feedback { margin: 0 0 18px; padding: 13px 16px; border: 1px solid #b7d5c3; border-radius: 7px; background: var(--mint); color: var(--green); font-size: 13px; font-weight: 700; }
+.admin-feedback.error { border-color: #efb6aa; background: #fff7f3; color: #9f3f2f; }
+.admin-action-confirmation { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 20px; padding: 18px; border: 1px solid #efb6aa; border-radius: 8px; background: #fff7f3; }
+.admin-action-confirmation strong { color: var(--ink); font-size: 15px; }
+.admin-action-confirmation p { max-width: 650px; margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.admin-confirmation-actions { display: flex; flex: 0 0 auto; gap: 8px; }
 .story-content { color: var(--muted); font-size: 16px; line-height: 1.8; }
 .story-content h2 { margin: 38px 0 12px; color: var(--ink); font-size: 32px; letter-spacing: -.8px; }
 .story-content h3 { margin: 28px 0 10px; color: var(--green); font-size: 19px; letter-spacing: 0; }
@@ -211,6 +244,15 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .story-content ul { margin: 0 0 20px; padding-left: 22px; }
 .story-content li { margin: 8px 0; }
 @media (max-width: 800px) {
+	.admin-page { padding-top: 40px; padding-bottom: 70px; }
+	.admin-heading { align-items: flex-start; flex-direction: column; }
+	.admin-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 40px; }
+	.admin-business-main { align-items: flex-start; flex-direction: column; }
+	.admin-business-actions { width: 100%; }
+	.admin-business-actions .button { flex: 1; }
+	.admin-action-confirmation { align-items: stretch; flex-direction: column; }
+	.admin-confirmation-actions { flex-direction: column; }
+	.admin-business-details { grid-template-columns: 1fr; }
 	.client-list { padding: 55px 0; }
 	.client-grid { grid-template-columns: 1fr; }
 	.business-identity { gap: 10px; }

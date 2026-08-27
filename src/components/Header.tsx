@@ -1,22 +1,24 @@
-import { ArrowRight, Menu, UserRound } from 'lucide-react'
+import { ArrowRight, Menu, ShieldCheck, UserRound } from 'lucide-react'
 import { Brand } from './Brand'
 
 interface HeaderProps {
   selectedCity: string
   requestedSite: string | null
   signedIn: boolean
+  isAdmin: boolean
   pageOwner: boolean
   menuOpen: boolean
   setMenuOpen: (value: boolean) => void
   start: () => void
   logout: () => void
-  setView: (view: 'home' | 'dashboard') => void
+  setView: (view: 'home' | 'dashboard' | 'admin') => void
 }
 
 export function Header({
   selectedCity,
   requestedSite,
   signedIn,
+  isAdmin,
   pageOwner,
   menuOpen,
   setMenuOpen,
@@ -69,6 +71,16 @@ export function Header({
                 >
                   <UserRound size={15} />
                   Meu painel
+                </button>
+              )}
+
+              {signedIn && isAdmin && (
+                <button
+                  className="button button-small button-outline"
+                  onClick={() => setView('admin')}
+                >
+                  <ShieldCheck size={15} />
+                  Administração
                 </button>
               )}
 
