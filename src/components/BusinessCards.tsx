@@ -6,20 +6,19 @@ interface BusinessCardsProps {
 }
 
 export function BusinessCards({ clients }: BusinessCardsProps) {
-  if (clients.length === 0) return null
-
   return (
-    <section className="client-list container">
+    <section className="client-list container" id="negocios" aria-labelledby="businesses-title">
       <div className="section-heading">
-        <p className="eyebrow">Visite nossos clientes</p>
-
-        <h2>
-          Negócios que já estão <em>online.</em>
-        </h2>
+        <p className="eyebrow">Negócios da região</p>
+        <h2 id="businesses-title">Visite nossos clientes</h2>
+        <p className="section-support">
+          Conheça negócios, profissionais e serviços da sua região.
+        </p>
       </div>
 
-      <div className="client-grid">
-        {clients.map((client) => (
+      {clients.length > 0 ? (
+        <div className="client-grid">
+          {clients.map((client) => (
           <a
             className="client-card"
             key={client.slug}
@@ -34,8 +33,11 @@ export function BusinessCards({ clients }: BusinessCardsProps) {
 
             <ArrowRight size={18} />
           </a>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <p className="client-empty">Novos negócios serão apresentados aqui em breve.</p>
+      )}
     </section>
   )
 }

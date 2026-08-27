@@ -8,11 +8,11 @@ interface FooterProps {
 export function Footer({ selectedCity, onBrandClick }: FooterProps) {
   return (
     <footer className="footer container">
-      <Brand selectedCity={selectedCity} onClick={onBrandClick} />
+      <Brand onClick={onBrandClick} />
 
       <span>Presença digital para quem empreende.</span>
 
-      <span>© 2026 {selectedCity} portalMicro</span>
+      <span>© 2026 PortalMicro · Atuação atual: {selectedCity}</span>
     </footer>
   )
 }

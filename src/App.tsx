@@ -9,6 +9,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { ChangeEvent, useEffect, useRef, useState } from 'react'
+import { Brand } from './components/Brand'
 import { Header } from './components/Header'
 import { StoryContent } from './components/StoryContent'
 import { WizardQuestion } from './components/WizardQuestion'
@@ -165,6 +166,8 @@ function App() {
   )
 
   const [accountName, setAccountName] = useState('empreendedor')
+  const [accountEmail, setAccountEmail] = useState('')
+  const [accountAvatarUrl, setAccountAvatarUrl] = useState('')
   const [authMessage, setAuthMessage] = useState('')
   const [currentUserId, setCurrentUserId] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
@@ -660,8 +663,12 @@ function App() {
         setAccountName(
           user.user_metadata?.full_name ||
             user.user_metadata?.name ||
-            user.email?.split('@')[0] ||
+            user.email ||
             'empreendedor'
+        )
+        setAccountEmail(user.email || '')
+        setAccountAvatarUrl(
+          user.user_metadata?.avatar_url || user.user_metadata?.picture || ''
         )
 
         setBusiness((current) => ({
@@ -677,6 +684,9 @@ function App() {
         setSignedIn(false)
         setCurrentUserId('')
         setIsAdmin(false)
+        setAccountName('empreendedor')
+        setAccountEmail('')
+        setAccountAvatarUrl('')
       }
     }
 
@@ -698,8 +708,12 @@ function App() {
           setAccountName(
             user.user_metadata?.full_name ||
               user.user_metadata?.name ||
-              user.email?.split('@')[0] ||
+              user.email ||
               'empreendedor'
+          )
+          setAccountEmail(user.email || '')
+          setAccountAvatarUrl(
+            user.user_metadata?.avatar_url || user.user_metadata?.picture || ''
           )
 
           setBusiness((current) => ({
@@ -716,6 +730,8 @@ function App() {
           setCurrentUserId('')
           setIsAdmin(false)
           setAccountName('empreendedor')
+          setAccountEmail('')
+          setAccountAvatarUrl('')
           loadedOwnedBusinessUserId.current = ''
         }
       }
@@ -783,10 +799,10 @@ function App() {
    * ============================================================
    */
   useEffect(() => {
-    if (requestedSite) return
+    if (requestedSite || view !== 'home') return
 
-    loadPublicClients()
-  }, [])
+    void loadPublicClients()
+  }, [view])
 
   /*
    * ============================================================
@@ -921,6 +937,9 @@ function App() {
     setSignedIn(false)
     setCurrentUserId('')
     setIsAdmin(false)
+    setAccountName('empreendedor')
+    setAccountEmail('')
+    setAccountAvatarUrl('')
     setView('home')
 
     window.history.pushState(
@@ -1320,11 +1339,12 @@ function App() {
       <Admin
         header={
           <Header
-            selectedCity={selectedCity}
             requestedSite={requestedSite}
             signedIn={signedIn}
             isAdmin={isAdmin}
-            pageOwner={pageOwner}
+            accountName={accountName}
+            accountEmail={accountEmail}
+            accountAvatarUrl={accountAvatarUrl}
             menuOpen={menuOpen}
             setMenuOpen={setMenuOpen}
             start={start}
@@ -1339,40 +1359,22 @@ function App() {
 
   if (view === 'login') {
     return (
-      <main>
-        <Header
-          selectedCity={selectedCity}
-          requestedSite={requestedSite}
-          signedIn={signedIn}
-          isAdmin={isAdmin}
-          pageOwner={pageOwner}
-          menuOpen={menuOpen}
-          setMenuOpen={setMenuOpen}
-          start={start}
-          logout={logout}
-          setView={setView}
-        />
-
+      <main className="auth-page">
         <section className="auth-shell">
-          <div className="auth-card">
-            <span className="brand-mark large">
-              M
-            </span>
+          <div className="auth-brand">
+            <Brand onClick={() => setView('home')} />
+          </div>
 
+          <div className="auth-card">
             <p className="eyebrow centered-eyebrow">
-              Seu espaço em {selectedCity}
+              Área do empreendedor
             </p>
 
-            <h1>
-              Vamos começar
-              <br />
-              <em>pelo seu negócio.</em>
-            </h1>
+            <h1>Entre no PortalMicro</h1>
 
-            <p>
-              Entre com sua conta Google para
-              salvar seu progresso e criar sua
-              página institucional.
+            <p className="auth-description">
+              Acesse seu painel e continue cuidando da presença digital do seu
+              negócio.
             </p>
 
             <button
@@ -1392,17 +1394,14 @@ function App() {
               </p>
             )}
 
-            <button
-              className="demo-button"
-              onClick={demoSignIn}
-            >
-              Continuar em modo demonstração
-            </button>
-
-            <small>
-              O modo demonstração salva os
-              dados apenas neste navegador.
-            </small>
+            {import.meta.env.DEV && (
+              <div className="auth-demo">
+                <button className="demo-button" onClick={demoSignIn}>
+                  Continuar em modo demonstração
+                </button>
+                <small>Disponível apenas no ambiente local de desenvolvimento.</small>
+              </div>
+            )}
 
             <button
               className="back-link"
@@ -1428,11 +1427,12 @@ function App() {
     return (
       <main>
         <Header
-          selectedCity={selectedCity}
           requestedSite={requestedSite}
           signedIn={signedIn}
           isAdmin={isAdmin}
-          pageOwner={pageOwner}
+          accountName={accountName}
+          accountEmail={accountEmail}
+          accountAvatarUrl={accountAvatarUrl}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
           start={start}
@@ -1680,11 +1680,12 @@ function App() {
     return (
       <main>
         <Header
-          selectedCity={selectedCity}
           requestedSite={requestedSite}
           signedIn={signedIn}
           isAdmin={isAdmin}
-          pageOwner={pageOwner}
+          accountName={accountName}
+          accountEmail={accountEmail}
+          accountAvatarUrl={accountAvatarUrl}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
           start={start}
@@ -1842,11 +1843,12 @@ function App() {
     return (
       <main>
         <Header
-          selectedCity={selectedCity}
           requestedSite={requestedSite}
           signedIn={signedIn}
           isAdmin={isAdmin}
-          pageOwner={pageOwner}
+          accountName={accountName}
+          accountEmail={accountEmail}
+          accountAvatarUrl={accountAvatarUrl}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
           start={start}
@@ -2012,11 +2014,12 @@ function App() {
     <Home
       header={
         <Header
-          selectedCity={selectedCity}
           requestedSite={requestedSite}
           signedIn={signedIn}
           isAdmin={isAdmin}
-          pageOwner={pageOwner}
+          accountName={accountName}
+          accountEmail={accountEmail}
+          accountAvatarUrl={accountAvatarUrl}
           menuOpen={menuOpen}
           setMenuOpen={setMenuOpen}
           start={start}
@@ -2026,6 +2029,7 @@ function App() {
       }
       clients={clients}
       start={start}
+      signedIn={signedIn}
       selectedCity={selectedCity}
       onBrandClick={() => setView('home')}
     />

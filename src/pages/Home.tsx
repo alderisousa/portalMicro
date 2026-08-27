@@ -9,6 +9,7 @@ interface HomeProps {
   header: ReactNode
   clients: ClientSummary[]
   start: () => void
+  signedIn: boolean
   selectedCity: string
   onBrandClick: () => void
 }
@@ -17,6 +18,7 @@ export function Home({
   header,
   clients,
   start,
+  signedIn,
   selectedCity,
   onBrandClick,
 }: HomeProps) {
@@ -42,7 +44,7 @@ export function Home({
 
           <div className="hero-actions">
             <button className="button" onClick={start}>
-              Divulgue seu negócio <ArrowRight size={18} />
+              {signedIn ? 'Meu painel' : 'Divulgue seu negócio'} <ArrowRight size={18} />
             </button>
 
             <a className="text-link" href="#como-funciona">
@@ -50,9 +52,11 @@ export function Home({
             </a>
           </div>
 
-          <p className="trust-note">
-            Sem cartão de crédito · Configuração em poucos minutos
-          </p>
+          {!signedIn && (
+            <p className="trust-note">
+              Sem cartão de crédito · Configuração em poucos minutos
+            </p>
+          )}
         </div>
 
         <div className="hero-art">
@@ -101,7 +105,7 @@ export function Home({
 
       <section className="section container" id="como-funciona">
         <div className="section-heading">
-          <p className="eyebrow">Comece hoje</p>
+          <p className="eyebrow">{signedIn ? 'Como funciona' : 'Comece hoje'}</p>
           <h2>
             Da ideia para a internet,
             <br />
@@ -137,22 +141,24 @@ export function Home({
         </div>
       </section>
 
-      <Plans start={start} />
+      {!signedIn && <Plans start={start} />}
 
-      <section className="final-cta container">
-        <div>
-          <p className="eyebrow">Seu próximo cliente está procurando</p>
-          <h2>
-            Vamos colocar seu negócio
-            <br />
-            <em>no mapa?</em>
-          </h2>
-        </div>
+      {!signedIn && (
+        <section className="final-cta container" id="comece-hoje">
+          <div>
+            <p className="eyebrow">Seu próximo cliente está procurando</p>
+            <h2>
+              Vamos colocar seu negócio
+              <br />
+              <em>no mapa?</em>
+            </h2>
+          </div>
 
-        <button className="button" onClick={start}>
-          Divulgue seu negócio <ArrowRight size={18} />
-        </button>
-      </section>
+          <button className="button" onClick={start}>
+            Divulgue seu negócio <ArrowRight size={18} />
+          </button>
+        </section>
+      )}
 
       <Footer selectedCity={selectedCity} onBrandClick={onBrandClick} />
     </main>
