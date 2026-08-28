@@ -18,6 +18,7 @@ import { supabase } from './lib/supabase'
 import { Admin } from './pages/Admin'
 import { BusinessTemplateSelection } from './pages/BusinessTemplateSelection'
 import { Home } from './pages/Home'
+import { sendNotification } from './services/notifications'
 import type { Business, BusinessTemplateKey, ClientSummary } from './types/business'
 import { formatAddress, formatCep } from './utils/formatters'
 import {
@@ -263,6 +264,13 @@ function App() {
   const furthestWizardStep = useRef(business.step)
   const savingBusinessRef = useRef(false)
   const pendingLogoFile = useRef<File | null>(null)
+  const welcomeNotificationUsers = useRef(new Set<string>())
+
+  const triggerWelcomeNotification = (userId: string) => {
+    if (welcomeNotificationUsers.current.has(userId)) return
+    welcomeNotificationUsers.current.add(userId)
+    void sendNotification('welcome')
+  }
 
   const loadOwnedBusiness = async (userId: string) => {
     if (requestedSite || loadedOwnedBusinessUserId.current === userId) {
@@ -743,6 +751,7 @@ function App() {
 
         loadOwnedBusiness(user.id)
         void loadUserRole(user.id)
+        triggerWelcomeNotification(user.id)
       } else {
         authenticatedUserId.current = ''
         setSignedIn(false)
@@ -788,6 +797,7 @@ function App() {
 
           loadOwnedBusiness(user.id)
           void loadUserRole(user.id)
+          triggerWelcomeNotification(user.id)
         } else {
           authenticatedUserId.current = ''
           setSignedIn(false)
@@ -1223,6 +1233,7 @@ function App() {
       furthestWizardStep.current = 6
       await loadPublicClients()
       setSaveMessage('Negócio publicado com sucesso.')
+      void sendNotification('business_published', data.id)
       window.history.pushState({}, '', publicUrl)
       setView('preview')
     } catch (error) {
