@@ -1,15 +1,18 @@
 export type Photo = {
   id?: string
   url: string
+  title: string
   description: string
 }
 
 export type BusinessTemplateKey = 'essential' | 'featured'
+export type BusinessModel = 'services' | 'products' | 'both'
 
 export type Business = {
   id?: string
   slug?: string
   area: string
+  businessModel: BusinessModel
   name: string
   logo: string
   location: 'fisico' | 'online' | 'ambos' | ''
@@ -61,6 +64,7 @@ export type AdminBusinessEdit = {
   logo_path: string | null
   name: string | null
   category: string | null
+  business_model?: BusinessModel | null
   story: string | null
   service_type: 'physical' | 'online' | 'both' | null
   cep: string | null

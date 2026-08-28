@@ -38,6 +38,7 @@ const initialRequestedSite =
 
 const emptyBusiness: Business = {
   area: '',
+  businessModel: 'services',
   name: '',
   logo: '',
   location: '',
@@ -67,6 +68,7 @@ type BusinessRecord = {
   owner_id: string
   name: string | null
   category: string | null
+  business_model?: string | null
   story: string | null
   service_type: string | null
   logo_path: string | null
@@ -88,6 +90,7 @@ type BusinessRecord = {
 
 type BusinessItemRecord = {
   id: string
+  title: string | null
   image_path: string | null
   description: string | null
 }
@@ -120,6 +123,10 @@ const mapBusinessRecord = (
     slug: data.slug ?? undefined,
     name: data.name ?? '',
     area: data.category ?? '',
+    businessModel:
+      data.business_model === 'products' || data.business_model === 'both'
+        ? data.business_model
+        : 'services',
     logo: data.logo_path ?? '',
     location: data.service_type
       ? locationByServiceType[data.service_type] ?? ''
@@ -139,6 +146,7 @@ const mapBusinessRecord = (
       .map((item) => ({
         id: item.id,
         url: item.image_path ?? '',
+        title: item.title ?? '',
         description: item.description ?? '',
       })),
     whatsapp: data.whatsapp ?? '',
@@ -266,7 +274,7 @@ function App() {
     const { data: businesses, error } = await supabase
       .from('businesses')
       .select(
-        'id, owner_id, slug, name, category, story, service_type, logo_path, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp, status, wizard_step, is_suspended, is_owner_paused, template_key'
+        'id, owner_id, slug, name, category, business_model, story, service_type, logo_path, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp, status, wizard_step, is_suspended, is_owner_paused, template_key'
       )
       .eq('owner_id', userId)
       .order('created_at', { ascending: false })
@@ -284,7 +292,7 @@ function App() {
 
     const { data: items, error: itemsError } = await supabase
       .from('business_items')
-      .select('id, image_path, description')
+      .select('id, title, image_path, description')
       .eq('business_id', ownedBusiness.id)
       .order('position', { ascending: true })
 
@@ -384,6 +392,7 @@ function App() {
     const payload = {
       owner_id: currentUserId,
       category: business.area || null,
+      business_model: business.businessModel,
       name: businessName,
       story: business.story || null,
       service_type: serviceTypeByLocation[business.location],
@@ -601,6 +610,7 @@ function App() {
             .from('business_items')
             .update({
               image_path: photo.url,
+              title: photo.title || null,
               description: photo.description,
               position,
             })
@@ -618,6 +628,7 @@ function App() {
           .insert({
             business_id: businessId,
             image_path: photo.url,
+            title: photo.title || null,
             description: photo.description,
             position,
           })
@@ -871,7 +882,7 @@ function App() {
       const { data, error } = await supabase
         .from('businesses')
         .select(
-          'id, owner_id, name, slug, category, story, service_type, logo_path, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp, status, is_suspended, is_owner_paused, template_key'
+          'id, owner_id, name, slug, category, business_model, story, service_type, logo_path, cep, street, number, complement, neighborhood, city, show_address, contact_email, whatsapp, status, is_suspended, is_owner_paused, template_key'
         )
         .eq('slug', requestedSite)
         .eq('status', 'published')
@@ -889,7 +900,7 @@ function App() {
 
       const { data: items, error: itemsError } = await supabase
         .from('business_items')
-        .select('id, image_path, description')
+        .select('id, title, image_path, description')
         .eq('business_id', data.id)
         .order('position', { ascending: true })
 
@@ -1396,6 +1407,7 @@ function App() {
           if (!currentUserId || !business.id) {
             return {
               url: URL.createObjectURL(file),
+              title: '',
               description: '',
             }
           }
@@ -1407,6 +1419,7 @@ function App() {
               business.id,
               'gallery'
             ),
+            title: '',
             description: '',
           }
         } catch (error) {
@@ -1424,6 +1437,7 @@ function App() {
           )
           return {
             url: URL.createObjectURL(file),
+            title: '',
             description: '',
           }
         }
@@ -1434,7 +1448,7 @@ function App() {
       photos: [
         ...business.photos,
         ...uploadedPhotos.filter(
-          (photo): photo is { url: string; description: string } =>
+          (photo): photo is { url: string; title: string; description: string } =>
             photo !== null
         ),
       ].slice(0, 5),

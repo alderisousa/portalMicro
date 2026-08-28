@@ -225,9 +225,17 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .photo-drop span { color: var(--muted); font-size: 12px; }
 .photo-list { display: grid; gap: 12px; margin-top: 18px; }
 .photo-item { display: grid; grid-template-columns: 96px minmax(0, 1fr) 34px; align-items: start; gap: 12px; padding: 10px; border: 1px solid var(--line); background: #fff; }
-.photo-item img { width: 96px; height: 72px; border-radius: 3px; background: #edf3eb; object-fit: contain; }
+.photo-preview { min-width: 0; }
+.photo-item img { display: block; width: 96px; height: 72px; border-radius: 3px; background: #edf3eb; object-fit: contain; }
+.featured-image-notice { display: flex; align-items: flex-start; gap: 12px; margin: 18px 0; padding: 15px 16px; border: 1px solid #b7d5c3; border-radius: 7px; background: var(--mint); color: var(--green); }
+.featured-image-notice > svg { flex: 0 0 auto; margin-top: 2px; color: var(--coral); }
+.featured-image-notice strong { display: block; font-size: 14px; }
+.featured-image-notice p { margin: 4px 0 0; color: #52665c; font-size: 13px; line-height: 1.5; }
+.featured-image-badge { display: inline-flex; align-items: center; gap: 4px; max-width: 96px; margin-top: 6px; color: var(--green); font-size: 10px; font-weight: 700; line-height: 1.25; }
+.featured-image-badge svg { flex: 0 0 auto; color: var(--coral); fill: currentColor; }
 .photo-description { min-width: 0; }
-.question .photo-description textarea { width: 100%; min-height: 78px; padding: 11px 12px; border: 1px solid #b9c7bc; background: #fff; font-size: 14px; line-height: 1.45; resize: vertical; }
+.question .photo-description input[type='text'] { height: 46px; min-height: 46px; padding: 11px 12px; font-size: 14px; line-height: normal; }
+.question .photo-description textarea { width: 100%; min-height: 120px; padding: 11px 12px; border: 1px solid #b9c7bc; background: #fff; font-size: 14px; line-height: 1.45; resize: vertical; }
 .photo-description .field-counter { margin-top: 5px; }
 .photo-item button { display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
 .photo-item button:hover { background: #fbe9e5; color: var(--coral); }
@@ -376,6 +384,17 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .featured-contact-card .template-section-kicker { margin-bottom: 4px; }
 .featured-contact-card p, .featured-contact-card a:not(.button) { line-height: 1.55; }
 .featured-contact-card .button { min-height: 52px; padding-right: 24px; padding-left: 24px; }
+.business-model-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 26px; }
+.question-field-label { display: block; margin-bottom: 8px; color: var(--ink); font-size: 13px; font-weight: 700; }
+.photo-description { display: grid; gap: 8px; }
+.essential-gallery figcaption strong, .essential-gallery figcaption span,
+.featured-gallery figcaption strong, .featured-gallery figcaption span { display: block; }
+.essential-gallery figcaption strong, .featured-gallery figcaption strong { margin-bottom: 4px; font-size: 15px; }
+.business-location { margin-top: clamp(52px, 7vw, 82px); padding-top: clamp(38px, 5vw, 58px); border-top: 1px solid var(--line); }
+.business-location .template-section-kicker { display: flex; align-items: center; gap: 6px; }
+.business-location address { display: grid; gap: 5px; margin: 18px 0 22px; color: var(--muted); font-style: normal; line-height: 1.55; }
+.business-location .button { width: fit-content; }
+.featured-location { margin-top: clamp(64px, 8vw, 96px); }
 .admin-page { padding-top: 58px; padding-bottom: 90px; }
 .admin-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; margin-bottom: 36px; }
 .admin-heading .hero-text { margin-bottom: 0; }
@@ -461,6 +480,7 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .story-content ul { margin: 0 0 20px; padding-left: 22px; }
 .story-content li { margin: 8px 0; }
 @media (max-width: 800px) {
+	.business-model-grid { grid-template-columns: 1fr; }
 	.admin-page { padding-top: 40px; padding-bottom: 70px; }
 	.admin-heading { align-items: flex-start; flex-direction: column; }
 	.admin-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 40px; }
