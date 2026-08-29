@@ -5,6 +5,7 @@ import {
   EyeOff,
   Globe,
   Save,
+  ShieldCheck,
   Sparkles,
 } from 'lucide-react'
 import { ChangeEvent, useEffect, useRef, useState } from 'react'
@@ -18,6 +19,7 @@ import { supabase } from './lib/supabase'
 import { Admin } from './pages/Admin'
 import { BusinessTemplateSelection } from './pages/BusinessTemplateSelection'
 import { Home } from './pages/Home'
+import { LegalPage } from './pages/LegalPage'
 import { sendNotification } from './services/notifications'
 import type { Business, BusinessTemplateKey, ClientSummary } from './types/business'
 import { formatAddress, formatCep } from './utils/formatters'
@@ -32,6 +34,15 @@ const legacyBusinessStorageKey = 'portalmicro-business'
 const demoBusinessStorageKey = 'portalmicro-business:demo-user'
 const sessionKey = 'portalmicro-session'
 const homeSeoTitle = 'PortalMicro | Negócios e serviços da sua região'
+
+const getLegalRoute = (): 'privacidade' | 'termos' | null => {
+  const hash = window.location.hash.toLowerCase()
+
+  if (hash === '#/privacidade') return 'privacidade'
+  if (hash === '#/termos') return 'termos'
+
+  return null
+}
 const homeSeoDescription = 'Encontre negócios, profissionais e serviços da sua região ou crie uma página profissional para divulgar seu negócio no PortalMicro.'
 const homeCanonicalUrl = 'https://portal-micro.vercel.app/'
 
@@ -180,6 +191,7 @@ function App() {
   const [view, setView] = useState<
     'home' | 'login' | 'dashboard' | 'wizard' | 'preview' | 'admin' | 'template'
   >(() => (initialRequestedSite ? 'preview' : 'home'))
+  const [legalRoute, setLegalRoute] = useState<'privacidade' | 'termos' | null>(() => getLegalRoute())
 
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -886,6 +898,15 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const handleHashChange = () => {
+      setLegalRoute(getLegalRoute())
+    }
+
+    window.addEventListener('hashchange', handleHashChange)
+    return () => window.removeEventListener('hashchange', handleHashChange)
+  }, [])
+
+  useEffect(() => {
     if (view === 'admin' && (!signedIn || !isAdmin)) {
       setView(signedIn ? 'dashboard' : 'home')
     }
@@ -1578,6 +1599,14 @@ function App() {
     ? 'dashboard'
     : view
 
+  if (legalRoute === 'privacidade') {
+    return <LegalPage variant="privacidade" onBackToHome={() => { setLegalRoute(null); window.history.pushState({}, '', window.location.origin); setView('home') }} />
+  }
+
+  if (legalRoute === 'termos') {
+    return <LegalPage variant="termos" onBackToHome={() => { setLegalRoute(null); window.history.pushState({}, '', window.location.origin); setView('home') }} />
+  }
+
   /*
    * ============================================================
    * LOGIN
@@ -1620,11 +1649,10 @@ function App() {
               Área do empreendedor
             </p>
 
-            <h1>Entre no PortalMicro</h1>
+            <h1>Entre no GiroMicro</h1>
 
             <p className="auth-description">
-              Acesse seu painel e continue cuidando da presença digital do seu
-              negócio.
+              Acesse sua conta para gerenciar sua página e seus recursos.
             </p>
 
             <button
@@ -1637,6 +1665,29 @@ function App() {
 
               Continuar com Google
             </button>
+
+            <div className="security-note" aria-label="Informações de segurança do login">
+              <div className="security-icon">
+                <ShieldCheck size={18} />
+              </div>
+
+              <div className="security-copy">
+                <strong>Login seguro com Google</strong>
+                <p>
+                  A autenticação é realizada pelo Google através do Supabase, serviço utilizado pelo GiroMicro para autenticação segura.
+                </p>
+                <p>
+                  Durante o acesso, poderá aparecer um endereço terminado em "supabase.co". Isso é esperado.
+                  O GiroMicro não recebe nem armazena sua senha do Google.
+                </p>
+              </div>
+            </div>
+
+            <div className="legal-inline-links">
+              <a href="#/privacidade">Política de Privacidade</a>
+              <span aria-hidden="true">•</span>
+              <a href="#/termos">Termos de Uso</a>
+            </div>
 
             {authMessage && (
               <p className="auth-message">

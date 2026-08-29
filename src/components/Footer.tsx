@@ -10,9 +10,15 @@ export function Footer({ selectedCity, onBrandClick }: FooterProps) {
     <footer className="footer container">
       <Brand onClick={onBrandClick} />
 
-      <span>Presença digital para quem empreende.</span>
+      <div className="footer-meta">
+        <span>Presença digital para quem empreende.</span>
+        <span>© 2026 PortalMicro · Atuação atual: {selectedCity}</span>
+      </div>
 
-      <span>© 2026 PortalMicro · Atuação atual: {selectedCity}</span>
+      <div className="footer-links">
+        <a href="#/privacidade">Política de Privacidade</a>
+        <a href="#/termos">Termos de Uso</a>
+      </div>
     </footer>
   )
 }
