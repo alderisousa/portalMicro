@@ -28,7 +28,8 @@ import {
   validateBusinessImage,
 } from './utils/storage'
 
-const storageKey = 'portalmicro-business'
+const legacyBusinessStorageKey = 'portalmicro-business'
+const demoBusinessStorageKey = 'portalmicro-business:demo-user'
 const sessionKey = 'portalmicro-session'
 const homeSeoTitle = 'PortalMicro | Negócios e serviços da sua região'
 const homeSeoDescription = 'Encontre negócios, profissionais e serviços da sua região ou crie uma página profissional para divulgar seu negócio no PortalMicro.'
@@ -205,9 +206,19 @@ function App() {
       return emptyBusiness
     }
 
-    const saved = JSON.parse(
-      localStorage.getItem(storageKey) || 'null'
-    ) || {}
+    if (localStorage.getItem(sessionKey) !== 'demo-user') {
+      return emptyBusiness
+    }
+
+    let saved: Partial<Business> = {}
+
+    try {
+      saved = JSON.parse(
+        localStorage.getItem(demoBusinessStorageKey) || 'null'
+      ) || {}
+    } catch {
+      localStorage.removeItem(demoBusinessStorageKey)
+    }
 
     return {
       ...emptyBusiness,
@@ -261,6 +272,7 @@ function App() {
 
   const loadedOwnedBusinessUserId = useRef('')
   const authenticatedUserId = useRef('')
+  const authGeneration = useRef(0)
   const furthestWizardStep = useRef(business.step)
   const savingBusinessRef = useRef(false)
   const pendingLogoFile = useRef<File | null>(null)
@@ -272,7 +284,27 @@ function App() {
     void sendNotification('welcome')
   }
 
-  const loadOwnedBusiness = async (userId: string) => {
+  const resetBusinessState = (userId = '', email = '') => {
+    furthestWizardStep.current = 0
+    pendingLogoFile.current = null
+    savingBusinessRef.current = false
+    setSavingBusiness(false)
+    setSaveMessage('')
+    setTemplateMessage('')
+    setShowTakeOfflineConfirmation(false)
+    setBusiness({
+      ...emptyBusiness,
+      photos: [],
+      email,
+      ownerId: userId || undefined,
+    })
+  }
+
+  const loadOwnedBusiness = async (
+    userId: string,
+    generation: number,
+    userEmail = ''
+  ) => {
     if (requestedSite || loadedOwnedBusinessUserId.current === userId) {
       return
     }
@@ -288,6 +320,13 @@ function App() {
       .order('created_at', { ascending: false })
       .limit(1)
 
+    if (
+      authenticatedUserId.current !== userId ||
+      authGeneration.current !== generation
+    ) {
+      return
+    }
+
     if (error) {
       loadedOwnedBusinessUserId.current = ''
       console.error('Falha ao carregar o negócio do usuário:', error)
@@ -296,13 +335,23 @@ function App() {
 
     const ownedBusiness = businesses?.[0]
 
-    if (!ownedBusiness) return
+    if (!ownedBusiness) {
+      resetBusinessState(userId, userEmail)
+      return
+    }
 
     const { data: items, error: itemsError } = await supabase
       .from('business_items')
       .select('id, title, image_path, description')
       .eq('business_id', ownedBusiness.id)
       .order('position', { ascending: true })
+
+    if (
+      authenticatedUserId.current !== userId ||
+      authGeneration.current !== generation
+    ) {
+      return
+    }
 
     if (itemsError) {
       loadedOwnedBusinessUserId.current = ''
@@ -320,11 +369,14 @@ function App() {
 
     furthestWizardStep.current = mappedBusiness.step ?? 0
 
-    setBusiness((current) => ({
-      ...current,
+    setBusiness({
+      ...emptyBusiness,
       ...mappedBusiness,
-      publicUrl: current.publicUrl,
-    }))
+      photos: mappedBusiness.photos ?? [],
+      publicUrl: ownedBusiness.slug
+        ? `${window.location.origin}/?site=${ownedBusiness.slug}`
+        : '',
+    })
   }
 
   const loadUserRole = async (userId: string) => {
@@ -718,48 +770,87 @@ function App() {
   useEffect(() => {
     let mounted = true
 
+    localStorage.removeItem(legacyBusinessStorageKey)
+
+    const applyAuthenticatedUser = (user: {
+      id: string
+      email?: string
+      user_metadata?: Record<string, string | undefined>
+    }) => {
+      const userChanged = authenticatedUserId.current !== user.id
+
+      if (userChanged) {
+        authGeneration.current += 1
+        authenticatedUserId.current = user.id
+        loadedOwnedBusinessUserId.current = ''
+        localStorage.removeItem(sessionKey)
+
+        if (!requestedSite) {
+          resetBusinessState(user.id, user.email || '')
+        }
+      }
+
+      setSignedIn(true)
+      setCurrentUserId(user.id)
+      setAccountName(
+        user.user_metadata?.full_name ||
+          user.user_metadata?.name ||
+          user.email ||
+          'empreendedor'
+      )
+      setAccountEmail(user.email || '')
+      setAccountAvatarUrl(
+        user.user_metadata?.avatar_url || user.user_metadata?.picture || ''
+      )
+
+      if (!requestedSite) {
+        void loadOwnedBusiness(
+          user.id,
+          authGeneration.current,
+          user.email || ''
+        )
+      }
+      void loadUserRole(user.id)
+      triggerWelcomeNotification(user.id)
+    }
+
+    const applySignedOut = () => {
+      if (localStorage.getItem(sessionKey) === 'demo-user') return
+
+      authGeneration.current += 1
+      authenticatedUserId.current = ''
+      loadedOwnedBusinessUserId.current = ''
+      setSignedIn(false)
+      setCurrentUserId('')
+      setIsAdmin(false)
+      setAccountName('empreendedor')
+      setAccountEmail('')
+      setAccountAvatarUrl('')
+
+      if (!requestedSite) {
+        resetBusinessState()
+      }
+    }
+
     const loadSession = async () => {
+      const generationBeforeSessionLookup = authGeneration.current
       const {
         data: { session },
       } = await supabase.auth.getSession()
 
-      if (!mounted) return
+      if (
+        !mounted ||
+        authGeneration.current !== generationBeforeSessionLookup
+      ) {
+        return
+      }
 
       const user = session?.user
 
       if (user) {
-        authenticatedUserId.current = user.id
-        setSignedIn(true)
-        setCurrentUserId(user.id)
-
-        setAccountName(
-          user.user_metadata?.full_name ||
-            user.user_metadata?.name ||
-            user.email ||
-            'empreendedor'
-        )
-        setAccountEmail(user.email || '')
-        setAccountAvatarUrl(
-          user.user_metadata?.avatar_url || user.user_metadata?.picture || ''
-        )
-
-        setBusiness((current) => ({
-          ...current,
-          email: current.email || user.email || '',
-          ownerId: user.id,
-        }))
-
-        loadOwnedBusiness(user.id)
-        void loadUserRole(user.id)
-        triggerWelcomeNotification(user.id)
+        applyAuthenticatedUser(user)
       } else {
-        authenticatedUserId.current = ''
-        setSignedIn(false)
-        setCurrentUserId('')
-        setIsAdmin(false)
-        setAccountName('empreendedor')
-        setAccountEmail('')
-        setAccountAvatarUrl('')
+        applySignedOut()
       }
     }
 
@@ -774,45 +865,16 @@ function App() {
         const user = session?.user
 
         if (user) {
-          authenticatedUserId.current = user.id
-          setSignedIn(true)
-          setCurrentUserId(user.id)
-
-          setAccountName(
-            user.user_metadata?.full_name ||
-              user.user_metadata?.name ||
-              user.email ||
-              'empreendedor'
-          )
-          setAccountEmail(user.email || '')
-          setAccountAvatarUrl(
-            user.user_metadata?.avatar_url || user.user_metadata?.picture || ''
-          )
-
-          setBusiness((current) => ({
-            ...current,
-            email: current.email || user.email || '',
-            ownerId: user.id,
-          }))
-
-          loadOwnedBusiness(user.id)
-          void loadUserRole(user.id)
-          triggerWelcomeNotification(user.id)
+          applyAuthenticatedUser(user)
         } else {
-          authenticatedUserId.current = ''
-          setSignedIn(false)
-          setCurrentUserId('')
-          setIsAdmin(false)
-          setAccountName('empreendedor')
-          setAccountEmail('')
-          setAccountAvatarUrl('')
-          loadedOwnedBusinessUserId.current = ''
+          applySignedOut()
         }
       }
     )
 
     return () => {
       mounted = false
+      authGeneration.current += 1
       authenticatedUserId.current = ''
       subscription.unsubscribe()
     }
@@ -826,19 +888,24 @@ function App() {
 
   /*
    * ============================================================
-   * SALVAMENTO LOCAL
+   * SALVAMENTO LOCAL DO MODO DEMONSTRAÇÃO
    * ============================================================
    *
-   * Por enquanto mantemos o cadastro local.
-   *
-   * A próxima etapa será trocar isso pelo Supabase Database.
+   * Contas autenticadas carregam seus dados exclusivamente do Supabase.
+   * O modo demonstração usa uma chave própria, sem compartilhar dados
+   * com usuários autenticados.
    */
   useEffect(() => {
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify(business)
-    )
-  }, [business])
+    if (
+      !currentUserId &&
+      localStorage.getItem(sessionKey) === 'demo-user'
+    ) {
+      localStorage.setItem(
+        demoBusinessStorageKey,
+        JSON.stringify(business)
+      )
+    }
+  }, [business, currentUserId])
 
   const loadPublicClients = async () => {
     const { data, error } = await supabase
@@ -1011,15 +1078,13 @@ function App() {
    * ============================================================
    */
   const logout = async () => {
-    try {
-      await supabase.auth.signOut()
-    } catch (error) {
-      console.error('Erro ao sair:', error)
-    }
-
-    localStorage.removeItem(sessionKey)
-
+    authGeneration.current += 1
     authenticatedUserId.current = ''
+    loadedOwnedBusinessUserId.current = ''
+    localStorage.removeItem(sessionKey)
+    localStorage.removeItem(demoBusinessStorageKey)
+    localStorage.removeItem(legacyBusinessStorageKey)
+    resetBusinessState()
     setSignedIn(false)
     setCurrentUserId('')
     setIsAdmin(false)
@@ -1034,6 +1099,12 @@ function App() {
       '',
       window.location.origin
     )
+
+    try {
+      await supabase.auth.signOut()
+    } catch (error) {
+      console.error('Erro ao sair:', error)
+    }
   }
 
   /*
