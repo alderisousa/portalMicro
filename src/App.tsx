@@ -186,6 +186,9 @@ function App() {
   const [signedIn, setSignedIn] = useState(
     () => localStorage.getItem(sessionKey) === 'demo-user'
   )
+  const [authLoading, setAuthLoading] = useState(
+    () => localStorage.getItem(sessionKey) !== 'demo-user'
+  )
 
   const [accountName, setAccountName] = useState('empreendedor')
   const [accountEmail, setAccountEmail] = useState('')
@@ -305,7 +308,7 @@ function App() {
     generation: number,
     userEmail = ''
   ) => {
-    if (requestedSite || loadedOwnedBusinessUserId.current === userId) {
+    if (loadedOwnedBusinessUserId.current === userId) {
       return
     }
 
@@ -791,6 +794,7 @@ function App() {
       }
 
       setSignedIn(true)
+      setAuthLoading(false)
       setCurrentUserId(user.id)
       setAccountName(
         user.user_metadata?.full_name ||
@@ -821,6 +825,7 @@ function App() {
       authenticatedUserId.current = ''
       loadedOwnedBusinessUserId.current = ''
       setSignedIn(false)
+      setAuthLoading(false)
       setCurrentUserId('')
       setIsAdmin(false)
       setAccountName('empreendedor')
@@ -885,6 +890,12 @@ function App() {
       setView(signedIn ? 'dashboard' : 'home')
     }
   }, [view, signedIn, isAdmin])
+
+  useEffect(() => {
+    if (view === 'login' && signedIn) {
+      setView('dashboard')
+    }
+  }, [view, signedIn])
 
   /*
    * ============================================================
@@ -1033,13 +1044,36 @@ function App() {
     setView(targetView)
   }
 
-  const start = () =>
-    setView(
-      signedIn &&
-        (!requestedSite || pageOwner)
-        ? 'dashboard'
-        : 'login'
-    )
+  const goHome = () => {
+    const leavingPublicPage = Boolean(requestedSite)
+
+    if (leavingPublicPage) {
+      window.history.pushState({}, '', window.location.origin)
+    }
+
+    setRequestedSite(null)
+    setView('home')
+
+    if (!leavingPublicPage) return
+
+    loadedOwnedBusinessUserId.current = ''
+
+    if (currentUserId) {
+      resetBusinessState(currentUserId, accountEmail)
+      void loadOwnedBusiness(
+        currentUserId,
+        authGeneration.current,
+        accountEmail
+      )
+    } else {
+      resetBusinessState()
+    }
+  }
+
+  const start = () => {
+    if (authLoading) return
+    setView(signedIn ? 'dashboard' : 'login')
+  }
 
   /*
    * ============================================================
@@ -1086,6 +1120,7 @@ function App() {
     localStorage.removeItem(legacyBusinessStorageKey)
     resetBusinessState()
     setSignedIn(false)
+    setAuthLoading(false)
     setCurrentUserId('')
     setIsAdmin(false)
     setAccountName('empreendedor')
@@ -1539,12 +1574,16 @@ function App() {
     event.target.value = ''
   }
 
+  const normalizedView = view === 'login' && signedIn
+    ? 'dashboard'
+    : view
+
   /*
    * ============================================================
    * LOGIN
    * ============================================================
    */
-  if (view === 'admin' && signedIn && isAdmin) {
+  if (normalizedView === 'admin' && signedIn && isAdmin) {
     return (
       <Admin
         header={
@@ -1559,6 +1598,7 @@ function App() {
             setMenuOpen={setMenuOpen}
             start={start}
             logout={logout}
+            goHome={goHome}
             setView={setView}
           />
         }
@@ -1567,12 +1607,12 @@ function App() {
     )
   }
 
-  if (view === 'login') {
+  if (normalizedView === 'login') {
     return (
       <main className="auth-page">
         <section className="auth-shell">
           <div className="auth-brand">
-            <Brand onClick={() => setView('home')} />
+            <Brand onClick={goHome} />
           </div>
 
           <div className="auth-card">
@@ -1615,9 +1655,7 @@ function App() {
 
             <button
               className="back-link"
-              onClick={() =>
-                setView('home')
-              }
+              onClick={goHome}
             >
               <ArrowLeft size={15} />
               Voltar
@@ -1633,7 +1671,7 @@ function App() {
    * DASHBOARD
    * ============================================================
    */
-  if (view === 'dashboard') {
+  if (normalizedView === 'dashboard') {
     return (
       <main>
         <Header
@@ -1647,6 +1685,7 @@ function App() {
           setMenuOpen={setMenuOpen}
           start={start}
           logout={logout}
+          goHome={goHome}
           setView={setView}
         />
 
@@ -1908,6 +1947,7 @@ function App() {
             setMenuOpen={setMenuOpen}
             start={start}
             logout={logout}
+            goHome={goHome}
             setView={setView}
           />
         }
@@ -1939,6 +1979,7 @@ function App() {
           setMenuOpen={setMenuOpen}
           start={start}
           logout={logout}
+          goHome={goHome}
           setView={setView}
         />
 
@@ -2107,6 +2148,7 @@ function App() {
           setMenuOpen={setMenuOpen}
           start={start}
           logout={logout}
+          goHome={goHome}
           setView={setView}
         />
 
@@ -2196,14 +2238,16 @@ function App() {
           setMenuOpen={setMenuOpen}
           start={start}
           logout={logout}
+          goHome={goHome}
           setView={setView}
         />
       }
       clients={clients}
       start={start}
       signedIn={signedIn}
+      authLoading={authLoading}
       selectedCity={selectedCity}
-      onBrandClick={() => setView('home')}
+      onBrandClick={goHome}
     />
   )
 }

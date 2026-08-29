@@ -10,6 +10,7 @@ interface HomeProps {
   clients: ClientSummary[]
   start: () => void
   signedIn: boolean
+  authLoading: boolean
   selectedCity: string
   onBrandClick: () => void
 }
@@ -19,6 +20,7 @@ export function Home({
   clients,
   start,
   signedIn,
+  authLoading,
   selectedCity,
   onBrandClick,
 }: HomeProps) {
@@ -43,8 +45,13 @@ export function Home({
           </p>
 
           <div className="hero-actions">
-            <button className="button" onClick={start}>
-              {signedIn ? 'Meu painel' : 'Divulgue seu negócio'} <ArrowRight size={18} />
+            <button className="button" onClick={start} disabled={authLoading}>
+              {authLoading
+                ? 'Verificando sessão...'
+                : signedIn
+                  ? 'Meu painel'
+                  : 'Divulgue seu negócio'}{' '}
+              <ArrowRight size={18} />
             </button>
 
             <a className="text-link" href="#como-funciona">

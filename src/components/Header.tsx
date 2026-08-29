@@ -13,6 +13,7 @@ interface HeaderProps {
   setMenuOpen: (value: boolean) => void
   start: () => void
   logout: () => void
+  goHome: () => void
   setView: (view: 'home' | 'dashboard' | 'admin') => void
 }
 
@@ -27,6 +28,7 @@ export function Header({
   setMenuOpen,
   start,
   logout,
+  goHome,
   setView,
 }: HeaderProps) {
   const [accountOpen, setAccountOpen] = useState(false)
@@ -70,14 +72,13 @@ export function Header({
     setMenuOpen(false)
   }
 
-  const goHome = () => {
-    if (requestedSite) window.history.pushState({}, '', window.location.origin)
+  const openHome = () => {
     closeMenus()
-    setView('home')
+    goHome()
   }
 
   const goToSection = (sectionId: string) => {
-    goHome()
+    openHome()
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         document.getElementById(sectionId)?.scrollIntoView()
@@ -102,7 +103,7 @@ export function Header({
 
   return (
     <nav className={`nav container ${requestedSite ? 'public-nav' : ''}`} aria-label="Navegação principal">
-      <Brand onClick={goHome} />
+      <Brand onClick={openHome} />
 
       <button
         className="menu-button"
