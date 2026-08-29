@@ -244,6 +244,13 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .upload-logo input[type='file'], .photo-drop input[type='file'] { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; opacity: 0; cursor: pointer; }
 .upload-logo img { width: 72px; height: 72px; max-width: 72px; max-height: 72px; border-radius: 6px; object-fit: contain; }
 .upload-logo span, .photo-drop strong { font-size: 14px; }
+.public-address-preview { display: flex; align-items: flex-start; gap: 12px; margin-top: 16px; padding: 15px 16px; border: 1px solid #d7e7dc; border-radius: 8px; background: rgba(220,238,228,.36); color: var(--green); }
+.public-address-preview > svg { flex: 0 0 auto; margin-top: 2px; }
+.public-address-preview div { min-width: 0; }
+.public-address-preview strong, .public-address-preview span { display: block; }
+.public-address-preview strong { margin-bottom: 5px; font-size: 12px; }
+.public-address-preview span { overflow-wrap: anywhere; font-size: 14px; font-weight: 700; }
+.public-address-preview p, .question .question-support { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .photo-drop { flex-direction: column; min-height: 120px; }
 .photo-drop.is-disabled { border-style: solid; background: #edf3eb; color: var(--muted); cursor: not-allowed; opacity: .75; }
 .photo-drop.is-disabled input { cursor: not-allowed; }
@@ -275,6 +282,10 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .public-url, .share-note { display: block; margin-top: 18px; color: var(--green); font-size: 12px; line-height: 1.5; word-break: break-all; }
 .public-url:hover, .share-note a:hover { color: var(--coral); }
 .public-preview { padding-top: 34px; padding-bottom: 90px; }
+.public-page-message { display: grid; place-items: center; min-height: 55vh; text-align: center; }
+.public-page-message > div { width: min(100%, 620px); padding: clamp(32px, 6vw, 58px); border: 1px solid var(--line); border-radius: 14px; background: #fffaf2; box-shadow: 0 18px 48px rgba(24,51,46,.08); }
+.public-page-message h1 { margin-bottom: 16px; font-size: clamp(36px, 6vw, 58px); }
+.public-page-message p { margin: 0 auto 26px; color: var(--muted); line-height: 1.65; }
 .owner-preview-context { margin-bottom: 24px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #fffaf2; box-shadow: 0 10px 28px rgba(24,51,46,.08); }
 .owner-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .owner-preview-heading > div { display: grid; gap: 5px; }

@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/negocio/:slug",
+      "destination": "/index.html"
+    }
+  ]
+}

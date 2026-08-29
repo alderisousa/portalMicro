@@ -22,7 +22,7 @@ export function BusinessCards({ clients }: BusinessCardsProps) {
           <a
             className="client-card"
             key={client.slug}
-            href={`/?site=${client.slug}`}
+            href={`/negocio/${encodeURIComponent(client.slug)}`}
           >
             {client.logo && <img src={client.logo} alt="" />}
 

@@ -299,7 +299,7 @@ export function Admin({ header, onBack }: AdminProps) {
                       {isPublic && (
                         <a
                           className="button button-small button-outline"
-                          href={`/?site=${encodeURIComponent(business.slug ?? '')}`}
+                          href={`/negocio/${encodeURIComponent(business.slug ?? '')}`}
                           target="_blank"
                           rel="noreferrer"
                         >

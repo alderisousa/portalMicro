@@ -6,7 +6,7 @@ export const stepNames = [
   'Atuação',
   'Identidade',
   'Local',
-  'Sua história',
+  'Sobre você',
   'Fotos',
   'Contato',
   'Modelo da página',

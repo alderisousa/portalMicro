@@ -1,5 +1,5 @@
 export function StoryContent({ story }: { story: string }) {
-  const source = story || 'Sua história e o jeito especial de trabalhar aparecerão aqui.'
+  const source = story || 'Sua apresentação e o jeito especial de trabalhar aparecerão aqui.'
   const normalized = source
     .replace(/\s+(?=#{1,3}\s)/g, '\n\n')
     .replace(/\s+\*\s+(?=[A-ZÁÉÍÓÚÀÂÃÊÔÇ])/g, '\n- ')
@@ -36,4 +36,3 @@ function renderInline(text: string) {
     return part
   })
 }
-

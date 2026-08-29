@@ -6,7 +6,7 @@ export const getShowcaseCopy = (model: BusinessModel | null | undefined) => {
     return {
       wizardTitle: 'Seus produtos',
       wizardDescription: 'Adicione produtos para apresentar aos seus clientes.',
-      publicTitle: 'Nossos produtos',
+      publicTitle: 'Conheça nosso trabalho',
     }
   }
 
@@ -14,7 +14,7 @@ export const getShowcaseCopy = (model: BusinessModel | null | undefined) => {
     return {
       wizardTitle: 'Sua vitrine',
       wizardDescription: 'Apresente seus principais produtos e serviços.',
-      publicTitle: 'Produtos e serviços',
+      publicTitle: 'Conheça nosso trabalho',
     }
   }
 

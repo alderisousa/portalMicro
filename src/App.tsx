@@ -45,9 +45,49 @@ const getLegalRoute = (): 'privacidade' | 'termos' | null => {
 }
 const homeSeoDescription = 'Crie sua presença digital de forma simples com o GiroMicro e tenha um espaço profissional para divulgar seu negócio, serviços e trabalho.'
 const homeCanonicalUrl = 'https://www.giromicro.com.br/'
+const publicBusinessBaseUrl = 'https://www.giromicro.com.br/negocio/'
 
-const initialRequestedSite =
-  new URLSearchParams(window.location.search).get('site')
+const getPublicBusinessSlug = () => {
+  const match = window.location.pathname.match(/^\/negocio\/([^/]+)\/?$/)
+  if (!match) return null
+
+  try {
+    return decodeURIComponent(match[1]).trim() || null
+  } catch {
+    return null
+  }
+}
+
+const legacyRequestedSite = new URLSearchParams(window.location.search).get('site')?.trim() || null
+const initialRequestedSite = getPublicBusinessSlug() ?? legacyRequestedSite
+
+if (legacyRequestedSite && !getPublicBusinessSlug()) {
+  window.history.replaceState(
+    {},
+    '',
+    `/negocio/${encodeURIComponent(legacyRequestedSite)}`
+  )
+}
+
+const createPublicBusinessPath = (slug: string) =>
+  `/negocio/${encodeURIComponent(slug)}`
+
+const createPublicBusinessUrl = (slug: string) =>
+  `${window.location.origin}${createPublicBusinessPath(slug)}`
+
+const createCanonicalBusinessUrl = (slug: string) =>
+  `${publicBusinessBaseUrl}${encodeURIComponent(slug)}`
+
+const createSeoDescription = (business: Business) => {
+  const source = business.story.trim()
+    || (business.area.trim()
+      ? `${business.name} é um negócio de ${business.area}. Conheça seus serviços e formas de contato no GiroMicro.`
+      : `Conheça ${business.name} e suas formas de contato no GiroMicro.`)
+  const normalized = source.replace(/\s+/g, ' ').trim()
+
+  if (normalized.length <= 160) return normalized
+  return `${normalized.slice(0, 157).trimEnd()}...`
+}
 
 const emptyBusiness: Business = {
   area: '',
@@ -187,6 +227,9 @@ const mapBusinessRecord = (
 
 function App() {
   const [requestedSite, setRequestedSite] = useState(initialRequestedSite)
+  const [publicPageStatus, setPublicPageStatus] = useState<'loading' | 'ready' | 'unavailable'>(
+    initialRequestedSite ? 'loading' : 'ready'
+  )
 
   const [view, setView] = useState<
     'home' | 'login' | 'dashboard' | 'wizard' | 'preview' | 'admin' | 'template'
@@ -250,18 +293,65 @@ function App() {
     const setMetaContent = (selector: string, content: string) => {
       document.querySelector<HTMLMetaElement>(selector)?.setAttribute('content', content)
     }
+    const setOptionalMetaContent = (selector: string, attribute: 'property' | 'name', key: string, content?: string) => {
+      const existing = document.querySelector<HTMLMetaElement>(selector)
+      if (!content) {
+        existing?.remove()
+        return
+      }
+      if (existing) {
+        existing.setAttribute('content', content)
+        return
+      }
+      const meta = document.createElement('meta')
+      meta.setAttribute(attribute, key)
+      meta.content = content
+      document.head.appendChild(meta)
+    }
 
     const existingCanonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]')
 
     if (requestedSite) {
-      document.title = 'GiroMicro | Página pública de negócio'
-      setMetaContent('meta[name="description"]', 'Conheça este negócio no GiroMicro.')
-      setMetaContent('meta[name="robots"]', 'noindex, follow')
-      setMetaContent('meta[property="og:title"]', 'Página pública de negócio | GiroMicro')
-      setMetaContent('meta[property="og:description"]', 'Conheça este negócio no GiroMicro.')
-      setMetaContent('meta[property="og:url"]', window.location.href)
-      setMetaContent('meta[name="twitter:title"]', 'Página pública de negócio | GiroMicro')
-      setMetaContent('meta[name="twitter:description"]', 'Conheça este negócio no GiroMicro.')
+      const isReady = publicPageStatus === 'ready' && Boolean(business.name.trim())
+      const title = isReady ? `${business.name.trim()} | GiroMicro` : 'Página não encontrada | GiroMicro'
+      const description = isReady
+        ? createSeoDescription(business)
+        : 'Este negócio não está disponível ou o endereço pode ter sido alterado.'
+      const canonicalUrl = createCanonicalBusinessUrl(requestedSite)
+      const socialImage = isReady
+        ? publicMediaUrl(business.logo || business.photos[0]?.url || '')
+        : ''
+
+      document.title = title
+      setMetaContent('meta[name="description"]', description)
+      setMetaContent('meta[name="robots"]', isReady ? 'index, follow' : 'noindex, nofollow')
+      setMetaContent('meta[property="og:title"]', title)
+      setMetaContent('meta[property="og:description"]', description)
+      setMetaContent('meta[property="og:url"]', canonicalUrl)
+      setMetaContent('meta[property="og:type"]', 'website')
+      setMetaContent('meta[name="twitter:title"]', title)
+      setMetaContent('meta[name="twitter:description"]', description)
+      setOptionalMetaContent('meta[property="og:image"]', 'property', 'og:image', socialImage)
+      setOptionalMetaContent('meta[name="twitter:image"]', 'name', 'twitter:image', socialImage)
+      setMetaContent('meta[name="twitter:card"]', socialImage ? 'summary_large_image' : 'summary')
+
+      if (isReady) {
+        if (existingCanonical) existingCanonical.href = canonicalUrl
+        else {
+          const canonical = document.createElement('link')
+          canonical.rel = 'canonical'
+          canonical.href = canonicalUrl
+          document.head.appendChild(canonical)
+        }
+      } else {
+        existingCanonical?.remove()
+      }
+      return
+    }
+
+    if (view !== 'home') {
+      document.title = view === 'preview' ? 'Pré-visualização | GiroMicro' : 'GiroMicro'
+      setMetaContent('meta[name="robots"]', 'noindex, nofollow')
       existingCanonical?.remove()
       return
     }
@@ -274,6 +364,9 @@ function App() {
     setMetaContent('meta[property="og:url"]', homeCanonicalUrl)
     setMetaContent('meta[name="twitter:title"]', homeSeoTitle)
     setMetaContent('meta[name="twitter:description"]', homeSeoDescription)
+    setMetaContent('meta[name="twitter:card"]', 'summary')
+    setOptionalMetaContent('meta[property="og:image"]', 'property', 'og:image')
+    setOptionalMetaContent('meta[name="twitter:image"]', 'name', 'twitter:image')
 
     if (!existingCanonical) {
       const canonical = document.createElement('link')
@@ -283,7 +376,7 @@ function App() {
     } else {
       existingCanonical.href = homeCanonicalUrl
     }
-  }, [requestedSite])
+  }, [requestedSite, publicPageStatus, business.name, business.story, business.area, business.logo, business.photos, view])
 
   const loadedOwnedBusinessUserId = useRef('')
   const authenticatedUserId = useRef('')
@@ -355,6 +448,13 @@ function App() {
       return
     }
 
+    if (ownedBusiness.owner_id !== userId) {
+      loadedOwnedBusinessUserId.current = ''
+      console.error('Negócio descartado por divergência de proprietário.')
+      resetBusinessState(userId, userEmail)
+      return
+    }
+
     const { data: items, error: itemsError } = await supabase
       .from('business_items')
       .select('id, title, image_path, description')
@@ -363,7 +463,8 @@ function App() {
 
     if (
       authenticatedUserId.current !== userId ||
-      authGeneration.current !== generation
+      authGeneration.current !== generation ||
+      ownedBusiness.owner_id !== userId
     ) {
       return
     }
@@ -389,7 +490,7 @@ function App() {
       ...mappedBusiness,
       photos: mappedBusiness.photos ?? [],
       publicUrl: ownedBusiness.slug
-        ? `${window.location.origin}/?site=${ownedBusiness.slug}`
+        ? createPublicBusinessUrl(ownedBusiness.slug)
         : '',
     })
   }
@@ -415,14 +516,14 @@ function App() {
 
     if (business.story.length > 1000) {
       setSaveMessage(
-        'A história do negócio deve ter no máximo 1000 caracteres.'
+        'A apresentação deve ter no máximo 1000 caracteres.'
       )
       return 'error' as const
     }
 
     if (business.step === 3 && business.story.trim().length < 30) {
       setSaveMessage(
-        'Conte um pouco mais sobre seu negócio. Use pelo menos 30 caracteres.'
+        'Conte um pouco mais sobre você ou seu negócio. Use pelo menos 30 caracteres.'
       )
       return 'error' as const
     }
@@ -918,6 +1019,26 @@ function App() {
     }
   }, [view, signedIn])
 
+  useEffect(() => {
+    if (
+      !signedIn ||
+      !currentUserId ||
+      !['dashboard', 'wizard', 'template'].includes(view) ||
+      !business.ownerId ||
+      business.ownerId === currentUserId
+    ) {
+      return
+    }
+
+    loadedOwnedBusinessUserId.current = ''
+    resetBusinessState(currentUserId, accountEmail)
+    void loadOwnedBusiness(
+      currentUserId,
+      authGeneration.current,
+      accountEmail
+    )
+  }, [signedIn, currentUserId, view, business.ownerId, accountEmail])
+
   /*
    * ============================================================
    * SALVAMENTO LOCAL DO MODO DEMONSTRAÇÃO
@@ -986,6 +1107,7 @@ function App() {
     if (!requestedSite) return
 
     let mounted = true
+    setPublicPageStatus('loading')
 
     const loadPublicBusiness = async () => {
       const { data, error } = await supabase
@@ -1004,6 +1126,7 @@ function App() {
           'Negócio público não encontrado ou indisponível:',
           error ?? requestedSite
         )
+        if (mounted) setPublicPageStatus('unavailable')
         return
       }
 
@@ -1024,7 +1147,9 @@ function App() {
       setBusiness((current) => ({
         ...current,
         ...mappedBusiness,
+        publicUrl: createPublicBusinessUrl(data.slug ?? requestedSite),
       }))
+      setPublicPageStatus('ready')
     }
 
     loadPublicBusiness()
@@ -1032,7 +1157,7 @@ function App() {
     return () => {
       mounted = false
     }
-  }, [])
+  }, [requestedSite])
 
   const update = (patch: Partial<Business>) =>
     setBusiness((current) => {
@@ -1062,6 +1187,7 @@ function App() {
   const leavePublicPreview = (targetView: 'dashboard' | 'template') => {
     window.history.pushState({}, '', window.location.origin)
     setRequestedSite(null)
+    setPublicPageStatus('ready')
     setView(targetView)
   }
 
@@ -1073,6 +1199,7 @@ function App() {
     }
 
     setRequestedSite(null)
+    setPublicPageStatus('ready')
     setView('home')
 
     if (!leavingPublicPage) return
@@ -1091,9 +1218,40 @@ function App() {
     }
   }
 
+  const openInternalView = (targetView: 'home' | 'dashboard' | 'admin') => {
+    if (targetView === 'home') {
+      goHome()
+      return
+    }
+
+    if (requestedSite) {
+      window.history.pushState({}, '', window.location.origin)
+      setRequestedSite(null)
+      setPublicPageStatus('ready')
+      loadedOwnedBusinessUserId.current = ''
+
+      if (currentUserId) {
+        resetBusinessState(currentUserId, accountEmail)
+        void loadOwnedBusiness(
+          currentUserId,
+          authGeneration.current,
+          accountEmail
+        )
+      } else {
+        resetBusinessState()
+      }
+    }
+
+    setView(targetView)
+  }
+
   const start = () => {
     if (authLoading) return
-    setView(signedIn ? 'dashboard' : 'login')
+    if (signedIn) {
+      openInternalView('dashboard')
+      return
+    }
+    setView('login')
   }
 
   /*
@@ -1148,6 +1306,7 @@ function App() {
     setAccountEmail('')
     setAccountAvatarUrl('')
     setRequestedSite(null)
+    setPublicPageStatus('ready')
     setView('home')
 
     window.history.pushState(
@@ -1183,14 +1342,14 @@ function App() {
 
     if (business.step === 3 && business.story.trim().length < 30) {
       setSaveMessage(
-        'Conte um pouco mais sobre seu negócio. Use pelo menos 30 caracteres.'
+        'Conte um pouco mais sobre você ou seu negócio. Use pelo menos 30 caracteres.'
       )
       return
     }
 
     if (business.story.length > 1000) {
       setSaveMessage(
-        'A história do negócio deve ter no máximo 1000 caracteres.'
+        'A apresentação deve ter no máximo 1000 caracteres.'
       )
       return
     }
@@ -1283,10 +1442,9 @@ function App() {
       const demoSlug = createSlug(
         business.name || business.area || selectedCity
       ) || 'meu-negocio'
-      const demoPublicUrl =
-        `${window.location.origin}/?site=${demoSlug}`
+      const demoPublicUrl = createPublicBusinessUrl(demoSlug)
 
-      update({ published: true, isOwnerPaused: false, publicUrl: demoPublicUrl })
+      update({ slug: demoSlug, published: true, isOwnerPaused: false, publicUrl: demoPublicUrl })
       window.history.pushState({}, '', demoPublicUrl)
       setView('preview')
       return
@@ -1311,7 +1469,7 @@ function App() {
 
     if (business.story.trim().length < 30) {
       setSaveMessage(
-        'Conte um pouco mais sobre seu negócio. Use pelo menos 30 caracteres.'
+        'Conte um pouco mais sobre você ou seu negócio. Use pelo menos 30 caracteres.'
       )
       return
     }
@@ -1345,8 +1503,7 @@ function App() {
       if (error) throw error
 
       const publishedSlug = data.slug ?? business.slug
-      const publicUrl =
-        `${window.location.origin}/?site=${publishedSlug}`
+      const publicUrl = createPublicBusinessUrl(publishedSlug)
 
       setBusiness((current) => ({
         ...current,
@@ -1628,7 +1785,7 @@ function App() {
             start={start}
             logout={logout}
             goHome={goHome}
-            setView={setView}
+            setView={openInternalView}
           />
         }
         onBack={() => setView('dashboard')}
@@ -1722,6 +1879,35 @@ function App() {
    * DASHBOARD
    * ============================================================
    */
+  if (
+    normalizedView === 'dashboard' &&
+    currentUserId &&
+    business.ownerId &&
+    business.ownerId !== currentUserId
+  ) {
+    return (
+      <main>
+        <Header
+          requestedSite={requestedSite}
+          signedIn={signedIn}
+          isAdmin={isAdmin}
+          accountName={accountName}
+          accountEmail={accountEmail}
+          accountAvatarUrl={accountAvatarUrl}
+          menuOpen={menuOpen}
+          setMenuOpen={setMenuOpen}
+          start={start}
+          logout={logout}
+          goHome={goHome}
+          setView={openInternalView}
+        />
+        <section className="dashboard container">
+          <p className="client-empty" role="status">Carregando os dados da sua conta...</p>
+        </section>
+      </main>
+    )
+  }
+
   if (normalizedView === 'dashboard') {
     return (
       <main>
@@ -1737,7 +1923,7 @@ function App() {
           start={start}
           logout={logout}
           goHome={goHome}
-          setView={setView}
+          setView={openInternalView}
         />
 
         <section className="dashboard container">
@@ -1999,7 +2185,7 @@ function App() {
             start={start}
             logout={logout}
             goHome={goHome}
-            setView={setView}
+            setView={openInternalView}
           />
         }
         business={business}
@@ -2031,7 +2217,7 @@ function App() {
           start={start}
           logout={logout}
           goHome={goHome}
-          setView={setView}
+          setView={openInternalView}
         />
 
         <section className="wizard-shell container">
@@ -2104,6 +2290,7 @@ function App() {
 
             <WizardQuestion
               business={business}
+              publicSlugPreview={business.slug || createSlug(business.name) || 'nome-da-pagina'}
               update={update}
               addPhotos={addPhotos}
               uploadLogo={uploadLogo}
@@ -2117,9 +2304,9 @@ function App() {
                   ? saveMessage
                   : business.step === 3 &&
                       (saveMessage ===
-                        'Conte um pouco mais sobre seu negócio. Use pelo menos 30 caracteres.' ||
+                        'Conte um pouco mais sobre você ou seu negócio. Use pelo menos 30 caracteres.' ||
                         saveMessage ===
-                          'A história do negócio deve ter no máximo 1000 caracteres.')
+                          'A apresentação deve ter no máximo 1000 caracteres.')
                     ? saveMessage
                   : ''
               }
@@ -2131,9 +2318,9 @@ function App() {
                   'Selecione como você atende seus clientes.') &&
               (business.step !== 3 ||
                 (saveMessage !==
-                  'Conte um pouco mais sobre seu negócio. Use pelo menos 30 caracteres.' &&
+                  'Conte um pouco mais sobre você ou seu negócio. Use pelo menos 30 caracteres.' &&
                   saveMessage !==
-                    'A história do negócio deve ter no máximo 1000 caracteres.')) && (
+                    'A apresentação deve ter no máximo 1000 caracteres.')) && (
               <p className="field-message">
                 {saveMessage}
               </p>
@@ -2200,10 +2387,26 @@ function App() {
           start={start}
           logout={logout}
           goHome={goHome}
-          setView={setView}
+          setView={openInternalView}
         />
 
         <section className="public-preview container">
+          {requestedSite && publicPageStatus === 'loading' ? (
+            <div className="public-page-message" role="status">
+              <div>
+                <p>Carregando página...</p>
+              </div>
+            </div>
+          ) : requestedSite && publicPageStatus === 'unavailable' ? (
+            <div className="public-page-message">
+              <div>
+                <h1>Página não encontrada</h1>
+                <p>Este negócio não está disponível ou o endereço pode ter sido alterado.</p>
+                <button className="button" onClick={goHome}>Voltar para o GiroMicro</button>
+              </div>
+            </div>
+          ) : (
+            <>
           {pageOwner && (
             <aside className="owner-preview-context" aria-label="Controles da pré-visualização">
               <div className="owner-preview-heading">
@@ -2270,6 +2473,8 @@ function App() {
           {business.templateKey === 'featured'
             ? <BusinessTemplateFeatured business={business} />
             : <BusinessTemplateEssential business={business} />}
+            </>
+          )}
         </section>
       </main>
     )
@@ -2290,7 +2495,7 @@ function App() {
           start={start}
           logout={logout}
           goHome={goHome}
-          setView={setView}
+            setView={openInternalView}
         />
       }
       clients={clients}
