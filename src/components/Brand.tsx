@@ -7,12 +7,12 @@ export function Brand({ onClick }: BrandProps) {
     <button
       className="brand brand-button"
       onClick={onClick}
-      aria-label="PortalMicro - voltar à página inicial"
+      aria-label="GiroMicro - voltar à página inicial"
     >
       <img
         className="brand-logo"
-        src="/brand/portalmicro-logo.png"
-        alt="PortalMicro - Seu negócio em destaque"
+        src="/brand/giromicro-logo.png"
+        alt="GiroMicro"
       />
     </button>
   )

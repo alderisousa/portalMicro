@@ -199,7 +199,7 @@ export function Admin({ header, onBack }: AdminProps) {
             </p>
             <h1>Administração</h1>
             <p className="hero-text">
-              Visão geral dos negócios cadastrados no PortalMicro.
+              Visão geral dos negócios cadastrados no GiroMicro.
             </p>
           </div>
 
@@ -343,8 +343,8 @@ export function Admin({ header, onBack }: AdminProps) {
                         </strong>
                         <p>
                           {pendingAction.action === 'suspend'
-                            ? 'Ele deixará de aparecer no PortalMicro e sua página pública ficará indisponível até ser reativado.'
-                            : 'Se estiver publicado e não estiver pausado pelo proprietário, voltará a ficar disponível no PortalMicro.'}
+                            ? 'Ele deixará de aparecer no GiroMicro e sua página pública ficará indisponível até ser reativado.'
+                            : 'Se estiver publicado e não estiver pausado pelo proprietário, voltará a ficar disponível no GiroMicro.'}
                         </p>
                       </div>
                       <div className="admin-confirmation-actions">

@@ -11,8 +11,8 @@ export function Footer({ selectedCity, onBrandClick }: FooterProps) {
       <Brand onClick={onBrandClick} />
 
       <div className="footer-meta">
-        <span>Presença digital para quem empreende.</span>
-        <span>© 2026 PortalMicro · Atuação atual: {selectedCity}</span>
+        <span>Seu negócio em movimento.</span>
+        <span>© 2026 GiroMicro · Atuação atual: {selectedCity}</span>
       </div>
 
       <div className="footer-links">

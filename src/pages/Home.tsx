@@ -153,7 +153,7 @@ export function Home({
       {!signedIn && (
         <section className="final-cta container" id="comece-hoje">
           <div>
-            <p className="eyebrow">Seu próximo cliente está procurando</p>
+            <p className="eyebrow">GiroMicro · Seu negócio em movimento.</p>
             <h2>
               Vamos colocar seu negócio
               <br />

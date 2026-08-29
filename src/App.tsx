@@ -33,7 +33,7 @@ import {
 const legacyBusinessStorageKey = 'portalmicro-business'
 const demoBusinessStorageKey = 'portalmicro-business:demo-user'
 const sessionKey = 'portalmicro-session'
-const homeSeoTitle = 'PortalMicro | Negócios e serviços da sua região'
+const homeSeoTitle = 'GiroMicro | Seu negócio em movimento'
 
 const getLegalRoute = (): 'privacidade' | 'termos' | null => {
   const hash = window.location.hash.toLowerCase()
@@ -43,8 +43,8 @@ const getLegalRoute = (): 'privacidade' | 'termos' | null => {
 
   return null
 }
-const homeSeoDescription = 'Encontre negócios, profissionais e serviços da sua região ou crie uma página profissional para divulgar seu negócio no PortalMicro.'
-const homeCanonicalUrl = 'https://portal-micro.vercel.app/'
+const homeSeoDescription = 'Crie sua presença digital de forma simples com o GiroMicro e tenha um espaço profissional para divulgar seu negócio, serviços e trabalho.'
+const homeCanonicalUrl = 'https://www.giromicro.com.br/'
 
 const initialRequestedSite =
   new URLSearchParams(window.location.search).get('site')
@@ -254,14 +254,14 @@ function App() {
     const existingCanonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]')
 
     if (requestedSite) {
-      document.title = 'PortalMicro | Página pública de negócio'
-      setMetaContent('meta[name="description"]', 'Conheça este negócio no PortalMicro.')
+      document.title = 'GiroMicro | Página pública de negócio'
+      setMetaContent('meta[name="description"]', 'Conheça este negócio no GiroMicro.')
       setMetaContent('meta[name="robots"]', 'noindex, follow')
-      setMetaContent('meta[property="og:title"]', 'Página pública de negócio | PortalMicro')
-      setMetaContent('meta[property="og:description"]', 'Conheça este negócio no PortalMicro.')
+      setMetaContent('meta[property="og:title"]', 'Página pública de negócio | GiroMicro')
+      setMetaContent('meta[property="og:description"]', 'Conheça este negócio no GiroMicro.')
       setMetaContent('meta[property="og:url"]', window.location.href)
-      setMetaContent('meta[name="twitter:title"]', 'Página pública de negócio | PortalMicro')
-      setMetaContent('meta[name="twitter:description"]', 'Conheça este negócio no PortalMicro.')
+      setMetaContent('meta[name="twitter:title"]', 'Página pública de negócio | GiroMicro')
+      setMetaContent('meta[name="twitter:description"]', 'Conheça este negócio no GiroMicro.')
       existingCanonical?.remove()
       return
     }
@@ -2048,7 +2048,7 @@ function App() {
 
             <p className="eyebrow">
               <Sparkles size={16} />
-              Assistente portalMicro
+              Assistente GiroMicro
             </p>
 
             <h1>
