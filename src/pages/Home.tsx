@@ -11,7 +11,6 @@ interface HomeProps {
   start: () => void
   signedIn: boolean
   authLoading: boolean
-  selectedCity: string
   onBrandClick: () => void
 }
 
@@ -21,7 +20,6 @@ export function Home({
   start,
   signedIn,
   authLoading,
-  selectedCity,
   onBrandClick,
 }: HomeProps) {
   return (
@@ -32,7 +30,7 @@ export function Home({
         <div className="hero-copy">
           <p className="eyebrow">
             <Sparkles size={16} />
-            {selectedCity} · Feito para quem faz acontecer
+            Feito para quem faz acontecer
           </p>
 
           <h1>
@@ -40,8 +38,8 @@ export function Home({
           </h1>
 
           <p className="hero-text">
-            Crie uma presença profissional em {selectedCity}, divulgue o que
-            você faz e encontre novos clientes sem complicação.
+            Crie uma presença profissional, divulgue o que você faz e encontre
+            novos clientes sem complicação.
           </p>
 
           <div className="hero-actions">
@@ -81,7 +79,7 @@ export function Home({
               <div className="preview-avatar">AF</div>
               <div>
                 <strong>Ateliê Flor de Anis</strong>
-                <small>Doces artesanais · {selectedCity}</small>
+                <small>Doces artesanais · Negócio local</small>
               </div>
               <div className="preview-line" />
               <div className="preview-pills">
@@ -167,7 +165,7 @@ export function Home({
         </section>
       )}
 
-      <Footer selectedCity={selectedCity} onBrandClick={onBrandClick} />
+      <Footer onBrandClick={onBrandClick} />
     </main>
   )
 }

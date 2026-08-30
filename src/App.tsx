@@ -14,7 +14,7 @@ import { BusinessTemplateEssential } from './components/BusinessTemplateEssentia
 import { BusinessTemplateFeatured } from './components/BusinessTemplateFeatured'
 import { Header } from './components/Header'
 import { WizardQuestion } from './components/WizardQuestion'
-import { selectedCity, stepNames } from './constants/portal'
+import { stepNames } from './constants/portal'
 import { supabase } from './lib/supabase'
 import { Admin } from './pages/Admin'
 import { BusinessTemplateSelection } from './pages/BusinessTemplateSelection'
@@ -1440,7 +1440,7 @@ function App() {
       }
 
       const demoSlug = createSlug(
-        business.name || business.area || selectedCity
+        business.name || business.area || 'meu-negocio'
       ) || 'meu-negocio'
       const demoPublicUrl = createPublicBusinessUrl(demoSlug)
 
@@ -2502,7 +2502,6 @@ function App() {
       start={start}
       signedIn={signedIn}
       authLoading={authLoading}
-      selectedCity={selectedCity}
       onBrandClick={goHome}
     />
   )

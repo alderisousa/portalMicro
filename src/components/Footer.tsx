@@ -1,18 +1,17 @@
 import { Brand } from './Brand'
 
 interface FooterProps {
-  selectedCity: string
   onBrandClick: () => void
 }
 
-export function Footer({ selectedCity, onBrandClick }: FooterProps) {
+export function Footer({ onBrandClick }: FooterProps) {
   return (
     <footer className="footer container">
       <Brand onClick={onBrandClick} />
 
       <div className="footer-meta">
         <span>Seu negócio em movimento.</span>
-        <span>© 2026 GiroMicro · Atuação atual: {selectedCity}</span>
+        <span>© 2026 GiroMicro · Feito para pequenos negócios</span>
       </div>
 
       <div className="footer-links">
