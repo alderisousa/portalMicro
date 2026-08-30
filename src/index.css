@@ -181,8 +181,14 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .field-message { margin: 8px 0 0 !important; color: var(--coral) !important; font-size: 13px; }
 .field-counter { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; text-align: right; }
 .field-counter.near-limit { color: var(--coral); }
-.address-visibility { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: 13px; cursor: pointer; }
+.location-usage-note { margin-top: 18px; padding: 13px 14px; border-left: 3px solid #b9c7bc; background: rgba(220,238,228,.24); color: var(--muted); }
+.location-usage-note strong { display: block; margin-bottom: 4px; color: var(--ink); font-size: 13px; }
+.location-usage-note p { margin: 0; font-size: 12px; line-height: 1.5; }
+.address-visibility { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; color: var(--muted); font-size: 13px; cursor: pointer; }
 .address-visibility input[type='checkbox'] { width: 18px; min-height: 18px; height: 18px; margin: 0; accent-color: var(--green); }
+.address-visibility span { display: grid; gap: 4px; }
+.address-visibility strong { color: var(--ink); font-size: 13px; font-weight: 600; }
+.address-visibility small { max-width: 620px; font-size: 12px; line-height: 1.5; }
 .contact-field { display: flex; align-items: center; gap: 12px; min-height: 58px; margin-top: 12px; padding: 0 16px; border: 1px solid #b9c7bc; background: #fff; color: var(--green); }
 .contact-field:focus-within { border-color: var(--coral); }
 .contact-field input { min-height: 56px; padding: 16px 0; border: 0; background: transparent; }

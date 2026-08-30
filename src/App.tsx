@@ -46,6 +46,7 @@ const getLegalRoute = (): 'privacidade' | 'termos' | null => {
 const homeSeoDescription = 'Crie sua presença digital de forma simples com o GiroMicro e tenha um espaço profissional para divulgar seu negócio, serviços e trabalho.'
 const homeCanonicalUrl = 'https://www.giromicro.com.br/'
 const publicBusinessBaseUrl = 'https://www.giromicro.com.br/negocio/'
+const locationRequiredMessage = 'Informe os dados de localização do seu negócio para continuar.'
 
 const getPublicBusinessSlug = () => {
   const match = window.location.pathname.match(/^\/negocio\/([^/]+)\/?$/)
@@ -77,6 +78,13 @@ const createPublicBusinessUrl = (slug: string) =>
 
 const createCanonicalBusinessUrl = (slug: string) =>
   `${publicBusinessBaseUrl}${encodeURIComponent(slug)}`
+
+const hasRequiredLocation = (business: Business) =>
+  business.cep.replace(/\D/g, '').length === 8
+  && Boolean(business.street.trim())
+  && Boolean(business.neighborhood.trim())
+  && Boolean(business.city.trim())
+  && Boolean(business.number.trim())
 
 const createSeoDescription = (business: Business) => {
   const source = business.story.trim()
@@ -530,6 +538,11 @@ function App() {
 
     if (business.step === 2 && !business.location) {
       setSaveMessage('Selecione como você atende seus clientes.')
+      return 'error' as const
+    }
+
+    if (business.step === 2 && !hasRequiredLocation(business)) {
+      setSaveMessage(locationRequiredMessage)
       return 'error' as const
     }
 
@@ -1359,6 +1372,11 @@ function App() {
       return
     }
 
+    if (business.step === 2 && !hasRequiredLocation(business)) {
+      setSaveMessage(locationRequiredMessage)
+      return
+    }
+
     if (currentUserId) {
       const nextFurthestStep = Math.max(
         furthestWizardStep.current,
@@ -1429,6 +1447,13 @@ function App() {
       setSaveMessage('Escolha e confirme um modelo antes de publicar.')
       setTemplateMessage('Escolha e confirme um modelo antes de publicar.')
       update({ step: 6 })
+      setView('wizard')
+      return
+    }
+
+    if (!business.location || !hasRequiredLocation(business)) {
+      setSaveMessage(locationRequiredMessage)
+      update({ step: 2 })
       setView('wizard')
       return
     }
@@ -2300,7 +2325,8 @@ function App() {
               onSaveTemplate={(templateKey) => void saveTemplate(templateKey)}
               validationMessage={
                 business.step === 2 &&
-                saveMessage === 'Selecione como você atende seus clientes.'
+                (saveMessage === 'Selecione como você atende seus clientes.' ||
+                  saveMessage === locationRequiredMessage)
                   ? saveMessage
                   : business.step === 3 &&
                       (saveMessage ===
@@ -2314,8 +2340,9 @@ function App() {
 
             {saveMessage &&
               (business.step !== 2 ||
-                saveMessage !==
-                  'Selecione como você atende seus clientes.') &&
+                (saveMessage !==
+                  'Selecione como você atende seus clientes.' &&
+                  saveMessage !== locationRequiredMessage)) &&
               (business.step !== 3 ||
                 (saveMessage !==
                   'Conte um pouco mais sobre você ou seu negócio. Use pelo menos 30 caracteres.' &&
