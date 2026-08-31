@@ -5,7 +5,7 @@ export type Photo = {
   description: string
 }
 
-export type BusinessTemplateKey = 'essential' | 'featured'
+export type BusinessTemplateKey = 'essential' | 'featured' | 'market'
 export type BusinessModel = 'services' | 'products' | 'both'
 
 export type Business = {

@@ -20,8 +20,11 @@ import { Admin } from './pages/Admin'
 import { BusinessTemplateSelection } from './pages/BusinessTemplateSelection'
 import { Home } from './pages/Home'
 import { LegalPage } from './pages/LegalPage'
+import { MarketDashboard } from './pages/MarketDashboard'
+import { listCurrentUserMarketAccounts } from './services/market'
 import { sendNotification } from './services/notifications'
 import type { Business, BusinessTemplateKey, ClientSummary } from './types/business'
+import type { CurrentUserMarketAccess } from './types/market'
 import { formatAddress, formatCep } from './utils/formatters'
 import {
   BusinessMediaValidationError,
@@ -220,7 +223,7 @@ const mapBusinessRecord = (
     isSuspended: data.is_suspended ?? false,
     isOwnerPaused: data.is_owner_paused ?? false,
     templateKey:
-      data.template_key === 'featured' || data.template_key === 'essential'
+      data.template_key === 'featured' || data.template_key === 'essential' || data.template_key === 'market'
         ? data.template_key
         : null,
   }
@@ -240,7 +243,7 @@ function App() {
   )
 
   const [view, setView] = useState<
-    'home' | 'login' | 'dashboard' | 'wizard' | 'preview' | 'admin' | 'template'
+    'home' | 'login' | 'dashboard' | 'wizard' | 'preview' | 'admin' | 'template' | 'market'
   >(() => (initialRequestedSite ? 'preview' : 'home'))
   const [legalRoute, setLegalRoute] = useState<'privacidade' | 'termos' | null>(() => getLegalRoute())
 
@@ -259,6 +262,9 @@ function App() {
   const [authMessage, setAuthMessage] = useState('')
   const [currentUserId, setCurrentUserId] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
+  const [marketAccounts, setMarketAccounts] = useState<CurrentUserMarketAccess[]>([])
+  const [marketAccountsLoading, setMarketAccountsLoading] = useState(false)
+  const [selectedMarketAccountId, setSelectedMarketAccountId] = useState('')
   const [saveMessage, setSaveMessage] = useState('')
   const [savingBusiness, setSavingBusiness] = useState(false)
   const [savingTemplate, setSavingTemplate] = useState(false)
@@ -1033,6 +1039,21 @@ function App() {
   }, [view, signedIn])
 
   useEffect(() => {
+    let active = true
+    if (!signedIn || !currentUserId || currentUserId === 'demo-user') {
+      setMarketAccounts([])
+      setSelectedMarketAccountId('')
+      return
+    }
+    setMarketAccountsLoading(true)
+    void listCurrentUserMarketAccounts()
+      .then((accounts) => { if (active) setMarketAccounts(accounts) })
+      .catch((error) => { if (active) { console.error('Falha ao carregar acessos Market:', error); setMarketAccounts([]) } })
+      .finally(() => { if (active) setMarketAccountsLoading(false) })
+    return () => { active = false }
+  }, [signedIn, currentUserId])
+
+  useEffect(() => {
     if (
       !signedIn ||
       !currentUserId ||
@@ -1615,7 +1636,7 @@ function App() {
 
       if (error) throw error
 
-      update({ templateKey: data.template_key === 'featured' ? 'featured' : 'essential' })
+      update({ templateKey: data.template_key === 'featured' ? 'featured' : data.template_key === 'market' ? 'market' : 'essential' })
       setTemplateMessage('Modelo da página atualizado com sucesso.')
     } catch (error) {
       console.error('Falha ao salvar modelo da página:', error)
@@ -1816,6 +1837,12 @@ function App() {
         onBack={() => setView('dashboard')}
       />
     )
+  }
+
+  if (normalizedView === 'market' && signedIn) {
+    const access = marketAccounts.find((account) => account.id === selectedMarketAccountId)
+    if (access) return <MarketDashboard header={<Header requestedSite={requestedSite} signedIn={signedIn} isAdmin={isAdmin} accountName={accountName} accountEmail={accountEmail} accountAvatarUrl={accountAvatarUrl} menuOpen={menuOpen} setMenuOpen={setMenuOpen} start={start} logout={logout} goHome={goHome} setView={openInternalView} />} accountId={access.id} onBack={() => setView('dashboard')} />
+    return <main><Header requestedSite={requestedSite} signedIn={signedIn} isAdmin={isAdmin} accountName={accountName} accountEmail={accountEmail} accountAvatarUrl={accountAvatarUrl} menuOpen={menuOpen} setMenuOpen={setMenuOpen} start={start} logout={logout} goHome={goHome} setView={openInternalView} /><section className="dashboard container"><div className="admin-message is-error"><p>{marketAccountsLoading ? 'Validando seu acesso Market...' : 'Conta Market não encontrada ou acesso inativo.'}</p>{!marketAccountsLoading && <button className="button button-small" onClick={() => setView('dashboard')}>Voltar ao meu painel</button>}</div></section></main>
   }
 
   if (normalizedView === 'login') {
@@ -2114,7 +2141,7 @@ function App() {
               <div className="dashboard-template-summary">
                 <div>
                   <span>Modelo da página</span>
-                  <strong>{business.templateKey === 'featured' ? 'Destaque' : business.templateKey === 'essential' ? 'Essencial' : 'Não escolhido'}</strong>
+                  <strong>{business.templateKey === 'featured' ? 'Destaque' : business.templateKey === 'essential' ? 'Essencial' : business.templateKey === 'market' ? 'Market' : 'Não escolhido'}</strong>
                 </div>
                 <button
                   className="template-dashboard-link"
@@ -2173,6 +2200,8 @@ function App() {
               </button>
             </aside>}
           </div>
+
+          {marketAccounts.length > 0 && <section className="dashboard-market-section"><div><span className="panel-kicker">CONTA DE GESTÃO</span><h2>Gestão do Mercado</h2><p>Este acesso é independente da sua página pública e do template escolhido.</p></div><div className="dashboard-market-accounts">{marketAccounts.map((account) => { const operational = account.status === 'pilot' || account.status === 'active'; const statusLabel = account.status === 'pilot' ? 'Piloto' : account.status === 'active' ? 'Ativo' : account.status === 'suspended' ? 'Suspenso' : 'Cancelado'; return <article className={operational ? '' : 'is-blocked'} key={account.id}><div><strong>{account.name}</strong><span>{account.role === 'owner' ? 'Proprietário' : account.role === 'admin' ? 'Administrador' : account.role === 'manager' ? 'Gerente' : account.role === 'operator' ? 'Operador' : 'Visualização'} · {statusLabel}{operational ? ` · ${account.stores.length} ${account.stores.length === 1 ? 'loja' : 'lojas'}` : ''}</span></div><button className={`button button-small${operational ? '' : ' button-outline'}`} onClick={() => { setSelectedMarketAccountId(account.id); setView('market') }}>{operational ? 'Acessar gestão' : 'Ver situação'} <ArrowRight size={16} /></button></article> })}</div></section>}
 
           <div className="privacy-note">
             <Save size={16} />

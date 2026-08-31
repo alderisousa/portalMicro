@@ -19,6 +19,7 @@ interface BusinessTemplateSelectionProps extends BusinessTemplateChooserProps {
 const options: Array<{ key: BusinessTemplateKey; name: string; description: string }> = [
   { key: 'essential', name: 'Essencial', description: 'Um layout limpo e direto, com todas as informações importantes em destaque.' },
   { key: 'featured', name: 'Destaque', description: 'Uma apresentação mais visual, com foto de capa e WhatsApp em evidência.' },
+  { key: 'market', name: 'Market', description: 'Identidade visual preparada para mercados. Este modelo altera somente a apresentação pública.' },
 ]
 
 export function BusinessTemplateChooser({ business, saving, message, onSave }: BusinessTemplateChooserProps) {
@@ -37,6 +38,8 @@ export function BusinessTemplateChooser({ business, saving, message, onSave }: B
         <h1>Escolha como seu negócio será apresentado.</h1>
         <p>Os dois modelos usam os mesmos dados já cadastrados e estão disponíveis neste plano.</p>
       </div>
+
+      <p className="template-market-note">O template Market altera apenas a apresentação pública. O acesso à gestão depende de uma conta GiroMicro Market ativa.</p>
 
       <div className="template-option-grid">
         {options.map((option, index) => {
@@ -65,7 +68,7 @@ export function BusinessTemplateChooser({ business, saving, message, onSave }: B
       {previewTemplate && (
         <div className="template-live-preview" ref={previewRef}>
           <div className="template-preview-heading">
-            <div><span>Pré-visualização com seus dados</span><strong>{previewTemplate === 'essential' ? 'Essencial' : 'Destaque'}</strong></div>
+            <div><span>Pré-visualização com seus dados</span><strong>{previewTemplate === 'essential' ? 'Essencial' : previewTemplate === 'featured' ? 'Destaque' : 'Market'}</strong></div>
             <button className="button button-small button-outline" onClick={() => setPreviewTemplate(null)}>Fechar prévia</button>
           </div>
           {previewTemplate === 'featured'

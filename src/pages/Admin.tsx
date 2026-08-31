@@ -3,7 +3,11 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import type { AdminBusinessSummary } from '../types/business'
+import type { AdminAuthenticatedUser } from '../types/adminUsers'
 import { AdminBusinessEdit } from './AdminBusinessEdit'
+import { AdminMarketAccount } from './AdminMarketAccount'
+import { AdminUserDetail } from './AdminUserDetail'
+import { AdminUsers } from './AdminUsers'
 
 interface AdminProps {
   header: ReactNode
@@ -60,6 +64,10 @@ const formatCreatedAt = (value: string) => {
 }
 
 export function Admin({ header, onBack }: AdminProps) {
+  const [activeArea, setActiveArea] = useState<'users' | 'businesses'>('users')
+  const [selectedUser, setSelectedUser] = useState<AdminAuthenticatedUser | null>(null)
+  const [marketAccountId, setMarketAccountId] = useState('')
+  const [usersRefreshToken, setUsersRefreshToken] = useState(0)
   const [businesses, setBusinesses] = useState<AdminBusinessSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
@@ -186,6 +194,38 @@ export function Admin({ header, onBack }: AdminProps) {
     )
   }
 
+  if (selectedUser && marketAccountId) {
+    return (
+      <main>
+        {header}
+        <section className="admin-page container">
+          <AdminMarketAccount
+            accountId={marketAccountId}
+            onBack={() => setMarketAccountId('')}
+          />
+        </section>
+      </main>
+    )
+  }
+
+  if (selectedUser) {
+    return (
+      <main>
+        {header}
+        <section className="admin-page container">
+          <AdminUserDetail
+            selectedUser={selectedUser}
+            businesses={businesses}
+            onBack={() => setSelectedUser(null)}
+            onEditBusiness={setEditingBusinessId}
+            onManageMarket={setMarketAccountId}
+            onUserChanged={() => setUsersRefreshToken((value) => value + 1)}
+          />
+        </section>
+      </main>
+    )
+  }
+
   return (
     <main>
       {header}
@@ -199,7 +239,7 @@ export function Admin({ header, onBack }: AdminProps) {
             </p>
             <h1>Administração</h1>
             <p className="hero-text">
-              Visão geral dos negócios cadastrados no GiroMicro.
+              Gerencie usuários autenticados e páginas cadastradas no GiroMicro.
             </p>
           </div>
 
@@ -207,6 +247,16 @@ export function Admin({ header, onBack }: AdminProps) {
             Voltar ao meu painel
           </button>
         </div>
+
+        <div className="admin-tabs" role="tablist" aria-label="Áreas da administração">
+          <button role="tab" aria-selected={activeArea === 'users'} className={activeArea === 'users' ? 'is-active' : ''} onClick={() => setActiveArea('users')}>Usuários</button>
+          <button role="tab" aria-selected={activeArea === 'businesses'} className={activeArea === 'businesses' ? 'is-active' : ''} onClick={() => setActiveArea('businesses')}>Negócios/Páginas</button>
+        </div>
+
+        {activeArea === 'users' ? (
+          <AdminUsers onSelectUser={setSelectedUser} refreshToken={usersRefreshToken} />
+        ) : (
+          <>
 
         <div className="admin-summary" aria-label="Resumo dos negócios">
           <article><span>Total</span><strong>{totals.total}</strong></article>
@@ -386,6 +436,8 @@ export function Admin({ header, onBack }: AdminProps) {
               )
             })}
           </div>
+        )}
+          </>
         )}
       </section>
     </main>
