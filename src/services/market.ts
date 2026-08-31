@@ -22,6 +22,25 @@ export async function listMarketStores(accountId: string): Promise<MarketStore[]
   return (data ?? []) as MarketStore[]
 }
 
+async function listMarketStoresForMembership(accountId: string, member: MarketAccountMember): Promise<MarketStore[]> {
+  if (member.all_stores || member.role === 'owner' || member.role === 'admin') return listMarketStores(accountId)
+  const { data, error } = await supabase
+    .from('market_member_stores')
+    .select('market_store_id')
+    .eq('market_account_member_id', member.id)
+  throwIfError(error)
+  const allowedIds = (data ?? []).map((link) => link.market_store_id)
+  if (!allowedIds.length) return []
+  const { data: stores, error: storesError } = await supabase
+    .from('market_stores')
+    .select('id, market_account_id, name, external_code, description, status, created_at')
+    .eq('market_account_id', accountId)
+    .in('id', allowedIds)
+    .order('name')
+  throwIfError(storesError)
+  return (stores ?? []) as MarketStore[]
+}
+
 export async function getMarketAccount(accountId: string): Promise<MarketAccount | null> {
   const { data, error } = await supabase
     .from('market_accounts')
@@ -76,7 +95,7 @@ async function listAccountsForMemberships(
       all_stores: member.all_stores,
       member_status: member.status,
       stores: account.status === 'pilot' || account.status === 'active'
-        ? await listMarketStores(account.id)
+        ? await listMarketStoresForMembership(account.id, member)
         : [],
     }
   }))
@@ -139,7 +158,7 @@ export async function getCurrentUserMarketAccess(
     role: member.role,
     all_stores: member.all_stores,
     member_status: member.status,
-    stores: operational ? await listMarketStores(accountId) : [],
+    stores: operational ? await listMarketStoresForMembership(accountId, member as MarketAccountMember) : [],
   } as CurrentUserMarketAccess
 }
 
