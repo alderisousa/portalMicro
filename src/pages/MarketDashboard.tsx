@@ -2,6 +2,7 @@ import { ArrowLeft, Boxes, PackageSearch, Repeat2, ShoppingCart, Store } from 'l
 import { useEffect, useState, type ReactNode } from 'react'
 import { getCurrentUserMarketAccess } from '../services/market'
 import type { CurrentUserMarketAccess } from '../types/market'
+import { MarketSalesImports } from './MarketSalesImports'
 
 interface MarketDashboardProps { header: ReactNode; accountId: string; onBack: () => void }
 const roleLabels = { owner: 'Proprietário', admin: 'Administrador', manager: 'Gerente', operator: 'Operador', viewer: 'Visualização' }
@@ -9,6 +10,7 @@ const roleLabels = { owner: 'Proprietário', admin: 'Administrador', manager: 'G
 export function MarketDashboard({ header, accountId, onBack }: MarketDashboardProps) {
   const [access, setAccess] = useState<CurrentUserMarketAccess | null>(null)
   const [loading, setLoading] = useState(true)
+  const [showSalesImports, setShowSalesImports] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -25,10 +27,11 @@ export function MarketDashboard({ header, accountId, onBack }: MarketDashboardPr
   if (access.status === 'suspended' || access.status === 'cancelled') {
     return <main>{header}<section className="market-dashboard container"><button className="button button-small button-outline" onClick={onBack}><ArrowLeft size={16} /> Meu painel</button><div className="market-access-blocked"><Store size={28} /><p className="eyebrow">GiroMicro Market</p><h1>Acesso ao GiroMicro Market indisponível</h1><p>{access.status === 'suspended' ? 'Esta conta está suspensa. Entre em contato com o administrador.' : 'Esta conta do GiroMicro Market está cancelada.'}</p></div></section></main>
   }
+  if (showSalesImports) return <main>{header}<section className="market-dashboard container"><MarketSalesImports accountId={accountId} onBack={() => setShowSalesImports(false)} /></section></main>
   return <main>{header}<section className="market-dashboard container">
     <button className="button button-small button-outline" onClick={onBack}><ArrowLeft size={16} /> Meu painel</button>
     <header className="market-dashboard-header"><p className="eyebrow"><Store size={16} /> GiroMicro Market</p><h1>{access.name}</h1><p>Perfil: <strong>{roleLabels[access.role]}</strong></p></header>
     <section className="market-dashboard-section"><span className="panel-kicker">ACESSO AUTORIZADO</span><h2>Lojas disponíveis</h2>{access.stores.length ? <div className="market-dashboard-stores">{access.stores.map((store) => <article key={store.id}><Store size={20} /><div><strong>{store.name}</strong><span>{store.external_code ? `Código ${store.external_code}` : 'Sem código externo'}</span></div></article>)}</div> : <div className="admin-message">Nenhuma loja disponível para este acesso.</div>}</section>
-    <section className="market-dashboard-section"><span className="panel-kicker">PRÓXIMAS ETAPAS</span><h2>Gestão</h2><div className="market-feature-grid"><article><Boxes /><strong>Estoque</strong><span>Em breve nesta etapa do piloto</span></article><article><ShoppingCart /><strong>Compras e vendas</strong><span>Em breve nesta etapa do piloto</span></article><article><Repeat2 /><strong>Transferências</strong><span>Em breve nesta etapa do piloto</span></article><article><PackageSearch /><strong>Produtos</strong><span>Em breve nesta etapa do piloto</span></article></div></section>
+    <section className="market-dashboard-section"><span className="panel-kicker">GESTÃO</span><h2>Recursos</h2><div className="market-feature-grid"><article><Boxes /><strong>Estoque</strong><span>Em breve nesta etapa do piloto</span></article><article className="is-available"><ShoppingCart /><strong>Compras e vendas</strong><span>{access.role === 'viewer' ? 'Seu perfil possui acesso somente para visualização' : 'Analisar planilha de itens vendidos'}</span>{access.role !== 'viewer' && <button className="button button-small" onClick={() => setShowSalesImports(true)}>Importar vendas</button>}</article><article><Repeat2 /><strong>Transferências</strong><span>Em breve nesta etapa do piloto</span></article><article><PackageSearch /><strong>Produtos</strong><span>Em breve nesta etapa do piloto</span></article></div></section>
   </section></main>
 }
