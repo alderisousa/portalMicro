@@ -18,7 +18,7 @@ const throwIfError = (error: unknown) => {
 export async function listMarketStores(accountId: string): Promise<MarketStore[]> {
   const { data, error } = await supabase
     .from('market_stores')
-    .select('id, market_account_id, name, external_code, description, status, stock_control_started_at, created_at')
+    .select('id, market_account_id, name, external_code, description, store_type, status, stock_control_started_at, created_at')
     .eq('market_account_id', accountId)
     .order('name')
   throwIfError(error)
@@ -36,7 +36,7 @@ async function listMarketStoresForMembership(accountId: string, member: MarketAc
   if (!allowedIds.length) return []
   const { data: stores, error: storesError } = await supabase
     .from('market_stores')
-    .select('id, market_account_id, name, external_code, description, status, stock_control_started_at, created_at')
+    .select('id, market_account_id, name, external_code, description, store_type, status, stock_control_started_at, created_at')
     .eq('market_account_id', accountId)
     .in('id', allowedIds)
     .order('name')
@@ -196,17 +196,13 @@ export async function getCurrentUserMarketAccess(
   } as CurrentUserMarketAccess
 }
 
-export async function createMarketStore(accountId: string, input: MarketStoreInput): Promise<MarketStore> {
+export async function createMarketStore(accountId: string, input: MarketStoreInput): Promise<void> {
   const { data: authData, error: authError } = await supabase.auth.getUser()
   throwIfError(authError)
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('market_stores')
     .insert({ ...input, market_account_id: accountId, created_by: authData.user?.id ?? null })
-    .select('id, market_account_id, name, external_code, description, status, stock_control_started_at, created_at')
-    .eq('market_account_id', accountId)
-    .single()
   throwIfError(error)
-  return data as MarketStore
 }
 
 export async function updateMarketStore(accountId: string, storeId: string, input: MarketStoreInput): Promise<MarketStore> {
@@ -215,7 +211,7 @@ export async function updateMarketStore(accountId: string, storeId: string, inpu
     .update(input)
     .eq('id', storeId)
     .eq('market_account_id', accountId)
-    .select('id, market_account_id, name, external_code, description, status, stock_control_started_at, created_at')
+    .select('id, market_account_id, name, external_code, description, store_type, status, stock_control_started_at, created_at')
     .single()
   throwIfError(error)
   return data as MarketStore

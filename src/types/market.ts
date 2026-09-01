@@ -3,6 +3,7 @@ export type MarketAccountStatus = 'pilot' | 'active' | 'suspended' | 'cancelled'
 export type MarketMemberRole = 'owner' | 'admin' | 'manager' | 'operator' | 'viewer'
 export type MarketMemberStatus = 'active' | 'invited' | 'disabled'
 export type MarketStoreStatus = 'active' | 'inactive'
+export type MarketStoreType = 'store' | 'warehouse'
 
 export interface MarketAccount {
   id: string
@@ -30,6 +31,7 @@ export interface MarketStore {
   name: string
   external_code: string | null
   description: string | null
+  store_type: MarketStoreType
   status: MarketStoreStatus
   stock_control_started_at: string | null
   created_at: string
@@ -59,6 +61,7 @@ export interface AdminMarketLinkStore {
   id: string
   name: string
   externalCode: string | null
+  storeType: MarketStoreType
   status: 'active'
 }
 
@@ -66,5 +69,6 @@ export type MarketStoreInput = {
   name: string
   external_code: string | null
   description: string | null
+  store_type: MarketStoreType
   status: MarketStoreStatus
 }

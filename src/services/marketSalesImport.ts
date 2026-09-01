@@ -65,7 +65,7 @@ export async function getMarketSalesImportContext(
   ])
   return {
     access,
-    stores: access.stores,
+    stores: access.stores.filter((store) => store.store_type === 'store'),
     canImport: ['owner', 'admin', 'manager', 'operator'].includes(access.role),
     products,
     productMappings,
@@ -75,6 +75,7 @@ export async function getMarketSalesImportContext(
 const persistenceErrorMessage = (error: unknown) => {
   const raw = typeof error === 'object' && error && 'message' in error ? String(error.message) : ''
   const known: Array<[string, string]> = [
+    ['SALES_WAREHOUSE_NOT_ALLOWED', 'Galpões não podem receber vendas. Selecione somente lojas comerciais.'],
     ['STORE_NOT_FOUND', 'Uma ou mais lojas da planilha não existem nesta conta.'],
     ['STORE_NOT_ALLOWED', 'Você não possui acesso a uma ou mais lojas da planilha.'],
     ['STORE_INACTIVE', 'Uma ou mais lojas da planilha estão inativas.'],
