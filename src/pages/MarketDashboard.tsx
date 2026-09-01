@@ -4,6 +4,7 @@ import { getCurrentUserMarketAccess } from '../services/market'
 import type { CurrentUserMarketAccess } from '../types/market'
 import { MarketSalesImports } from './MarketSalesImports'
 import { MarketCommercialDashboard } from './MarketCommercialDashboard'
+import { MarketStockDashboard } from './MarketStockDashboard'
 
 interface MarketDashboardProps { header: ReactNode; accountId: string; onBack: () => void }
 const roleLabels = { owner: 'Proprietário', admin: 'Administrador', manager: 'Gerente', operator: 'Operador', viewer: 'Visualização' }
@@ -13,6 +14,7 @@ export function MarketDashboard({ header, accountId, onBack }: MarketDashboardPr
   const [loading, setLoading] = useState(true)
   const [showSalesImports, setShowSalesImports] = useState(false)
   const [showCommercialDashboard, setShowCommercialDashboard] = useState(false)
+  const [showStockDashboard, setShowStockDashboard] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -31,10 +33,11 @@ export function MarketDashboard({ header, accountId, onBack }: MarketDashboardPr
   }
   if (showSalesImports) return <main>{header}<section className="market-dashboard container"><MarketSalesImports accountId={accountId} onBack={() => setShowSalesImports(false)} /></section></main>
   if (showCommercialDashboard) return <main>{header}<section className="market-dashboard container"><MarketCommercialDashboard accountId={accountId} onBack={() => setShowCommercialDashboard(false)} /></section></main>
+  if (showStockDashboard) return <main>{header}<section className="market-dashboard container"><MarketStockDashboard accountId={accountId} onBack={() => setShowStockDashboard(false)} /></section></main>
   return <main>{header}<section className="market-dashboard container">
     <button className="button button-small button-outline" onClick={onBack}><ArrowLeft size={16} /> Meu painel</button>
     <header className="market-dashboard-header"><p className="eyebrow"><Store size={16} /> GiroMicro Market</p><h1>{access.name}</h1><p>Perfil: <strong>{roleLabels[access.role]}</strong></p></header>
     <section className="market-dashboard-section"><span className="panel-kicker">ACESSO AUTORIZADO</span><h2>Lojas disponíveis</h2>{access.stores.length ? <div className="market-dashboard-stores">{access.stores.map((store) => <article key={store.id}><Store size={20} /><div><strong>{store.name}</strong><span>{store.external_code ? `Código ${store.external_code}` : 'Sem código externo'}</span></div></article>)}</div> : <div className="admin-message">Nenhuma loja disponível para este acesso.</div>}</section>
-    <section className="market-dashboard-section"><span className="panel-kicker">GESTÃO</span><h2>Recursos</h2><div className="market-feature-grid"><article className="is-available"><BarChart3 /><strong>Dashboard Comercial</strong><span>Indicadores de vendas, lojas e produtos</span><button className="button button-small" onClick={() => setShowCommercialDashboard(true)}>Abrir Dashboard</button></article><article className="is-available"><ShoppingCart /><strong>Importações</strong><span>{access.role === 'viewer' ? 'Seu perfil possui acesso somente para visualização' : 'Analisar planilha de itens vendidos'}</span>{access.role !== 'viewer' && <button className="button button-small" onClick={() => setShowSalesImports(true)}>Importar vendas</button>}</article><article><Boxes /><strong>Estoque</strong><span>Em breve nesta etapa do piloto</span></article><article><Repeat2 /><strong>Transferências</strong><span>Em breve nesta etapa do piloto</span></article><article><PackageSearch /><strong>Produtos</strong><span>Em breve nesta etapa do piloto</span></article></div></section>
+    <section className="market-dashboard-section"><span className="panel-kicker">GESTÃO</span><h2>Recursos</h2><div className="market-feature-grid"><article className="is-available"><BarChart3 /><strong>Dashboard Comercial</strong><span>Indicadores de vendas, lojas e produtos</span><button className="button button-small" onClick={() => setShowCommercialDashboard(true)}>Abrir Dashboard</button></article><article className="is-available"><ShoppingCart /><strong>Importações</strong><span>{access.role === 'viewer' ? 'Seu perfil possui acesso somente para visualização' : 'Analisar planilha de itens vendidos'}</span>{access.role !== 'viewer' && <button className="button button-small" onClick={() => setShowSalesImports(true)}>Importar vendas</button>}</article><article className="is-available"><Boxes /><strong>Estoque</strong><span>Inventário inicial e saldo por produto</span><button className="button button-small" onClick={() => setShowStockDashboard(true)}>Abrir Estoque</button></article><article><Repeat2 /><strong>Transferências</strong><span>Em breve nesta etapa do piloto</span></article><article><PackageSearch /><strong>Produtos</strong><span>Em breve nesta etapa do piloto</span></article></div></section>
   </section></main>
 }

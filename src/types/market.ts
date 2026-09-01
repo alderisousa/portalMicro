@@ -31,6 +31,7 @@ export interface MarketStore {
   external_code: string | null
   description: string | null
   status: MarketStoreStatus
+  stock_control_started_at: string | null
   created_at: string
 }
 
