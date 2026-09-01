@@ -1,6 +1,9 @@
 import { supabase } from '../lib/supabase'
 import type {
   AdminUserMarketAccount,
+  AdminMarketLinkAccount,
+  AdminMarketLinkRole,
+  AdminMarketLinkStore,
   CurrentUserMarketAccess,
   MarketAccount,
   MarketAccountMember,
@@ -115,6 +118,37 @@ export async function listUserMarketAccounts(userId: string): Promise<AdminUserM
       : account.stores
     return { ...account, stores, store_count: stores.length }
   }))
+}
+
+export async function listAdminMarketLinkAccounts(): Promise<AdminMarketLinkAccount[]> {
+  const { data, error } = await supabase.rpc('admin_list_market_link_accounts')
+  throwIfError(error)
+  return (data ?? []) as AdminMarketLinkAccount[]
+}
+
+export async function listAdminMarketLinkStores(accountId: string): Promise<AdminMarketLinkStore[]> {
+  const { data, error } = await supabase.rpc('admin_list_market_link_stores', {
+    p_market_account_id: accountId,
+  })
+  throwIfError(error)
+  return (data ?? []) as AdminMarketLinkStore[]
+}
+
+export async function linkUserToExistingMarketAccount(
+  userId: string,
+  accountId: string,
+  role: AdminMarketLinkRole,
+  allStores: boolean,
+  storeIds: string[]
+): Promise<void> {
+  const { error } = await supabase.rpc('admin_link_existing_market_account', {
+    p_user_id: userId,
+    p_market_account_id: accountId,
+    p_role: role,
+    p_all_stores: allStores,
+    p_store_ids: storeIds,
+  })
+  throwIfError(error)
 }
 
 export async function listCurrentUserMarketAccounts(): Promise<CurrentUserMarketAccess[]> {

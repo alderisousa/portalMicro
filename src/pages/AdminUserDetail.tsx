@@ -10,7 +10,7 @@ import {
   unlinkUserFromBusiness,
   updateBusinessMember,
 } from '../services/adminUsers'
-import { listUserMarketAccounts } from '../services/market'
+import { linkUserToExistingMarketAccount, listAdminMarketLinkAccounts, listAdminMarketLinkStores, listUserMarketAccounts } from '../services/market'
 import type {
   AdminAuthenticatedUser,
   AdminUserBusiness,
@@ -20,7 +20,7 @@ import type {
   BusinessPlanCode,
 } from '../types/adminUsers'
 import type { AdminBusinessSummary } from '../types/business'
-import type { AdminUserMarketAccount, MarketPlanCode } from '../types/market'
+import type { AdminMarketLinkAccount, AdminMarketLinkRole, AdminMarketLinkStore, AdminUserMarketAccount, MarketPlanCode } from '../types/market'
 import { formatAdminDate, providerLabel, UserAvatar, userDisplayName } from './AdminUsers'
 
 interface AdminUserDetailProps {
@@ -73,6 +73,15 @@ export function AdminUserDetail({ selectedUser, businesses, onBack, onEditBusine
   const [marketName, setMarketName] = useState('')
   const [marketPlan, setMarketPlan] = useState<MarketPlanCode>('pilot')
   const [marketAccounts, setMarketAccounts] = useState<AdminUserMarketAccount[]>([])
+  const [showMarketLinkForm, setShowMarketLinkForm] = useState(false)
+  const [marketLinkAccounts, setMarketLinkAccounts] = useState<AdminMarketLinkAccount[]>([])
+  const [marketLinkStores, setMarketLinkStores] = useState<AdminMarketLinkStore[]>([])
+  const [marketLinkAccountId, setMarketLinkAccountId] = useState('')
+  const [marketLinkRole, setMarketLinkRole] = useState<AdminMarketLinkRole>('operator')
+  const [marketLinkAllStores, setMarketLinkAllStores] = useState(true)
+  const [marketLinkStoreIds, setMarketLinkStoreIds] = useState<string[]>([])
+  const [loadingMarketLink, setLoadingMarketLink] = useState(false)
+  const [marketLinkError, setMarketLinkError] = useState('')
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -102,6 +111,8 @@ export function AdminUserDetail({ selectedUser, businesses, onBack, onEditBusine
     return businesses.filter((business) => !linkedIds.has(business.id))
   }, [businesses, links])
   const ownedMarketAccount = marketAccounts.find((account) => account.role === 'owner')
+  const linkedMarketAccountIds = useMemo(() => new Set(marketAccounts.map((account) => account.id)), [marketAccounts])
+  const availableMarketLinkAccounts = useMemo(() => marketLinkAccounts.filter((account) => !linkedMarketAccountIds.has(account.id)), [linkedMarketAccountIds, marketLinkAccounts])
 
   const showError = (message: string, error: unknown) => {
     console.error(message, error)
@@ -214,6 +225,50 @@ export function AdminUserDetail({ selectedUser, businesses, onBack, onEditBusine
     }
   }
 
+  const resetMarketLinkForm = () => {
+    setShowMarketLinkForm(false); setMarketLinkAccountId(''); setMarketLinkRole('operator')
+    setMarketLinkAllStores(true); setMarketLinkStoreIds([]); setMarketLinkStores([]); setMarketLinkError('')
+  }
+
+  const openMarketLinkForm = async () => {
+    setShowMarketLinkForm(true); setLoadingMarketLink(true); setFeedback(null); setMarketLinkError('')
+    try { setMarketLinkAccounts(await listAdminMarketLinkAccounts()) }
+    catch (error) { showError('Não foi possível listar as contas Market.', error); setShowMarketLinkForm(false) }
+    finally { setLoadingMarketLink(false) }
+  }
+
+  const changeMarketLinkAccount = async (accountId: string) => {
+    setMarketLinkAccountId(accountId); setMarketLinkStoreIds([]); setMarketLinkStores([]); setMarketLinkError('')
+    if (!accountId) return
+    setLoadingMarketLink(true)
+    try { setMarketLinkStores(await listAdminMarketLinkStores(accountId)) }
+    catch (error) { console.error('Falha ao listar lojas para vínculo Market:', error); setMarketLinkError('Não foi possível listar as lojas desta conta.') }
+    finally { setLoadingMarketLink(false) }
+  }
+
+  const toggleMarketLinkStore = (storeId: string) => setMarketLinkStoreIds((current) => current.includes(storeId) ? current.filter((id) => id !== storeId) : [...current, storeId])
+
+  const submitMarketLink = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!marketLinkAccountId) return
+    if (!marketLinkAllStores && marketLinkStoreIds.length === 0) {
+      setMarketLinkError('Selecione pelo menos uma loja.'); return
+    }
+    setProcessing('market-link'); setFeedback(null); setMarketLinkError('')
+    try {
+      await linkUserToExistingMarketAccount(selectedUser.user_id, marketLinkAccountId, marketLinkRole, marketLinkAllStores, marketLinkStoreIds)
+      resetMarketLinkForm(); await loadData()
+      setFeedback({ type: 'success', message: 'Usuário vinculado ao Market com sucesso.' }); onUserChanged()
+    } catch (error) {
+      const message = typeof error === 'object' && error && 'message' in error ? String(error.message) : ''
+      if (message.includes('MARKET_LINK_ALREADY_ACTIVE')) setMarketLinkError('Este usuário já possui acesso a esta conta Market.')
+      else if (message.includes('MARKET_LINK_ALREADY_EXISTS')) setMarketLinkError('Este vínculo já existe. Use Gerenciar Market para reativar ou alterar o acesso.')
+      else if (message.includes('MARKET_LINK_STORE_REQUIRED')) setMarketLinkError('Selecione pelo menos uma loja.')
+      else if (message.includes('MARKET_LINK_INVALID_STORE')) setMarketLinkError('Uma ou mais lojas selecionadas não pertencem a esta conta Market.')
+      else { console.error('Falha ao vincular usuário ao Market:', error); setMarketLinkError('Não foi possível vincular o usuário ao Market.') }
+    } finally { setProcessing('') }
+  }
+
   if (loading) return <div className="admin-message" role="status">Carregando detalhes do usuário...</div>
   if (errorMessage || !user) return <div className="admin-message is-error"><p>{errorMessage}</p><button className="button button-small" onClick={() => void loadData()}>Tentar novamente</button></div>
 
@@ -263,9 +318,14 @@ export function AdminUserDetail({ selectedUser, businesses, onBack, onEditBusine
         {marketAccounts.length === 0 && <p>Nenhuma conta Market vinculada a este usuário.</p>}
         {marketAccounts.length > 0 && <div className="admin-market-account-list">{marketAccounts.map((account) => <article key={account.id}><div><strong>{account.name}</strong><span>Conta de gestão independente da página pública</span></div><dl><div><dt>Plano</dt><dd>{account.plan_code === 'pro' ? 'Pro' : 'Pilot'}</dd></div><div><dt>Perfil</dt><dd>{marketRoleLabel(account.role)}</dd></div><div><dt>Conta</dt><dd>{marketAccountStatusLabel(account.status)}</dd></div><div><dt>Vínculo</dt><dd>{marketStatusLabel(account.member_status)}</dd></div><div><dt>Lojas</dt><dd>{account.store_count}</dd></div></dl><button className="button button-small button-outline" onClick={() => onManageMarket(account.id)}>Gerenciar Market</button></article>)}</div>}
         {ownedMarketAccount && <p className="admin-market-owner-note">Este usuário já é proprietário da conta <strong>{ownedMarketAccount.name}</strong>. Gerencie a conta existente para alterar seu plano ou status.</p>}
-        {!ownedMarketAccount && !showMarketForm && <button className="button button-small" onClick={() => setShowMarketForm(true)}><Store size={15} /> Criar conta Market</button>}
+        <div className="admin-market-actions">
+          <div><button className="button button-small button-outline" onClick={() => void openMarketLinkForm()}><Link2 size={15} /> Vincular Market existente</button><small>Concede acesso a uma conta Market já cadastrada.</small></div>
+          {!ownedMarketAccount && !showMarketForm && <div><button className="button button-small" onClick={() => setShowMarketForm(true)}><Store size={15} /> Criar conta Market</button><small>Cria uma nova conta e torna este usuário proprietário.</small></div>}
+        </div>
         {showMarketForm && <form className="admin-inline-form" onSubmit={submitMarket}><h3>Criar conta Market</h3><div className="admin-form-row"><label>Nome da conta<input required value={marketName} onChange={(event) => setMarketName(event.target.value)} /></label><label>Plano<select value={marketPlan} onChange={(event) => setMarketPlan(event.target.value as MarketPlanCode)}><option value="pilot">Pilot</option><option value="pro">Pro</option></select></label></div><div className="admin-form-actions"><button type="button" className="button button-small button-outline" onClick={() => setShowMarketForm(false)}>Cancelar</button><button className="button button-small" disabled={processing === 'market'}><Plus size={15} /> {processing === 'market' ? 'Criando...' : 'Criar conta'}</button></div></form>}
       </section>
+
+      {showMarketLinkForm && <div className="confirm-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && processing !== 'market-link') resetMarketLinkForm() }}><form className="confirm-dialog admin-member-access-dialog" role="dialog" aria-modal="true" aria-labelledby="market-link-title" onSubmit={submitMarketLink}><header><h2 id="market-link-title">Vincular Market existente</h2><p>Conceda acesso a uma conta já existente sem criar uma nova conta Market.</p></header>{marketLinkError && <div className="admin-message is-error" role="alert">{marketLinkError}</div>}{loadingMarketLink && !marketLinkAccounts.length ? <div className="admin-message" role="status">Carregando contas Market...</div> : <><label>Conta Market<select required disabled={loadingMarketLink} value={marketLinkAccountId} onChange={(event) => void changeMarketLinkAccount(event.target.value)}><option value="">Selecione</option>{availableMarketLinkAccounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.status === 'pilot' ? 'Piloto' : 'Ativa'}</option>)}</select></label>{!availableMarketLinkAccounts.length && <p className="admin-form-note">Não há outra conta Market operacional disponível para vincular.</p>}<label>Perfil<select value={marketLinkRole} onChange={(event) => setMarketLinkRole(event.target.value as AdminMarketLinkRole)}><option value="manager">Gerente</option><option value="operator">Operador</option><option value="viewer">Visualizador</option></select></label><fieldset className="admin-store-access"><legend>Acesso às lojas</legend><label><input type="checkbox" checked={marketLinkAllStores} onChange={(event) => { setMarketLinkAllStores(event.target.checked); if (event.target.checked) setMarketLinkStoreIds([]) }} /> Acesso a todas as lojas</label>{!marketLinkAllStores && <>{loadingMarketLink ? <p>Carregando lojas...</p> : marketLinkStores.length ? marketLinkStores.map((store) => <label key={store.id}><input type="checkbox" checked={marketLinkStoreIds.includes(store.id)} onChange={() => toggleMarketLinkStore(store.id)} /> {store.name}{store.externalCode ? ` — ${store.externalCode}` : ''}</label>) : <p>Esta conta não possui lojas ativas disponíveis.</p>}</>}</fieldset></>}<div className="confirm-dialog-actions"><button type="button" className="button button-outline" onClick={resetMarketLinkForm} disabled={processing === 'market-link'}>Cancelar</button><button className="button" disabled={processing === 'market-link' || loadingMarketLink || !marketLinkAccountId || (!marketLinkAllStores && !marketLinkStoreIds.length)}>{processing === 'market-link' ? 'Vinculando...' : 'Vincular Market'}</button></div></form></div>}
 
       {confirmation?.type === 'owner' && <ConfirmDialog title="Alterar proprietário principal?" description="Este usuário passará a ser o proprietário principal desta página. Deseja continuar?" confirmLabel="Confirmar alteração" processingLabel="Alterando..." processing={processing.startsWith('member-')} onCancel={() => setConfirmation(null)} onConfirm={() => void performMemberUpdate(confirmation.business, confirmation.role, confirmation.status)} />}
       {confirmation?.type === 'unlink' && <ConfirmDialog title="Remover acesso?" description={`O usuário perderá o acesso à página ${confirmation.business.business_name?.trim() || ''}.`} confirmLabel="Remover acesso" processingLabel="Removendo..." processing={processing.startsWith('unlink-')} onCancel={() => setConfirmation(null)} onConfirm={() => void performUnlink(confirmation.business)} />}

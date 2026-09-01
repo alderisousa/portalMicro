@@ -47,6 +47,21 @@ export interface AdminUserMarketAccount extends CurrentUserMarketAccess {
   store_count: number
 }
 
+export type AdminMarketLinkRole = 'manager' | 'operator' | 'viewer'
+
+export interface AdminMarketLinkAccount {
+  id: string
+  name: string
+  status: Extract<MarketAccountStatus, 'pilot' | 'active'>
+}
+
+export interface AdminMarketLinkStore {
+  id: string
+  name: string
+  externalCode: string | null
+  status: 'active'
+}
+
 export type MarketStoreInput = {
   name: string
   external_code: string | null

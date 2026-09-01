@@ -1,4 +1,4 @@
-import { ArrowLeft, Boxes, CheckCircle2, Minus, Plus, RefreshCw, ScanBarcode, Search } from 'lucide-react'
+import { ArrowLeft, Boxes, CheckCircle2, Minus, Plus, RefreshCw, ScanBarcode, Search, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import {
   cancelMarketInventoryDraft, finalizeMarketInventoryDraft, getMarketInventoryDraft,
@@ -83,10 +83,9 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
   useEffect(() => { startedAtRef.current = startedAt }, [startedAt])
 
   const applyStoreData = async (nextStoreId: string, nextContext: MarketStockContext) => {
-    const store = nextContext.access.stores.find((candidate) => candidate.id === nextStoreId)
     const [nextBalance, nextDraft] = await Promise.all([
       nextStoreId ? getMarketStockBalance(accountId, nextStoreId) : Promise.resolve([]),
-      nextStoreId && !store?.stock_control_started_at ? getMarketInventoryDraft(accountId, nextStoreId) : Promise.resolve(null),
+      nextStoreId ? getMarketInventoryDraft(accountId, nextStoreId) : Promise.resolve(null),
     ])
     setBalance(nextBalance); setCurrentDraft(nextDraft)
     setItems([]); itemsRef.current = []; setCounting(false); setConfirming(false); setConfirmCancel(false)
@@ -109,6 +108,16 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
   const selectedStore = context?.access.stores.find((store) => store.id === storeId) ?? null
   const searchResults = useMemo(() => findMarketStockProducts(context?.products ?? [], query).slice(0, 8), [context, query])
   const positiveItems = items.filter((item) => item.quantity > 0)
+  const isCycleInventory = draft?.inventoryType === 'cycle'
+  const countedItems = isCycleInventory ? items : positiveItems
+  const balanceByProduct = useMemo(() => new Map(balance.map((row) => [row.productId, row.quantityOnHand])), [balance])
+  const cycleSummary = useMemo(() => items.reduce((summary, item) => {
+    const difference = item.quantity - (balanceByProduct.get(item.productId) ?? 0)
+    if (difference > 0) { summary.adjustmentInProducts += 1; summary.adjustmentInQuantity += difference }
+    else if (difference < 0) { summary.adjustmentOutProducts += 1; summary.adjustmentOutQuantity += Math.abs(difference) }
+    else summary.unchangedProducts += 1
+    return summary
+  }, { adjustmentInProducts: 0, adjustmentOutProducts: 0, unchangedProducts: 0, adjustmentInQuantity: 0, adjustmentOutQuantity: 0 }), [items, balanceByProduct])
 
   const markChanged = () => {
     dirtyRef.current = true; revisionRef.current += 1; setRevision(revisionRef.current); setSaveState('idle')
@@ -162,7 +171,9 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     if (!selectedStore || saving) return
     setSaving(true); setError('')
     try {
-      const created = await saveMarketInventoryDraft(selectedStore.id, null, null, new Date(startedAt).toISOString(), [])
+      const nextStartedAt = initialDateTime()
+      setStartedAt(nextStartedAt); startedAtRef.current = nextStartedAt
+      const created = await saveMarketInventoryDraft(selectedStore.id, null, null, new Date(nextStartedAt).toISOString(), [])
       setCurrentDraft(created); setItems([]); setSaveState('saved'); setCounting(true)
     } catch (cause) {
       console.error('Falha ao iniciar rascunho:', cause)
@@ -217,6 +228,11 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     itemsRef.current = next; setItems(next); markChanged()
   }
 
+  const removeCountedProduct = (productId: string) => {
+    const next = itemsRef.current.filter((item) => item.productId !== productId)
+    itemsRef.current = next; setItems(next); markChanged(); searchRef.current?.focus()
+  }
+
   const finishQuantity = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== 'Enter') return
     event.preventDefault(); setHighlightedProductId(''); searchRef.current?.focus()
@@ -227,9 +243,10 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     setSaving(true); setError('')
     try {
       if (!await persistDraft() || !draftRef.current) return
+      const inventoryType = draftRef.current.inventoryType
       await finalizeMarketInventoryDraft(draftRef.current.id, draftRef.current.version)
       setCurrentDraft(null); setItems([]); setCounting(false); setConfirming(false)
-      setSuccess('Controle de estoque iniciado com sucesso.'); await load(storeId)
+      setSuccess(inventoryType === 'cycle' ? 'Inventário concluído e saldo reconciliado com sucesso.' : 'Controle de estoque iniciado com sucesso.'); await load(storeId)
     } catch (cause) {
       console.error('Falha ao finalizar inventário:', cause)
       setError(isVersionConflict(cause) ? 'Este inventário foi atualizado em outro dispositivo. Recarregue para continuar.' : 'Não foi possível finalizar o inventário.')
@@ -271,19 +288,30 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
 
     {selectedStore && !selectedStore.stock_control_started_at && !counting && !draft && <section className="market-stock-start market-stock-welcome"><Boxes size={34} /><div><span className="panel-kicker">ESTOQUE</span><h2>Controle de estoque ainda não iniciado</h2><p>Faça uma contagem rápida dos produtos que estão na loja agora.</p></div>{context.canStart ? <button className="button market-stock-primary-action" disabled={saving} onClick={() => void startDraft()}>{saving ? 'Iniciando...' : 'Iniciar inventário'}</button> : <div className="admin-message">Seu perfil possui acesso somente para visualização.</div>}</section>}
 
-    {selectedStore && !selectedStore.stock_control_started_at && !counting && draft && <section className="market-stock-start market-stock-welcome"><RefreshCw size={34} /><div><span className="panel-kicker">RASCUNHO SALVO</span><h2>Inventário em andamento</h2><p>{draft.items.length} {draft.items.length === 1 ? 'produto contado' : 'produtos contados'} · última atualização {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(draft.updatedAt))}</p></div>{context.canStart ? <div className="market-draft-actions"><button className="button" onClick={resumeDraft}>Continuar inventário</button><button className="button button-outline" onClick={() => setConfirmCancel(true)}>Cancelar inventário</button></div> : <div className="admin-message">Seu perfil permite apenas visualizar este rascunho.</div>}{confirmCancel && <div className="market-inventory-confirm"><div><strong>Cancelar este rascunho?</strong><p>Nenhum movimento de estoque será criado.</p></div><div><button className="button button-outline" onClick={() => setConfirmCancel(false)}>Voltar</button><button className="button" disabled={saving} onClick={() => void cancelDraft()}>{saving ? 'Cancelando...' : 'Confirmar cancelamento'}</button></div></div>}</section>}
+    {selectedStore && !counting && draft && <section className="market-stock-start market-stock-welcome"><RefreshCw size={34} /><div><span className="panel-kicker">{draft.inventoryType === 'cycle' ? 'CONFERÊNCIA SALVA' : 'RASCUNHO SALVO'}</span><h2>Inventário em andamento</h2><p>{draft.items.length} {draft.items.length === 1 ? 'produto contado' : 'produtos contados'} · última atualização {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(draft.updatedAt))}</p></div>{context.canStart ? <div className="market-draft-actions"><button className="button" onClick={resumeDraft}>Continuar inventário</button><button className="button button-outline" onClick={() => setConfirmCancel(true)}>Cancelar inventário</button></div> : <div className="admin-message">Seu perfil permite apenas visualizar este rascunho.</div>}{confirmCancel && <div className="market-inventory-confirm"><div><strong>Cancelar este rascunho?</strong><p>Nenhum movimento de estoque será criado.</p></div><div><button className="button button-outline" onClick={() => setConfirmCancel(false)}>Voltar</button><button className="button" disabled={saving} onClick={() => void cancelDraft()}>{saving ? 'Cancelando...' : 'Confirmar cancelamento'}</button></div></div>}</section>}
 
-    {selectedStore && !selectedStore.stock_control_started_at && counting && <section className="market-quick-inventory">
-      <header className="market-quick-heading"><div><span className="panel-kicker">INVENTÁRIO RÁPIDO</span><h2>{selectedStore.name}</h2></div><div className={`market-draft-status ${saveState}`}><strong>{positiveItems.length} {positiveItems.length === 1 ? 'produto contado' : 'produtos contados'}</strong><small>{saveState === 'saving' ? 'Salvando...' : saveState === 'saved' ? 'Rascunho salvo' : saveState === 'error' ? 'Não foi possível salvar' : saveState === 'conflict' ? 'Conflito em outro dispositivo' : 'Alterações locais'}</small></div></header>
+    {selectedStore && counting && draft && <section className="market-quick-inventory">
+      <header className="market-quick-heading"><div><span className="panel-kicker">{isCycleInventory ? 'CONFERÊNCIA DE ESTOQUE' : 'INVENTÁRIO RÁPIDO'}</span><h2>{selectedStore.name}</h2></div><div className={`market-draft-status ${saveState}`}><strong>{countedItems.length} {countedItems.length === 1 ? 'produto contado' : 'produtos contados'}</strong><small>{saveState === 'saving' ? 'Salvando...' : saveState === 'saved' ? 'Rascunho salvo' : saveState === 'error' ? 'Não foi possível salvar' : saveState === 'conflict' ? 'Conflito em outro dispositivo' : 'Alterações locais'}</small></div></header>
       <div className="market-product-search"><Search size={23} /><input ref={searchRef} type="search" inputMode="search" autoComplete="off" placeholder="Buscar por nome, EAN, código externo ou SKU" value={query} onChange={(event) => changeSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && searchResults[0]) { event.preventDefault(); selectProduct(searchResults[0]) } }} /><button className="market-scanner-button" type="button" onClick={() => setScannerOpen(true)} aria-label="Escanear código de barras"><ScanBarcode /></button><small>EAN, código externo ou SKU exato entra automaticamente. Para nomes, pressione Enter ou escolha o produto.</small></div>
       {query && <div className="market-product-results" role="listbox">{searchResults.length ? searchResults.map((product) => <button key={product.id} type="button" onClick={() => selectProduct(product)}><span><strong>{product.name}</strong><small>{productIdentifier(product)}</small></span></button>) : <p>Nenhum produto encontrado.</p>}</div>}
-      <div className="market-counted-products">{items.length ? items.map((item) => { const product = context.products.find((candidate) => candidate.id === item.productId); if (!product) return null; return <article ref={(element) => { itemRefs.current[item.productId] = element }} className={`${item.quantity === 0 ? 'is-zero ' : ''}${highlightedProductId === item.productId ? 'is-highlighted' : ''}`} key={item.productId}><div className="market-counted-product-name"><strong>{product.name}</strong><small>{productIdentifier(product)}</small></div><div className="market-quantity-stepper"><button type="button" onClick={() => updateQuantity(item.productId, item.quantity - 1)}><Minus /></button><input ref={(element) => { quantityRefs.current[item.productId] = element }} type="number" min="0" step="0.001" inputMode="decimal" value={item.quantity} onChange={(event) => updateQuantity(item.productId, Number(event.target.value))} onKeyDown={finishQuantity} onFocus={(event) => event.target.select()} /><button type="button" onClick={() => updateQuantity(item.productId, item.quantity + 1)}><Plus /></button></div>{item.quantity === 0 && <small className="market-zero-note">Quantidade zero: não será persistida nem enviada.</small>}</article> }) : <div className="market-inventory-empty"><Search size={25} /><p>Busque o primeiro produto para começar.</p></div>}</div>
-      <label className="market-stock-start-date">Data e hora do marco inicial<input type="datetime-local" value={startedAt} onChange={(event) => { setStartedAt(event.target.value); startedAtRef.current = event.target.value; markChanged() }} /></label>
+      <div className="market-counted-products">{items.length ? items.map((item) => {
+        const product = context.products.find((candidate) => candidate.id === item.productId)
+        if (!product) return null
+        const currentQuantity = balanceByProduct.get(item.productId) ?? 0
+        const difference = item.quantity - currentQuantity
+        return <article ref={(element) => { itemRefs.current[item.productId] = element }} className={`${item.quantity === 0 && !isCycleInventory ? 'is-zero ' : ''}${highlightedProductId === item.productId ? 'is-highlighted' : ''}`} key={item.productId}>
+          <div className="market-counted-product-name"><strong>{product.name}</strong><small>{productIdentifier(product)}</small>{isCycleInventory && <span className="market-stock-comparison">Saldo {number.format(currentQuantity)} · Contagem {number.format(item.quantity)} · <b className={difference > 0 ? 'is-positive' : difference < 0 ? 'is-negative' : ''}>Diferença {difference > 0 ? '+' : ''}{number.format(difference)}</b></span>}</div>
+          <div className="market-quantity-stepper"><button type="button" aria-label={`Diminuir quantidade de ${product.name}`} onClick={() => updateQuantity(item.productId, item.quantity - 1)}><Minus /></button><input aria-label={`Quantidade contada de ${product.name}`} ref={(element) => { quantityRefs.current[item.productId] = element }} type="number" min="0" step="0.001" inputMode="decimal" value={item.quantity} onChange={(event) => updateQuantity(item.productId, Number(event.target.value))} onKeyDown={finishQuantity} onFocus={(event) => event.target.select()} /><button type="button" aria-label={`Aumentar quantidade de ${product.name}`} onClick={() => updateQuantity(item.productId, item.quantity + 1)}><Plus /></button></div>
+          {item.quantity === 0 && <small className="market-zero-note">{isCycleInventory ? 'Contado = 0. Este produto será reconciliado com saldo zero.' : 'Quantidade zero: não será persistida nem enviada.'}</small>}
+          {isCycleInventory && <button className="market-remove-counted" type="button" onClick={() => removeCountedProduct(item.productId)}><Trash2 size={15} /> Remover da contagem</button>}
+        </article>
+      }) : <div className="market-inventory-empty"><Search size={25} /><p>Busque o primeiro produto para começar.</p></div>}</div>
+      <label className="market-stock-start-date">{isCycleInventory ? 'Data e hora da conferência' : 'Data e hora do marco inicial'}<input type="datetime-local" value={startedAt} onChange={(event) => { setStartedAt(event.target.value); startedAtRef.current = event.target.value; markChanged() }} /></label>
       {saveState === 'error' && <button className="button button-small button-outline" onClick={() => void persistDraft()}>Tentar salvar novamente</button>}
-      {!confirming ? <div className="market-inventory-finish"><span>{positiveItems.length} {positiveItems.length === 1 ? 'produto será enviado' : 'produtos serão enviados'}</span><button className="button" disabled={!positiveItems.length || !startedAt || saveState === 'conflict'} onClick={() => setConfirming(true)}>Finalizar inventário</button></div> : <div className="market-inventory-confirm"><div><span className="panel-kicker">CONFIRMAR INVENTÁRIO</span><h3>{selectedStore.name}</h3><p>{positiveItems.length} {positiveItems.length === 1 ? 'produto contado' : 'produtos contados'} · marco em {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(startedAt))}</p></div><div><button className="button button-outline" disabled={saving} onClick={() => setConfirming(false)}>Continuar contando</button><button className="button" disabled={saving} onClick={() => void finalizeDraft()}>{saving ? 'Finalizando...' : 'Confirmar e iniciar estoque'}</button></div></div>}
+      {!confirming ? <div className="market-inventory-finish"><span>{countedItems.length} {countedItems.length === 1 ? (isCycleInventory ? 'produto será reconciliado' : 'produto será enviado') : (isCycleInventory ? 'produtos serão reconciliados' : 'produtos serão enviados')}</span><button className="button" disabled={!countedItems.length || !startedAt || saveState === 'conflict'} onClick={() => setConfirming(true)}>Finalizar inventário</button></div> : <div className="market-inventory-confirm"><div><span className="panel-kicker">CONFIRMAR INVENTÁRIO</span><h3>{selectedStore.name}</h3>{isCycleInventory ? <div className="market-cycle-summary"><p><strong>{items.length}</strong> produtos contados</p><p><strong>{cycleSummary.adjustmentInProducts}</strong> ajustes de entrada · {number.format(cycleSummary.adjustmentInQuantity)} unidades</p><p><strong>{cycleSummary.adjustmentOutProducts}</strong> ajustes de saída · {number.format(cycleSummary.adjustmentOutQuantity)} unidades</p><p><strong>{cycleSummary.unchangedProducts}</strong> sem diferença</p></div> : <p>{positiveItems.length} {positiveItems.length === 1 ? 'produto contado' : 'produtos contados'} · marco em {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(startedAt))}</p>}</div><div><button className="button button-outline" disabled={saving} onClick={() => setConfirming(false)}>Continuar inventário</button><button className="button" disabled={saving} onClick={() => void finalizeDraft()}>{saving ? 'Finalizando...' : isCycleInventory ? 'Confirmar inventário' : 'Confirmar e iniciar estoque'}</button></div></div>}
     </section>}
 
-    {selectedStore?.stock_control_started_at && <section className="market-stock-balance"><div><span className="panel-kicker">SALDO ATUAL</span><h2>Controle de estoque iniciado</h2><p>Marco inicial: {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(selectedStore.stock_control_started_at))}</p></div>{balance.length ? <div className="market-preview-table-wrap"><table className="market-preview-table market-stock-table"><thead><tr><th>Produto</th><th>Identificador</th><th>Quantidade atual</th></tr></thead><tbody>{balance.map((row) => { const product = context.products.find((candidate) => candidate.id === row.productId); return <tr key={`${row.marketStoreId}:${row.productId}`}><td>{row.productName}</td><td>{product ? productIdentifier(product) : row.ean || row.sku || '—'}</td><td><strong>{number.format(row.quantityOnHand)} {row.unit}</strong></td></tr> })}</tbody></table></div> : <div className="admin-message">Nenhum saldo encontrado para esta loja.</div>}</section>}
+    {selectedStore?.stock_control_started_at && !counting && <section className="market-stock-balance"><div><span className="panel-kicker">SALDO ATUAL</span><h2>Controle de estoque iniciado</h2><p>Marco inicial: {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(selectedStore.stock_control_started_at))}</p></div>{!draft && context.canStart && <button className="button market-stock-primary-action" disabled={saving} onClick={() => void startDraft()}>{saving ? 'Iniciando...' : 'Novo inventário'}</button>}{balance.length ? <div className="market-preview-table-wrap"><table className="market-preview-table market-stock-table"><thead><tr><th>Produto</th><th>Identificador</th><th>Quantidade atual</th></tr></thead><tbody>{balance.map((row) => { const product = context.products.find((candidate) => candidate.id === row.productId); return <tr key={`${row.marketStoreId}:${row.productId}`}><td>{row.productName}</td><td>{product ? productIdentifier(product) : row.ean || row.sku || '—'}</td><td><strong>{number.format(row.quantityOnHand)} {row.unit}</strong></td></tr> })}</tbody></table></div> : <div className="admin-message">Nenhum saldo encontrado para esta loja.</div>}</section>}
     {scannerOpen && <BarcodeScanner onDetected={handleScannedCode} onClose={() => { setScannerOpen(false); window.setTimeout(() => searchRef.current?.focus(), 0) }} />}
   </div>
 }

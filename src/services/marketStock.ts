@@ -3,6 +3,7 @@ import { getCurrentUserMarketAccess } from './market'
 import type {
   MarketInitialInventoryItem,
   MarketInventoryDraft,
+  MarketInventoryFinalizeResult,
   MarketStockBalanceRow,
   MarketStockContext,
   MarketStockProduct,
@@ -89,11 +90,11 @@ export async function cancelMarketInventoryDraft(sessionId: string, expectedVers
   if (error) throw error
 }
 
-export async function finalizeMarketInventoryDraft(sessionId: string, expectedVersion: number): Promise<MarketStockStartResult> {
+export async function finalizeMarketInventoryDraft(sessionId: string, expectedVersion: number): Promise<MarketInventoryFinalizeResult> {
   const { data, error } = await supabase.rpc('market_finalize_inventory_draft', {
     p_inventory_session_id: sessionId,
     p_expected_version: expectedVersion,
   })
   if (error) throw error
-  return data as MarketStockStartResult
+  return data as MarketInventoryFinalizeResult
 }
