@@ -1,5 +1,5 @@
 import { Brand } from './Brand'
-import { APP_VERSION } from '../constants/appVersion'
+import { APP_VERSION, BUILD_COMMIT } from '../constants/appVersion'
 
 interface FooterProps {
   onBrandClick: () => void
@@ -11,7 +11,7 @@ export function Footer({ onBrandClick }: FooterProps) {
       <Brand onClick={onBrandClick} />
 
       <div className="footer-meta">
-        <span>Seu negócio em movimento. · v{APP_VERSION}</span>
+        <span title={BUILD_COMMIT ? `build ${BUILD_COMMIT}` : undefined}>Seu negócio em movimento. · v{APP_VERSION}</span>
         <span>© 2026 GiroMicro · Feito para negócios que querem crescer.</span>
       </div>
 

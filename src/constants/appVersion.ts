@@ -1,1 +1,2 @@
-export const APP_VERSION = '1.3.0'
+export const APP_VERSION = __APP_VERSION__
+export const BUILD_COMMIT = __BUILD_COMMIT__ || null
