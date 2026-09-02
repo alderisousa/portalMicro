@@ -52,7 +52,7 @@ export const normalizeAndValidateProviderUrl = (provider: string, value: string)
   return `https://${ACCESYS_HOST}`
 }
 
-const providerFetch = async (
+export const providerFetch = async (
   fetcher: typeof fetch,
   url: string,
   init: RequestInit,
