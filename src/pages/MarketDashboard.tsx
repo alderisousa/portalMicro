@@ -32,7 +32,7 @@ export function MarketDashboard({ header, accountId, onBack }: MarketDashboardPr
     return <main>{header}<section className="market-dashboard container"><button className="button button-small button-outline" onClick={onBack}><ArrowLeft size={16} /> Meu painel</button><div className="market-access-blocked"><Store size={28} /><p className="eyebrow">GiroMicro Market</p><h1>Acesso ao GiroMicro Market indisponível</h1><p>{access.status === 'suspended' ? 'Esta conta está suspensa. Entre em contato com o administrador.' : 'Esta conta do GiroMicro Market está cancelada.'}</p></div></section></main>
   }
   if (showSalesImports) return <main>{header}<section className="market-dashboard container"><MarketSalesImports accountId={accountId} onBack={() => setShowSalesImports(false)} /></section></main>
-  if (showCommercialDashboard) return <main>{header}<section className="market-dashboard container"><MarketCommercialDashboard accountId={accountId} onBack={() => setShowCommercialDashboard(false)} /></section></main>
+  if (showCommercialDashboard) return <main>{header}<section className="market-dashboard container"><MarketCommercialDashboard accountId={accountId} role={access.role} onBack={() => setShowCommercialDashboard(false)} /></section></main>
   if (showStockDashboard) return <main>{header}<section className="market-dashboard container"><MarketStockDashboard accountId={accountId} onBack={() => setShowStockDashboard(false)} /></section></main>
   return <main>{header}<section className="market-dashboard container">
     <button className="button button-small button-outline" onClick={onBack}><ArrowLeft size={16} /> Meu painel</button>

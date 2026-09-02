@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'
-import { executeSalesSync, SyncApiError, type RunCounters, type SalesSyncRepository, type SyncIntegration } from './core.ts'
+import { executeSalesSync, getSalesSyncStatus, SyncApiError, type RunCounters, type SalesSyncRepository, type SyncIntegration, type SyncRunStatus } from './core.ts'
 import { createAccesysOrdersProvider } from './provider.ts'
 import { ENCRYPTION_SECRET_NAME, decryptPassword, postgresByteaToBytes } from '../market-integration-admin/crypto.ts'
 import { normalizeAndValidateProviderUrl } from '../market-integration-admin/providers.ts'
@@ -27,6 +27,15 @@ class SupabaseSalesSyncRepository implements SalesSyncRepository {
     return data === true
   }
 
+  async hasMarketRole(marketAccountId: string, roles: string[]) {
+    const { data, error } = await this.userClient.rpc('market_has_role', {
+      p_account_id: marketAccountId,
+      p_roles: roles,
+    })
+    if (error) throw new Error('Market role lookup failed')
+    return data === true
+  }
+
   async marketAccountExists(marketAccountId: string) {
     const { data, error } = await this.serviceClient.from('market_accounts').select('id')
       .eq('id', marketAccountId).in('status', ['pilot', 'active']).maybeSingle()
@@ -40,6 +49,15 @@ class SupabaseSalesSyncRepository implements SalesSyncRepository {
       .eq('market_account_id', marketAccountId).eq('id', integrationId).maybeSingle()
     if (error) throw new Error('Integration lookup failed')
     return data as SyncIntegration | null
+  }
+
+  async getEligibleIntegrations(marketAccountId: string) {
+    const { data, error } = await this.serviceClient.from('market_integrations')
+      .select('id,market_account_id,provider,base_url,external_company_id,status')
+      .eq('market_account_id', marketAccountId).eq('provider', 'accesys').eq('status', 'active')
+      .order('created_at', { ascending: true }).limit(2)
+    if (error) throw new Error('Eligible integrations lookup failed')
+    return (data ?? []) as SyncIntegration[]
   }
 
   async getCredential(marketAccountId: string, integrationId: string) {
@@ -143,6 +161,30 @@ class SupabaseSalesSyncRepository implements SalesSyncRepository {
     }
     return result as { saleId: string; inserted: boolean; itemsProcessed: number; paymentsProcessed: number }
   }
+
+  async getLatestRun(marketAccountId: string) {
+    const { data, error } = await this.serviceClient.from('market_sales_sync_runs')
+      .select('id,status,period_start,period_end,started_at,heartbeat_at,finished_at,orders_read,orders_inserted,orders_updated,items_processed,payments_processed,skipped_orders,error_message')
+      .eq('market_account_id', marketAccountId).order('started_at', { ascending: false }).limit(1).maybeSingle()
+    if (error) throw new Error('Sync status lookup failed')
+    if (!data) return null
+    return {
+      runId: data.id,
+      status: data.status,
+      periodStart: data.period_start,
+      periodEnd: data.period_end,
+      startedAt: data.started_at,
+      heartbeatAt: data.heartbeat_at,
+      finishedAt: data.finished_at,
+      ordersRead: data.orders_read,
+      ordersInserted: data.orders_inserted,
+      ordersUpdated: data.orders_updated,
+      itemsProcessed: data.items_processed,
+      paymentsProcessed: data.payments_processed,
+      skippedOrders: data.skipped_orders,
+      errorMessage: data.error_message,
+    } as SyncRunStatus
+  }
 }
 
 Deno.serve(async (request) => {
@@ -189,6 +231,11 @@ Deno.serve(async (request) => {
 
   try {
     const repository = new SupabaseSalesSyncRepository(serviceClient, userClient)
+    if (body && typeof body === 'object' && !Array.isArray(body) &&
+        (body as Record<string, unknown>).action === 'status') {
+      const result = await getSalesSyncStatus(authData.user.id, body, repository)
+      return json(result as unknown as Record<string, unknown>)
+    }
     const result = await executeSalesSync(authData.user.id, body, {
       repository,
       decryptCredential: (ciphertext) => decryptPassword(postgresByteaToBytes(ciphertext), encryptionKey),

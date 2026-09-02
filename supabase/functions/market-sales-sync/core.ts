@@ -6,6 +6,8 @@ const DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const PAGE_SIZE = 100
 const MAX_PAGES = 10_000
 const MAX_RESPONSE_DETAILS = 50
+export const MARKET_OPERATIONAL_WINDOW_DAYS = 7
+export const MARKET_OPERATIONAL_TIME_ZONE = 'America/Sao_Paulo'
 
 export type SyncStatus = 'completed' | 'partial' | 'failed'
 
@@ -51,10 +53,29 @@ export type SyncSummary = RunCounters & {
   errors: SyncErrorSummary[]
 }
 
+export type SyncRunStatus = {
+  runId: string
+  status: 'running' | SyncStatus
+  periodStart: string
+  periodEnd: string
+  startedAt: string
+  heartbeatAt: string | null
+  finishedAt: string | null
+  ordersRead: number
+  ordersInserted: number
+  ordersUpdated: number
+  itemsProcessed: number
+  paymentsProcessed: number
+  skippedOrders: number
+  errorMessage: string | null
+}
+
 export interface SalesSyncRepository {
   isGlobalAdmin(userId: string): Promise<boolean>
+  hasMarketRole(marketAccountId: string, roles: string[]): Promise<boolean>
   marketAccountExists(marketAccountId: string): Promise<boolean>
   getIntegration(marketAccountId: string, integrationId: string): Promise<SyncIntegration | null>
+  getEligibleIntegrations(marketAccountId: string): Promise<SyncIntegration[]>
   getCredential(marketAccountId: string, integrationId: string): Promise<SyncCredential | null>
   getStoreMappings(marketAccountId: string, integrationId: string): Promise<StoreMapping[]>
   beginRun(input: {
@@ -82,6 +103,7 @@ export interface SalesSyncRepository {
     items: unknown[]
     payments: unknown[]
   }): Promise<RpcResult>
+  getLatestRun(marketAccountId: string): Promise<SyncRunStatus | null>
 }
 
 export class SyncApiError extends Error {
@@ -105,6 +127,7 @@ export type SyncDependencies = {
     username: string
     password: string
   }): Promise<AccesysOrdersProvider>
+  now?(): Date
 }
 
 function asObject(value: unknown, label: string): Record<string, unknown> {
@@ -199,23 +222,80 @@ const emptyCounters = (): RunCounters => ({
   itemsProcessed: 0, paymentsProcessed: 0, skippedOrders: 0,
 })
 
+const dateInTimeZone = (date: Date) => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MARKET_OPERATIONAL_TIME_ZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date)
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? ''
+  return `${value('year')}-${value('month')}-${value('day')}`
+}
+
+export function marketOperationalWindow(now: Date) {
+  const endDate = dateInTimeZone(now)
+  const [year, month, day] = endDate.split('-').map(Number)
+  const start = new Date(Date.UTC(year, month - 1, day - (MARKET_OPERATIONAL_WINDOW_DAYS - 1)))
+  return { startDate: start.toISOString().slice(0, 10), endDate }
+}
+
+const assertOnlyFields = (body: Record<string, unknown>, allowed: string[]) => {
+  if (Object.keys(body).some((field) => !allowed.includes(field))) {
+    throw new SyncApiError('MARKET_ADMIN_FIELDS_NOT_ALLOWED', 'O modo Market nao aceita campos administrativos.', 400)
+  }
+}
+
+const EXECUTION_ROLES = ['owner', 'admin', 'manager']
+const STATUS_ROLES = ['owner', 'admin', 'manager', 'operator', 'viewer']
+
 export async function executeSalesSync(userId: string, input: unknown, dependencies: SyncDependencies) {
   const body = asObject(input, 'Corpo da requisicao')
   const marketAccountId = requiredUuid(body, 'marketAccountId')
-  const integrationId = requiredUuid(body, 'integrationId')
-  const start = parseDate(body, 'startDate')
-  const end = parseDate(body, 'endDate')
-  const days = Math.floor((end.timestamp - start.timestamp) / 86_400_000) + 1
-  if (days < 1 || days > 31) {
-    throw new SyncApiError('INVALID_PERIOD', 'O periodo deve ter entre 1 e 31 dias.', 400)
-  }
-  if (!await dependencies.repository.isGlobalAdmin(userId)) {
-    throw new SyncApiError('FORBIDDEN', 'Apenas o Admin global pode executar sincronizacoes.', 403)
+  const isMarketMode = body.action === 'refresh'
+  let integrationId: string
+  let start: { value: string; timestamp: number }
+  let end: { value: string; timestamp: number }
+
+  if (isMarketMode) {
+    const authorized = await dependencies.repository.hasMarketRole(marketAccountId, EXECUTION_ROLES)
+    if (!authorized) throw new SyncApiError('FORBIDDEN', 'Seu perfil nao pode atualizar vendas desta conta.', 403)
+    assertOnlyFields(body, ['action', 'marketAccountId'])
+    const window = marketOperationalWindow(dependencies.now?.() ?? new Date())
+    start = parseDate({ startDate: window.startDate }, 'startDate')
+    end = parseDate({ endDate: window.endDate }, 'endDate')
+  } else {
+    const globalAdmin = await dependencies.repository.isGlobalAdmin(userId)
+    if (!globalAdmin) {
+      const marketMember = await dependencies.repository.hasMarketRole(marketAccountId, EXECUTION_ROLES)
+      if (marketMember) {
+        throw new SyncApiError('MARKET_ADMIN_FIELDS_NOT_ALLOWED', 'Use a acao refresh sem campos administrativos.', 400)
+      }
+      throw new SyncApiError('FORBIDDEN', 'Apenas o Admin global pode executar este modo.', 403)
+    }
+    integrationId = requiredUuid(body, 'integrationId')
+    start = parseDate(body, 'startDate')
+    end = parseDate(body, 'endDate')
+    const days = Math.floor((end.timestamp - start.timestamp) / 86_400_000) + 1
+    if (days < 1 || days > 31) {
+      throw new SyncApiError('INVALID_PERIOD', 'O periodo deve ter entre 1 e 31 dias.', 400)
+    }
   }
   if (!await dependencies.repository.marketAccountExists(marketAccountId)) {
     throw new SyncApiError('MARKET_ACCOUNT_NOT_FOUND', 'Conta Market nao encontrada ou indisponivel.', 404)
   }
-  const integration = await dependencies.repository.getIntegration(marketAccountId, integrationId)
+  let integration: SyncIntegration | null
+  if (isMarketMode) {
+    const integrations = await dependencies.repository.getEligibleIntegrations(marketAccountId)
+    if (integrations.length === 0) {
+      throw new SyncApiError('SYNC_INTEGRATION_NOT_CONFIGURED', 'Integracao de vendas nao configurada.', 422)
+    }
+    if (integrations.length > 1) {
+      throw new SyncApiError('SYNC_INTEGRATION_AMBIGUOUS', 'A configuracao de integracao de vendas esta ambigua.', 422)
+    }
+    integration = integrations[0]
+    integrationId = integration.id
+  } else {
+    integration = await dependencies.repository.getIntegration(marketAccountId, integrationId!)
+  }
   if (!integration || integration.provider !== 'accesys' || integration.status !== 'active' ||
       !integration.external_company_id.trim()) {
     throw new SyncApiError('INTEGRATION_UNAVAILABLE', 'Integracao Accesys ativa nao encontrada.', 404)
@@ -349,5 +429,25 @@ export async function executeSalesSync(userId: string, input: unknown, dependenc
       // Best effort: nao substitui nem expoe a falha global original.
     }
     return { summary: summary('failed'), httpStatus: failure.status }
+  }
+}
+
+export async function getSalesSyncStatus(userId: string, input: unknown, repository: SalesSyncRepository) {
+  const body = asObject(input, 'Corpo da requisicao')
+  const marketAccountId = requiredUuid(body, 'marketAccountId')
+  if (body.action !== 'status') throw new SyncApiError('INVALID_REQUEST', 'Acao invalida.', 400)
+  assertOnlyFields(body, ['action', 'marketAccountId'])
+  if (!await repository.hasMarketRole(marketAccountId, STATUS_ROLES)) {
+    throw new SyncApiError('FORBIDDEN', 'Voce nao pode consultar esta conta Market.', 403)
+  }
+  if (!await repository.marketAccountExists(marketAccountId)) {
+    throw new SyncApiError('MARKET_ACCOUNT_NOT_FOUND', 'Conta Market nao encontrada ou indisponivel.', 404)
+  }
+  const run = await repository.getLatestRun(marketAccountId)
+  return {
+    sync: run ? {
+      ...run,
+      errorMessage: run.errorMessage ? 'A sincronizacao nao foi concluida.' : null,
+    } : null,
   }
 }

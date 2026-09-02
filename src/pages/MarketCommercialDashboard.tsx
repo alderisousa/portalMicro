@@ -1,9 +1,14 @@
 import { AlertTriangle, ArrowLeft, BarChart3, CalendarDays, CircleAlert, CircleCheck, Clock3, PackageSearch, RefreshCw, Store } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { getMarketCommercialDashboard } from '../services/marketCommercialDashboard'
+import { getMarketSalesSyncStatus, MarketSalesSyncError, refreshMarketSales } from '../services/marketSalesSync'
+import { canRefreshMarketSales, formatMarketSalesSyncStatus } from '../services/marketSalesSyncContract'
+import type { MarketMemberRole } from '../types/market'
 import type { MarketCommercialDashboardData, MarketDashboardQuality, MarketProductRankingItem } from '../types/marketCommercialDashboard'
+import type { MarketSalesSyncStatus } from '../types/marketSalesSync'
 
-interface Props { accountId: string; onBack: () => void }
+interface Props { accountId: string; role: MarketMemberRole; onBack: () => void }
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
 const number = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 })
 const percent = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -18,11 +23,25 @@ const qualityContent: Record<MarketDashboardQuality, { title: string; descriptio
   no_data: { title: 'Sem dados comerciais', description: 'Ainda não há uma importação finalizada disponível para este dashboard.', icon: CircleAlert },
 }
 
-export function MarketCommercialDashboard({ accountId, onBack }: Props) {
+export function MarketCommercialDashboard({ accountId, role, onBack }: Props) {
   const [storeId, setStoreId] = useState<string | null>(null)
   const [data, setData] = useState<MarketCommercialDashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [syncStatus, setSyncStatus] = useState<MarketSalesSyncStatus | null>(null)
+  const [syncStatusError, setSyncStatusError] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [confirmSync, setConfirmSync] = useState(false)
+  const [syncFeedback, setSyncFeedback] = useState('')
+
+  const loadDashboard = useCallback(async () => {
+    const result = await getMarketCommercialDashboard(accountId, storeId)
+    setData(result)
+  }, [accountId, storeId])
+
+  const loadSyncStatus = useCallback(async () => {
+    setSyncStatus(await getMarketSalesSyncStatus(accountId)); setSyncStatusError(false)
+  }, [accountId])
 
   useEffect(() => {
     let active = true
@@ -33,6 +52,32 @@ export function MarketCommercialDashboard({ accountId, onBack }: Props) {
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [accountId, storeId])
+
+  useEffect(() => {
+    void loadSyncStatus().catch((cause) => {
+      console.error('Falha ao carregar status da sincronização:', cause)
+      setSyncStatusError(true)
+    })
+  }, [loadSyncStatus])
+
+  const performSync = async () => {
+    if (syncing) return
+    setSyncing(true); setSyncFeedback('')
+    try {
+      const result = await refreshMarketSales(accountId)
+      setSyncFeedback(result.status === 'partial'
+        ? 'Vendas atualizadas parcialmente. Revise os pedidos ignorados.'
+        : result.status === 'completed'
+          ? 'Vendas atualizadas com sucesso.'
+          : 'A atualização de vendas não foi concluída.')
+      if (result.status === 'completed' || result.status === 'partial') await loadDashboard()
+      await loadSyncStatus()
+    } catch (cause) {
+      setSyncFeedback(cause instanceof MarketSalesSyncError ? cause.message : 'Não foi possível atualizar as vendas.')
+    } finally {
+      setSyncing(false); setConfirmSync(false)
+    }
+  }
 
   if (loading && !data) return <div className="admin-message" role="status"><RefreshCw size={20} /> Carregando indicadores comerciais...</div>
   if (error || !data) return <div className="admin-message is-error" role="alert"><p>{error || 'Dashboard indisponível.'}</p><button className="button button-small button-outline" onClick={onBack}>Voltar</button></div>
@@ -48,6 +93,12 @@ export function MarketCommercialDashboard({ accountId, onBack }: Props) {
       <div><p className="eyebrow"><BarChart3 size={16} /> GiroMicro Market</p><h1>Dashboard Comercial</h1><p>Acompanhe o desempenho das suas lojas e produtos.</p></div>
       <div className="market-commercial-context"><span>Conta Market</span><strong>{data.accountName}</strong><small>Período: {date(data.periodStart)} a {date(data.periodEnd)}</small></div>
     </header>
+
+    <section className="market-sales-sync-status" aria-live="polite">
+      <div><span className="panel-kicker">SINCRONIZAÇÃO DE VENDAS</span><strong>{syncStatusError ? 'Status temporariamente indisponível' : syncStatus ? `Última execução: ${formatMarketSalesSyncStatus(syncStatus.status)}` : 'Nenhuma sincronização registrada'}</strong>{syncStatus && !syncStatusError && <small>{new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(syncStatus.startedAt))} · {number.format(syncStatus.ordersRead)} pedidos lidos</small>}</div>
+      {canRefreshMarketSales(role) && <button className="button button-small" disabled={syncing} onClick={() => setConfirmSync(true)}><RefreshCw size={16} className={syncing ? 'spin' : ''} />{syncing ? 'Atualizando...' : 'Atualizar vendas'}</button>}
+    </section>
+    {syncFeedback && <p className="admin-feedback" role="status">{syncFeedback}</p>}
 
     <section className={`market-data-quality ${data.quality}`}>
       <QualityIcon size={23} /><div><strong>{quality.title}</strong><p>{quality.description}</p>{data.periodEnd && <small>Dados disponíveis até {date(data.periodEnd)}</small>}{data.hasGaps && <div className="market-coverage-gaps"><strong>{data.gapCount === 1 ? 'Período sem dados:' : 'Períodos sem dados:'}</strong><ul>{data.gaps.map((gap) => <li key={`${gap.startDate}:${gap.endDate}`}>{date(gap.startDate)} a {date(gap.endDate)}</li>)}</ul></div>}</div>
@@ -71,7 +122,7 @@ export function MarketCommercialDashboard({ accountId, onBack }: Props) {
       <section className={`market-commercial-attention ${data.negativeProfit.length ? 'has-alerts' : ''}`}><div><span className="panel-kicker">ATENÇÃO</span><h2>{data.negativeProfit.length ? 'Existem vendas com resultado negativo no período.' : 'Nenhum resultado negativo identificado.'}</h2><p>Este bloco considera somente o resultado comercial importado e não utiliza dados de estoque.</p></div>{data.negativeProfit.length > 0 && <ol>{data.negativeProfit.map((item) => <li key={item.product_key}><span>{item.product_name}<small>{item.identifier || 'Sem identificador'}</small></span><strong>{currency.format(item.profit)}</strong></li>)}</ol>}</section>
     </> : <div className="market-dashboard-blocked"><CircleAlert /><h2>Importe vendas para começar</h2><p>O Dashboard Comercial será preenchido depois que uma importação for concluída.</p></div>}
 
-    <aside className="market-daily-import-hint"><CalendarDays size={21} /><p>Para acompanhar evolução diária, semanal e mensal, importe regularmente o relatório “Ontem” do seu sistema de vendas.</p></aside>
+    {confirmSync && <ConfirmDialog title="Atualizar vendas?" description="As vendas dos últimos 7 dias serão consultadas para toda a conta Market. Esta ação não movimenta estoque." confirmLabel="Atualizar vendas" processingLabel="Atualizando..." processing={syncing} confirmVariant="primary" onCancel={() => setConfirmSync(false)} onConfirm={() => void performSync()} />}
   </div>
 }
 

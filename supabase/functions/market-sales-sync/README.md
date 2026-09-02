@@ -21,6 +21,20 @@ Somente `POST` com JSON:
 O periodo e inclusivo e limitado a 31 dias. URL, `companyId`, usuario e senha
 sempre vem da integracao persistida; Bearer e senha nunca sao aceitos no request.
 
+O modo operacional Market usa `{ "action": "refresh", "marketAccountId": "uuid" }`.
+Somente owner, admin ou manager ativo pode solicitar, sempre após autorização
+server-side por `market_has_role`. A integração Accesys ativa é resolvida no
+backend e deve ser única. A janela é centralizada em 7 dias incluindo hoje, em
+`America/Sao_Paulo`; integrationId e período administrativo são rejeitados.
+
+Como a consulta Accesys é company-wide, um manager autorizado pode disparar a
+sincronização da conta inteira mesmo tendo escopo de leitura limitado a algumas
+lojas. A leitura posterior continua limitada pelas policies de cada loja.
+
+`{ "action": "status", "marketAccountId": "uuid" }` permite que qualquer
+membership ativa consulte somente o último resumo sanitizado da própria conta.
+As tabelas de runs e erros continuam sem SELECT direto para authenticated.
+
 ## Fluxo
 
 1. Valida sessao com o client anonimo e autorizacao global com `is_admin()`.

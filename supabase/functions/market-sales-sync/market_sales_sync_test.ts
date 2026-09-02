@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   executeSalesSync,
+  getSalesSyncStatus,
+  marketOperationalWindow,
   SyncApiError,
   type RunCounters,
   type SalesSyncRepository,
@@ -45,12 +47,16 @@ const request = () => ({
 
 class MemoryRepository implements SalesSyncRepository {
   globalAdmin = true
+  marketRole = false
+  memberRole = 'viewer'
+  memberActive = true
   accountExists = true
   integration = {
     id: INTEGRATION_ID, market_account_id: ACCOUNT_ID, provider: 'accesys',
     base_url: 'https://apigateway.accesyslab.com.br', external_company_id: '434', status: 'active',
   }
   credential = { username: 'sync@example.invalid', password_ciphertext: '\\x0102' }
+  eligibleIntegrations = [this.integration]
   mappings = [{ id: STORE_REF_ID, external_store_id: '2511' }]
   errors: Array<Record<string, unknown>> = []
   finishes: Array<{ status: SyncStatus; counters: RunCounters; error: string | null }> = []
@@ -58,11 +64,17 @@ class MemoryRepository implements SalesSyncRepository {
   beginError: Error | null = null
   persisted = new Set<string>()
   rpcFailureIds = new Set<string>()
+  credentialCalls = 0
+  latestRun = null as Awaited<ReturnType<SalesSyncRepository['getLatestRun']>>
 
   async isGlobalAdmin() { return this.globalAdmin }
+  async hasMarketRole(_marketAccountId: string, roles: string[]) {
+    return this.marketRole && this.memberActive && roles.includes(this.memberRole)
+  }
   async marketAccountExists() { return this.accountExists }
   async getIntegration() { return this.integration }
-  async getCredential() { return this.credential }
+  async getEligibleIntegrations() { return this.eligibleIntegrations }
+  async getCredential() { this.credentialCalls += 1; return this.credential }
   async getStoreMappings() { return this.mappings }
   async beginRun() {
     if (this.beginError) throw this.beginError
@@ -80,6 +92,7 @@ class MemoryRepository implements SalesSyncRepository {
     this.persisted.add(id)
     return { saleId: id, inserted, itemsProcessed: input.items.length, paymentsProcessed: input.payments.length }
   }
+  async getLatestRun() { return this.latestRun }
 }
 
 class MemoryProvider implements AccesysOrdersProvider {
@@ -111,6 +124,150 @@ test('rejeita usuario que nao e Admin global antes de criar run', async () => {
     (error: unknown) => error instanceof SyncApiError && error.code === 'FORBIDDEN',
   )
   assert.equal(repository.finishes.length, 0)
+})
+
+test('modo Admin global preserva integrationId e periodo manual', async () => {
+  const repository = new MemoryRepository()
+  const provider = new MemoryProvider([{ records: 0, page: 1, pages: 1, items: [] }])
+  const result = await executeSalesSync(USER_ID, request(), dependencies(repository, provider))
+  assert.deepEqual(result.summary.period, { startDate: '2026-09-01', endDate: '2026-09-02' })
+  assert.equal(result.summary.status, 'completed')
+})
+
+test('owner, admin e manager podem executar modo Market company-wide', async () => {
+  for (const role of ['owner', 'admin', 'manager']) {
+    const repository = new MemoryRepository()
+    repository.globalAdmin = false
+    repository.marketRole = true
+    repository.memberRole = role
+    const provider = new MemoryProvider([{ records: 0, page: 1, pages: 1, items: [] }])
+    const result = await executeSalesSync(USER_ID, { action: 'refresh', marketAccountId: ACCOUNT_ID }, {
+      ...dependencies(repository, provider),
+      now: () => new Date('2026-09-02T02:30:00Z'),
+    })
+    assert.equal(result.summary.status, 'completed', role)
+    assert.equal(repository.eligibleIntegrations[0].id, INTEGRATION_ID)
+  }
+})
+
+test('operator, viewer, invited e disabled sao negados antes de credenciais', async () => {
+  for (const state of ['operator', 'viewer', 'invited', 'disabled']) {
+    const repository = new MemoryRepository()
+    repository.globalAdmin = false
+    repository.marketRole = true
+    repository.memberRole = state === 'operator' ? 'operator' : 'viewer'
+    repository.memberActive = state !== 'invited' && state !== 'disabled'
+    await assert.rejects(
+      () => executeSalesSync(USER_ID, { action: 'refresh', marketAccountId: ACCOUNT_ID },
+        dependencies(repository, new MemoryProvider([]))),
+      (error: unknown) => error instanceof SyncApiError && error.code === 'FORBIDDEN',
+      state,
+    )
+    assert.equal(repository.credentialCalls, 0, state)
+  }
+})
+
+test('modo Market rejeita campos administrativos explicitamente', async () => {
+  const repository = new MemoryRepository()
+  repository.globalAdmin = false
+  repository.marketRole = true
+  repository.memberRole = 'manager'
+  for (const extra of [{ integrationId: INTEGRATION_ID }, { startDate: '2026-09-01' }, { endDate: '2026-09-02' }]) {
+    await assert.rejects(
+      () => executeSalesSync(USER_ID, { action: 'refresh', marketAccountId: ACCOUNT_ID, ...extra },
+        dependencies(repository, new MemoryProvider([]))),
+      (error: unknown) => error instanceof SyncApiError && error.code === 'MARKET_ADMIN_FIELDS_NOT_ALLOWED',
+    )
+  }
+  assert.equal(repository.credentialCalls, 0)
+})
+
+test('modo Market resolve uma integracao e rejeita zero ou multiplas', async () => {
+  const repository = new MemoryRepository()
+  repository.globalAdmin = false
+  repository.marketRole = true
+  repository.memberRole = 'manager'
+  repository.eligibleIntegrations = []
+  await assert.rejects(
+    () => executeSalesSync(USER_ID, { action: 'refresh', marketAccountId: ACCOUNT_ID }, dependencies(repository, new MemoryProvider([]))),
+    (error: unknown) => error instanceof SyncApiError && error.code === 'SYNC_INTEGRATION_NOT_CONFIGURED',
+  )
+  repository.eligibleIntegrations = [repository.integration, { ...repository.integration, id: '66666666-6666-4666-8666-666666666666' }]
+  await assert.rejects(
+    () => executeSalesSync(USER_ID, { action: 'refresh', marketAccountId: ACCOUNT_ID }, dependencies(repository, new MemoryProvider([]))),
+    (error: unknown) => error instanceof SyncApiError && error.code === 'SYNC_INTEGRATION_AMBIGUOUS',
+  )
+})
+
+test('conta adulterada ou nao operacional e negada antes de credenciais', async () => {
+  const repository = new MemoryRepository()
+  repository.globalAdmin = false
+  repository.marketRole = false
+  await assert.rejects(
+    () => executeSalesSync(USER_ID, { action: 'refresh', marketAccountId: '77777777-7777-4777-8777-777777777777' },
+      dependencies(repository, new MemoryProvider([]))),
+    (error: unknown) => error instanceof SyncApiError && error.code === 'FORBIDDEN',
+  )
+  repository.marketRole = true
+  repository.memberRole = 'manager'
+  repository.accountExists = false
+  await assert.rejects(
+    () => executeSalesSync(USER_ID, { action: 'refresh', marketAccountId: ACCOUNT_ID },
+      dependencies(repository, new MemoryProvider([]))),
+    (error: unknown) => error instanceof SyncApiError && error.code === 'MARKET_ACCOUNT_NOT_FOUND',
+  )
+  assert.equal(repository.credentialCalls, 0)
+})
+
+test('janela Market usa sete dias incluindo hoje em America/Sao_Paulo', () => {
+  assert.deepEqual(marketOperationalWindow(new Date('2026-09-02T02:30:00Z')), {
+    startDate: '2026-08-26', endDate: '2026-09-01',
+  })
+  assert.deepEqual(marketOperationalWindow(new Date('2026-09-02T03:30:00Z')), {
+    startDate: '2026-08-27', endDate: '2026-09-02',
+  })
+})
+
+test('status permite membership ativa, filtra por conta e retorna DTO sanitizado', async () => {
+  for (const role of ['owner', 'admin', 'manager', 'operator', 'viewer']) {
+    const repository = new MemoryRepository()
+    repository.marketRole = true
+    repository.memberRole = role
+    repository.latestRun = {
+      runId: RUN_ID, status: 'completed', periodStart: '2026-08-27', periodEnd: '2026-09-02',
+      startedAt: '2026-09-02T10:00:00Z', heartbeatAt: '2026-09-02T10:01:00Z',
+      finishedAt: '2026-09-02T10:01:01Z', ordersRead: 10, ordersInserted: 1,
+      ordersUpdated: 9, itemsProcessed: 12, paymentsProcessed: 10, skippedOrders: 0,
+      errorMessage: 'raw SQL detail that must not leave backend',
+    }
+    const result = await getSalesSyncStatus(USER_ID, { action: 'status', marketAccountId: ACCOUNT_ID }, repository)
+    assert.equal(result.sync?.runId, RUN_ID, role)
+    const serialized = JSON.stringify(result)
+    for (const forbidden of ['integrationId', 'password', 'token', 'provider', 'sql', 'customer']) {
+      assert.equal(serialized.toLowerCase().includes(forbidden.toLowerCase()), false, role)
+    }
+    assert.equal(result.sync?.errorMessage, 'A sincronizacao nao foi concluida.', role)
+  }
+})
+
+test('status nega membership inativa ou conta errada e trata ausencia de run', async () => {
+  const repository = new MemoryRepository()
+  await assert.rejects(
+    () => getSalesSyncStatus(USER_ID, { action: 'status', marketAccountId: ACCOUNT_ID }, repository),
+    (error: unknown) => error instanceof SyncApiError && error.code === 'FORBIDDEN',
+  )
+  repository.marketRole = true
+  repository.memberRole = 'viewer'
+  repository.accountExists = false
+  await assert.rejects(
+    () => getSalesSyncStatus(USER_ID, { action: 'status', marketAccountId: ACCOUNT_ID }, repository),
+    (error: unknown) => error instanceof SyncApiError && error.code === 'MARKET_ACCOUNT_NOT_FOUND',
+  )
+  repository.accountExists = true
+  assert.deepEqual(
+    await getSalesSyncStatus(USER_ID, { action: 'status', marketAccountId: ACCOUNT_ID }, repository),
+    { sync: null },
+  )
 })
 
 test('valida UUIDs, datas, ordem e limite inclusivo de 31 dias', async () => {
