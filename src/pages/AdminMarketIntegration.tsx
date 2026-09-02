@@ -1,13 +1,19 @@
 import { CheckCircle2, CircleAlert, KeyRound, PlugZap, RefreshCw } from 'lucide-react'
-import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   ACCESYS_BASE_URL,
   findAccesysIntegrationId,
   getMarketIntegration,
   saveMarketIntegration,
+  syncMarketSales,
   testMarketIntegration,
 } from '../services/marketIntegration'
-import type { MarketIntegrationConfiguration, MarketIntegrationStatus } from '../types/marketIntegration'
+import type {
+  MarketIntegrationConfiguration,
+  MarketIntegrationStatus,
+  MarketSalesSyncResult,
+} from '../types/marketIntegration'
 
 interface AdminMarketIntegrationProps {
   marketAccountId: string
@@ -21,6 +27,7 @@ type FormState = {
 }
 
 type Feedback = { type: 'success' | 'error'; message: string }
+type SyncPeriod = { startDate: string; endDate: string }
 
 const emptyForm: FormState = {
   externalCompanyId: '',
@@ -28,6 +35,25 @@ const emptyForm: FormState = {
   password: '',
   status: 'inactive',
 }
+
+const todayInputValue = () => {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const formatInputDate = (value: string) => {
+  const [year, month, day] = value.split('-')
+  return `${day}/${month}/${year}`
+}
+
+const syncStatusLabels = {
+  completed: 'Concluído',
+  partial: 'Concluído com pendências',
+  failed: 'Falhou',
+} as const
 
 const formatTestDate = (value: string | null) => {
   if (!value) return 'Ainda não realizado'
@@ -48,7 +74,14 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [feedback, setFeedback] = useState<Feedback | null>(null)
+  const [syncFeedback, setSyncFeedback] = useState<Feedback | null>(null)
+  const [syncResult, setSyncResult] = useState<MarketSalesSyncResult | null>(null)
+  const [pendingSyncPeriod, setPendingSyncPeriod] = useState<SyncPeriod | null>(null)
+  const [startDate, setStartDate] = useState(todayInputValue)
+  const [endDate, setEndDate] = useState(todayInputValue)
+  const syncInFlight = useRef(false)
 
   const applyIntegration = useCallback((value: MarketIntegrationConfiguration) => {
     setIntegration(value)
@@ -63,6 +96,9 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
   const loadIntegration = useCallback(async () => {
     setLoading(true)
     setFeedback(null)
+    setSyncFeedback(null)
+    setSyncResult(null)
+    setPendingSyncPeriod(null)
     try {
       const integrationId = await findAccesysIntegrationId(marketAccountId)
       if (!integrationId) {
@@ -85,6 +121,7 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (syncInFlight.current || syncing) return
     if (!form.externalCompanyId.trim() || !form.username.trim()) {
       setFeedback({ type: 'error', message: 'Informe o Company ID e o usuário da integração.' })
       return
@@ -118,7 +155,7 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
   }
 
   const testConnection = async () => {
-    if (!integration?.id || !integration.hasCredentials || testing) return
+    if (!integration?.id || !integration.hasCredentials || testing || syncInFlight.current || syncing) return
     setTesting(true)
     setFeedback(null)
     try {
@@ -141,6 +178,58 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
     }
   }
 
+  const requestSalesSync = () => {
+    if (!integration?.id || syncInFlight.current || syncing || saving || testing) return
+    setSyncFeedback(null)
+    setSyncResult(null)
+    if (!startDate || !endDate) {
+      setSyncFeedback({ type: 'error', message: 'Informe a data inicial e a data final.' })
+      return
+    }
+    const start = Date.parse(`${startDate}T00:00:00Z`)
+    const end = Date.parse(`${endDate}T00:00:00Z`)
+    const periodDays = Math.floor((end - start) / 86_400_000) + 1
+    if (!Number.isFinite(start) || !Number.isFinite(end) || periodDays < 1) {
+      setSyncFeedback({ type: 'error', message: 'A data inicial deve ser anterior ou igual à data final.' })
+      return
+    }
+    if (periodDays > 31) {
+      setSyncFeedback({ type: 'error', message: 'O período máximo por sincronização é de 31 dias.' })
+      return
+    }
+    setPendingSyncPeriod({ startDate, endDate })
+  }
+
+  const synchronizeSales = async () => {
+    if (!integration?.id || !pendingSyncPeriod || syncInFlight.current || syncing || saving || testing) return
+    const period = pendingSyncPeriod
+    syncInFlight.current = true
+    setPendingSyncPeriod(null)
+    setSyncing(true)
+    try {
+      const result = await syncMarketSales({
+        marketAccountId,
+        integrationId: integration.id,
+        startDate: period.startDate,
+        endDate: period.endDate,
+      })
+      setSyncResult(result)
+      setSyncFeedback(result.status === 'failed'
+        ? { type: 'error', message: 'A sincronização falhou. Consulte o resumo e o ID da execução.' }
+        : result.status === 'partial'
+          ? { type: 'error', message: 'A sincronização terminou com pendências. Alguns pedidos não foram processados.' }
+          : { type: 'success', message: 'Sincronização de vendas concluída.' })
+    } catch (error) {
+      setSyncFeedback({
+        type: 'error',
+        message: safeMessage(error, 'Não foi possível executar a sincronização de vendas.'),
+      })
+    } finally {
+      syncInFlight.current = false
+      setSyncing(false)
+    }
+  }
+
   return <section className="admin-market-block admin-integration-section">
     <div className="admin-list-heading">
       <div><span className="panel-kicker">INTEGRAÇÕES</span><h2>Integração Accesys</h2></div>
@@ -154,22 +243,22 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
       <form className="admin-inline-form admin-integration-form" onSubmit={save}>
         <div className="admin-form-row">
           <label>Provider<select value="accesys" disabled aria-label="Provider"><option value="accesys">Accesys</option></select></label>
-          <label>Status<select value={form.status} disabled={saving || testing} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as MarketIntegrationStatus }))}><option value="active">Ativa</option><option value="inactive">Inativa</option></select></label>
+          <label>Status<select value={form.status} disabled={saving || testing || syncing} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as MarketIntegrationStatus }))}><option value="active">Ativa</option><option value="inactive">Inativa</option></select></label>
         </div>
         <div className="admin-form-row">
-          <label>Company ID<strong aria-hidden="true"> *</strong><input required autoComplete="off" value={form.externalCompanyId} disabled={saving || testing} onChange={(event) => setForm((current) => ({ ...current, externalCompanyId: event.target.value }))} /></label>
+          <label>Company ID<strong aria-hidden="true"> *</strong><input required autoComplete="off" value={form.externalCompanyId} disabled={saving || testing || syncing} onChange={(event) => setForm((current) => ({ ...current, externalCompanyId: event.target.value }))} /></label>
           <label>URL da API<input readOnly value={ACCESYS_BASE_URL} aria-describedby="accesys-url-note" /></label>
         </div>
         <p id="accesys-url-note" className="admin-form-note">Host oficial validado pelo backend. Esta URL não pode ser alterada nesta fase.</p>
         <div className="admin-form-row admin-integration-credentials">
-          <label>Usuário / e-mail<strong aria-hidden="true"> *</strong><input required type="text" autoComplete="off" value={form.username} disabled={saving || testing} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} /></label>
-          <label>Senha{!integration?.hasCredentials && <strong aria-hidden="true"> *</strong>}<input type="password" required={!integration?.hasCredentials} autoComplete="new-password" value={form.password} disabled={saving || testing} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} /></label>
+          <label>Usuário / e-mail<strong aria-hidden="true"> *</strong><input required type="text" autoComplete="off" value={form.username} disabled={saving || testing || syncing} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} /></label>
+          <label>Senha{!integration?.hasCredentials && <strong aria-hidden="true"> *</strong>}<input type="password" required={!integration?.hasCredentials} autoComplete="new-password" value={form.password} disabled={saving || testing || syncing} onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} /></label>
         </div>
         <div className={`admin-credential-state ${integration?.hasCredentials ? 'is-configured' : ''}`}>
           <KeyRound size={17} />
           <div><strong>{integration?.hasCredentials ? 'Senha configurada' : 'Senha ainda não configurada'}</strong><span>{integration?.hasCredentials ? 'Deixe o campo vazio para manter a senha atual.' : 'A senha é obrigatória na primeira configuração.'}</span></div>
         </div>
-        <div className="admin-form-actions"><button className="button button-small" disabled={saving || testing}>{saving ? 'Salvando...' : 'Salvar configuração'}</button></div>
+        <div className="admin-form-actions"><button className="button button-small" disabled={saving || testing || syncing}>{saving ? 'Salvando...' : 'Salvar configuração'}</button></div>
       </form>
 
       <div className="admin-integration-test">
@@ -178,9 +267,47 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
           <h3>Validar acesso à Accesys</h3>
           <dl><div><dt>Último teste</dt><dd>{formatTestDate(integration?.lastTestAt ?? null)}</dd></div><div><dt>Resultado</dt><dd className={integration?.lastTestSucceeded === true ? 'is-success' : integration?.lastTestSucceeded === false ? 'is-error' : ''}>{integration?.lastTestSucceeded === true ? <><CheckCircle2 size={16} /> Conexão realizada com sucesso.</> : integration?.lastTestSucceeded === false ? <><CircleAlert size={16} /> {integration.lastTestError || 'Falha ao validar a conexão.'}</> : 'Aguardando primeiro teste.'}</dd></div></dl>
         </div>
-        <button type="button" className="button button-small button-outline" disabled={!integration?.id || !integration.hasCredentials || saving || testing} onClick={() => void testConnection()}>{testing ? <><RefreshCw size={15} /> Testando...</> : <><PlugZap size={15} /> Testar conexão</>}</button>
+        <button type="button" className="button button-small button-outline" disabled={!integration?.id || !integration.hasCredentials || saving || testing || syncing} onClick={() => void testConnection()}>{testing ? <><RefreshCw size={15} /> Testando...</> : <><PlugZap size={15} /> Testar conexão</>}</button>
       </div>
       {!integration?.id && <p className="admin-form-note">Salve a primeira configuração antes de testar a conexão.</p>}
+
+      <div className="admin-sales-sync">
+        <div className="admin-sales-sync-heading">
+          <div><span className="panel-kicker">EXECUÇÃO MANUAL</span><h3>Sincronização de vendas</h3></div>
+          <p>Consulta a empresa Accesys e persiste vendas, itens e pagamentos. Não altera o estoque.</p>
+        </div>
+        <div className="admin-sales-sync-form">
+          <label>Data inicial<strong aria-hidden="true"> *</strong><input type="date" required value={startDate} disabled={syncing || saving || testing} onChange={(event) => setStartDate(event.target.value)} /></label>
+          <label>Data final<strong aria-hidden="true"> *</strong><input type="date" required value={endDate} disabled={syncing || saving || testing} onChange={(event) => setEndDate(event.target.value)} /></label>
+          <button type="button" className="button button-small" disabled={!integration?.id || integration.status !== 'active' || !integration.hasCredentials || syncing || saving || testing} onClick={requestSalesSync}>{syncing ? <><RefreshCw size={15} /> Sincronizando...</> : 'Sincronizar vendas'}</button>
+        </div>
+        {(!integration?.id || integration.status !== 'active' || !integration.hasCredentials) && <p className="admin-form-note">A integração precisa estar ativa e com credenciais configuradas.</p>}
+        {syncFeedback && <p className={`admin-feedback ${syncFeedback.type}`} role={syncFeedback.type === 'error' ? 'alert' : 'status'}>{syncFeedback.message}</p>}
+        {syncResult && <div className={`admin-sales-sync-result is-${syncResult.status}`}>
+          <div className="admin-sales-sync-result-heading"><strong>Status: {syncStatusLabels[syncResult.status]}</strong><small>Sync run: {syncResult.syncRunId}</small></div>
+          <dl className="admin-sales-sync-metrics">
+            <div><dt>Pedidos lidos</dt><dd>{syncResult.ordersRead}</dd></div>
+            <div><dt>Novos pedidos</dt><dd>{syncResult.ordersInserted}</dd></div>
+            <div><dt>Pedidos atualizados</dt><dd>{syncResult.ordersUpdated}</dd></div>
+            <div><dt>Itens processados</dt><dd>{syncResult.itemsProcessed}</dd></div>
+            <div><dt>Pagamentos processados</dt><dd>{syncResult.paymentsProcessed}</dd></div>
+            <div><dt>Pedidos ignorados</dt><dd>{syncResult.skippedOrders}</dd></div>
+            <div><dt>Páginas lidas</dt><dd>{syncResult.pagesRead}</dd></div>
+          </dl>
+          {syncResult.unmappedSites.length > 0 && <div className="admin-sales-sync-details"><h4>Lojas sem mapeamento</h4><ul>{syncResult.unmappedSites.map((site) => <li key={site.externalStoreId}><strong>{site.externalStoreId}</strong>{site.siteName ? ` — ${site.siteName}` : ''}</li>)}</ul></div>}
+          {syncResult.errors.length > 0 && <div className="admin-sales-sync-details"><h4>Pedidos com pendências</h4><ul>{syncResult.errors.map((error, index) => <li key={`${error.externalOrderId ?? 'unknown'}-${index}`}>Pedido: {error.externalOrderId ?? 'não informado'} · Loja: {error.externalStoreId ?? 'não informada'} · Código: <strong>{error.code}</strong></li>)}</ul></div>}
+        </div>}
+      </div>
+      {pendingSyncPeriod && <ConfirmDialog
+        title="Sincronizar vendas?"
+        description={`Confirma a sincronização das vendas da Accesys de ${formatInputDate(pendingSyncPeriod.startDate)} até ${formatInputDate(pendingSyncPeriod.endDate)}?`}
+        confirmLabel="Sincronizar vendas"
+        processingLabel="Sincronizando..."
+        processing={false}
+        confirmVariant="primary"
+        onCancel={() => setPendingSyncPeriod(null)}
+        onConfirm={() => void synchronizeSales()}
+      />}
     </>}
   </section>
 }

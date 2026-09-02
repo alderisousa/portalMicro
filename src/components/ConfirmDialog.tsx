@@ -6,6 +6,7 @@ interface ConfirmDialogProps {
   confirmLabel: string
   processingLabel: string
   processing: boolean
+  confirmVariant?: 'primary' | 'destructive'
   previewUrl?: string
   onCancel: () => void
   onConfirm: () => void
@@ -17,6 +18,7 @@ export function ConfirmDialog({
   confirmLabel,
   processingLabel,
   processing,
+  confirmVariant = 'destructive',
   previewUrl,
   onCancel,
   onConfirm,
@@ -88,7 +90,7 @@ export function ConfirmDialog({
           </button>
           <button
             type="button"
-            className="button button-destructive"
+            className={`button${confirmVariant === 'destructive' ? ' button-destructive' : ''}`}
             onClick={onConfirm}
             disabled={processing}
           >

@@ -22,3 +22,31 @@ export interface SaveMarketIntegrationInput {
   password?: string
   status: MarketIntegrationStatus
 }
+
+export type MarketSalesSyncStatus = 'completed' | 'partial' | 'failed'
+
+export interface MarketSalesSyncRequest {
+  marketAccountId: string
+  integrationId: string
+  startDate: string
+  endDate: string
+}
+
+export interface MarketSalesSyncResult {
+  syncRunId: string
+  status: MarketSalesSyncStatus
+  period: { startDate: string; endDate: string }
+  pagesRead: number
+  ordersRead: number
+  ordersInserted: number
+  ordersUpdated: number
+  itemsProcessed: number
+  paymentsProcessed: number
+  skippedOrders: number
+  unmappedSites: Array<{ externalStoreId: string; siteName: string | null }>
+  errors: Array<{
+    externalOrderId: string | null
+    externalStoreId: string | null
+    code: string
+  }>
+}

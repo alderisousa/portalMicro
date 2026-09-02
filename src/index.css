@@ -549,6 +549,26 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .admin-integration-test dd { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--ink); font-size: 13px; }
 .admin-integration-test dd.is-success { color: var(--green); }
 .admin-integration-test dd.is-error { color: #9f3f2f; }
+.admin-sales-sync { margin-top: 20px; padding: 22px; border: 1px solid var(--line); border-radius: 9px; background: #fffaf2; }
+.admin-sales-sync-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+.admin-sales-sync-heading h3 { margin: 6px 0 0; font-size: 21px; }
+.admin-sales-sync-heading p { max-width: 520px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.admin-sales-sync-form { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)) auto; align-items: end; gap: 14px; }
+.admin-sales-sync-form label { display: grid; gap: 7px; color: var(--ink); font-size: 12px; font-weight: 700; }
+.admin-sales-sync-form label > strong { display: inline; color: var(--coral); }
+.admin-sales-sync-form input { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid #b9c7bc; border-radius: 5px; background: #fff; color: var(--ink); font: inherit; font-size: 13px; }
+.admin-sales-sync > .admin-feedback { margin: 18px 0 0; }
+.admin-sales-sync-result { margin-top: 18px; padding: 18px; border: 1px solid #b7d5c3; border-radius: 8px; background: var(--mint); }
+.admin-sales-sync-result.is-partial, .admin-sales-sync-result.is-failed { border-color: #efb6aa; background: #fff7f3; }
+.admin-sales-sync-result-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; }
+.admin-sales-sync-result-heading small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.admin-sales-sync-metrics { display: grid; grid-template-columns: repeat(4, minmax(110px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.admin-sales-sync-metrics div { padding: 12px; border-radius: 6px; background: rgba(255, 255, 255, .68); }
+.admin-sales-sync-metrics dt { color: var(--muted); font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.admin-sales-sync-metrics dd { margin: 5px 0 0; color: var(--ink); font-family: 'Fraunces', serif; font-size: 24px; }
+.admin-sales-sync-details { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.admin-sales-sync-details h4 { margin: 0 0 9px; font-size: 14px; }
+.admin-sales-sync-details ul { display: grid; gap: 6px; margin: 0; padding-left: 18px; color: var(--ink); font-size: 12px; }
 .admin-inline-form textarea { width: 100%; min-height: 90px; padding: 10px 11px; border: 1px solid #b9c7bc; border-radius: 5px; background: #fff; color: var(--ink); font: inherit; resize: vertical; }
 .admin-form-wide { margin: 14px 0; }
 .admin-store-access { display: grid; gap: 9px; margin: 16px 0 0; padding: 15px; border: 1px solid var(--line); border-radius: 7px; }
@@ -920,6 +940,10 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 	.admin-integration-test { align-items: stretch; flex-direction: column; }
 	.admin-integration-test dl { grid-template-columns: 1fr; }
 	.admin-integration-test .button { width: 100%; }
+	.admin-sales-sync-heading, .admin-sales-sync-result-heading { align-items: flex-start; flex-direction: column; }
+	.admin-sales-sync-form { grid-template-columns: 1fr; }
+	.admin-sales-sync-form .button { width: 100%; }
+	.admin-sales-sync-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.market-dashboard-stores, .market-feature-grid { grid-template-columns: 1fr; }
 	.market-import-header dl, .market-preview-file { align-items: flex-start; flex-direction: column; }
 	.market-preview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }

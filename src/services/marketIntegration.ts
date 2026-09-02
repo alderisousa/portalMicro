@@ -1,6 +1,8 @@
 import { supabase } from '../lib/supabase'
 import type {
   MarketIntegrationConfiguration,
+  MarketSalesSyncRequest,
+  MarketSalesSyncResult,
   SaveMarketIntegrationInput,
 } from '../types/marketIntegration'
 
@@ -17,6 +19,10 @@ const errorMessages: Record<string, string> = {
   MARKET_ACCOUNT_NOT_FOUND: 'A conta Market não foi encontrada ou está indisponível.',
   INTEGRATION_NOT_FOUND: 'A integração não foi encontrada nesta conta Market.',
   CREDENTIALS_NOT_CONFIGURED: 'Configure usuário e senha antes de continuar.',
+  CREDENTIALS_UNAVAILABLE: 'As credenciais da integração não puderam ser utilizadas.',
+  INVALID_PERIOD: 'O período deve ter no máximo 31 dias.',
+  INTEGRATION_UNAVAILABLE: 'Ative e configure a integração Accesys antes de sincronizar.',
+  PROVIDER_INVALID_RESPONSE: 'A Accesys retornou uma resposta inesperada. Tente novamente.',
   INVALID_PROVIDER: 'Este provider ainda não é suportado.',
   INVALID_PROVIDER_URL: 'A URL configurada não é permitida para a Accesys.',
   AUTHENTICATION_FAILED: 'Falha na autenticação da integração. Confira usuário e senha.',
@@ -104,4 +110,40 @@ export async function testMarketIntegration(marketAccountId: string, integration
   return invokeIntegrationAdmin<{ succeeded: true; testedAt: string }>({
     action: 'test', marketAccountId, integrationId,
   })
+}
+
+const isSalesSyncResult = (value: unknown): value is MarketSalesSyncResult => {
+  if (!value || typeof value !== 'object') return false
+  const result = value as Record<string, unknown>
+  return typeof result.syncRunId === 'string' &&
+    (result.status === 'completed' || result.status === 'partial' || result.status === 'failed') &&
+    typeof result.pagesRead === 'number' && typeof result.ordersRead === 'number' &&
+    typeof result.ordersInserted === 'number' && typeof result.ordersUpdated === 'number' &&
+    typeof result.itemsProcessed === 'number' && typeof result.paymentsProcessed === 'number' &&
+    typeof result.skippedOrders === 'number' && Array.isArray(result.unmappedSites) &&
+    Array.isArray(result.errors)
+}
+
+export async function syncMarketSales(input: MarketSalesSyncRequest) {
+  const { data, error } = await supabase.functions.invoke('market-sales-sync', {
+    body: {
+      marketAccountId: input.marketAccountId,
+      integrationId: input.integrationId,
+      startDate: input.startDate,
+      endDate: input.endDate,
+    },
+  })
+  if (!error) {
+    if (!isSalesSyncResult(data)) throw new MarketIntegrationError('INTERNAL_ERROR')
+    return data
+  }
+
+  if (typeof error === 'object' && 'context' in error) {
+    const context = (error as { context?: unknown }).context
+    if (context instanceof Response) {
+      const payload = await context.clone().json().catch(() => null)
+      if (isSalesSyncResult(payload)) return payload
+    }
+  }
+  return throwFunctionError(error)
 }
