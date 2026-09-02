@@ -58,19 +58,37 @@ class SupabaseSalesSyncRepository implements SalesSyncRepository {
     return (data ?? []) as Array<{ id: string; external_store_id: string }>
   }
 
-  async createRun(input: {
+  async beginRun(input: {
     marketAccountId: string; integrationId: string; startDate: string; endDate: string; requestedBy: string
   }) {
-    const { data, error } = await this.serviceClient.from('market_sales_sync_runs').insert({
-      market_account_id: input.marketAccountId,
-      integration_id: input.integrationId,
-      period_start: input.startDate,
-      period_end: input.endDate,
-      status: 'running',
-      requested_by: input.requestedBy,
-    }).select('id').single()
-    if (error || !data) throw new Error('Sync run create failed')
-    return data.id as string
+    const { data, error } = await this.serviceClient.rpc('market_begin_sales_sync', {
+      p_market_account_id: input.marketAccountId,
+      p_integration_id: input.integrationId,
+      p_period_start: input.startDate,
+      p_period_end: input.endDate,
+      p_requested_by: input.requestedBy,
+    })
+    if (error) {
+      if (error.message.includes('SYNC_ALREADY_RUNNING')) {
+        throw new SyncApiError(
+          'SYNC_ALREADY_RUNNING',
+          'Ja existe uma sincronizacao ativa para esta integracao.',
+          409,
+        )
+      }
+      throw new Error('Sync run acquisition failed')
+    }
+    if (typeof data !== 'string') throw new Error('Sync run acquisition returned invalid result')
+    return data
+  }
+
+  async heartbeatRun(runId: string, marketAccountId: string) {
+    const { data, error } = await this.serviceClient.from('market_sales_sync_runs').update({
+      heartbeat_at: new Date().toISOString(),
+    }).eq('id', runId).eq('market_account_id', marketAccountId).eq('status', 'running')
+      .select('id').maybeSingle()
+    if (error) throw new Error('Sync run heartbeat failed')
+    if (!data) throw new SyncApiError('SYNC_RUN_LOST', 'A execucao perdeu a posse da sincronizacao.', 409)
   }
 
   async finishRun(runId: string, marketAccountId: string, status: 'completed' | 'partial' | 'failed', counters: RunCounters, errorMessage: string | null) {
@@ -85,7 +103,7 @@ class SupabaseSalesSyncRepository implements SalesSyncRepository {
       skipped_orders: counters.skippedOrders,
       error_message: errorMessage,
       finished_at: new Date().toISOString(),
-    }).eq('id', runId).eq('market_account_id', marketAccountId)
+    }).eq('id', runId).eq('market_account_id', marketAccountId).eq('status', 'running')
     if (error) throw new Error('Sync run finish failed')
   }
 

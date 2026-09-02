@@ -54,6 +54,8 @@ class MemoryRepository implements SalesSyncRepository {
   mappings = [{ id: STORE_REF_ID, external_store_id: '2511' }]
   errors: Array<Record<string, unknown>> = []
   finishes: Array<{ status: SyncStatus; counters: RunCounters; error: string | null }> = []
+  heartbeats: string[] = []
+  beginError: Error | null = null
   persisted = new Set<string>()
   rpcFailureIds = new Set<string>()
 
@@ -62,7 +64,11 @@ class MemoryRepository implements SalesSyncRepository {
   async getIntegration() { return this.integration }
   async getCredential() { return this.credential }
   async getStoreMappings() { return this.mappings }
-  async createRun() { return RUN_ID }
+  async beginRun() {
+    if (this.beginError) throw this.beginError
+    return RUN_ID
+  }
+  async heartbeatRun(runId: string) { this.heartbeats.push(runId) }
   async finishRun(_runId: string, _accountId: string, status: SyncStatus, counters: RunCounters, error: string | null) {
     this.finishes.push({ status, counters: { ...counters }, error })
   }
@@ -139,6 +145,7 @@ test('processa uma pagina a partir de 1 com pageSize 100 e finaliza completed', 
   assert.equal(result.summary.itemsProcessed, 1)
   assert.equal(result.summary.paymentsProcessed, 1)
   assert.equal(repository.finishes[0].status, 'completed')
+  assert.deepEqual(repository.heartbeats, [RUN_ID])
 })
 
 test('percorre multiplas paginas e para na ultima', async () => {
@@ -151,6 +158,33 @@ test('percorre multiplas paginas e para na ultima', async () => {
   assert.deepEqual(provider.calls.map((call) => call.page), [1, 2])
   assert.equal(result.summary.pagesRead, 2)
   assert.equal(result.summary.ordersInserted, 2)
+  assert.deepEqual(repository.heartbeats, [RUN_ID, RUN_ID])
+})
+
+test('run concorrente e rejeitado antes de criar provider ou chamar Accesys', async () => {
+  const repository = new MemoryRepository()
+  repository.beginError = new SyncApiError(
+    'SYNC_ALREADY_RUNNING',
+    'Ja existe uma sincronizacao ativa para esta integracao.',
+    409,
+  )
+  const provider = new MemoryProvider([])
+  let providerCreations = 0
+  const deps = {
+    ...dependencies(repository, provider),
+    createProvider: async () => {
+      providerCreations += 1
+      return provider
+    },
+  }
+  await assert.rejects(
+    () => executeSalesSync(USER_ID, request(), deps),
+    (error: unknown) => error instanceof SyncApiError &&
+      error.code === 'SYNC_ALREADY_RUNNING' && error.status === 409,
+  )
+  assert.equal(providerCreations, 0)
+  assert.equal(provider.calls.length, 0)
+  assert.equal(repository.finishes.length, 0)
 })
 
 test('loja nao mapeada gera erro por pedido e run partial', async () => {

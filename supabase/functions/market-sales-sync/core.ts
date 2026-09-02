@@ -57,13 +57,14 @@ export interface SalesSyncRepository {
   getIntegration(marketAccountId: string, integrationId: string): Promise<SyncIntegration | null>
   getCredential(marketAccountId: string, integrationId: string): Promise<SyncCredential | null>
   getStoreMappings(marketAccountId: string, integrationId: string): Promise<StoreMapping[]>
-  createRun(input: {
+  beginRun(input: {
     marketAccountId: string
     integrationId: string
     startDate: string
     endDate: string
     requestedBy: string
   }): Promise<string>
+  heartbeatRun(runId: string, marketAccountId: string): Promise<void>
   finishRun(runId: string, marketAccountId: string, status: SyncStatus, counters: RunCounters, error: string | null): Promise<void>
   recordOrderError(input: {
     marketAccountId: string
@@ -236,7 +237,7 @@ export async function executeSalesSync(userId: string, input: unknown, dependenc
     throw new SyncApiError('CREDENTIALS_UNAVAILABLE', 'Credenciais nao puderam ser utilizadas.', 500)
   }
 
-  const runId = await dependencies.repository.createRun({
+  const runId = await dependencies.repository.beginRun({
     marketAccountId, integrationId, startDate: start.value, endDate: end.value, requestedBy: userId,
   })
   const counters = emptyCounters()
@@ -329,6 +330,8 @@ export async function executeSalesSync(userId: string, input: unknown, dependenc
           })
         }
       }
+
+      await dependencies.repository.heartbeatRun(runId, marketAccountId)
 
       if (currentPage >= expectedPages) break
       currentPage += 1
