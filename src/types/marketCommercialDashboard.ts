@@ -3,7 +3,7 @@ export type MarketDashboardQuality = 'updated' | 'consolidated' | 'stale' | 'inc
 export interface MarketDashboardGap { startDate: string; endDate: string }
 
 export interface MarketCommercialStore { id: string; name: string; externalCode: string | null }
-export interface MarketCommercialTotals { revenue: number; cost: number; profit: number; quantity: number; margin: number | null }
+export interface MarketCommercialTotals { revenue: number; cost: number | null; profit: number | null; quantity: number; margin: number | null; orderCount?: number | null }
 export interface MarketStorePerformance extends MarketCommercialTotals { storeId: string; storeName: string; externalCode: string | null }
 export interface MarketProductRankingItem {
   product_key: string
@@ -11,14 +11,17 @@ export interface MarketProductRankingItem {
   product_name: string
   identifier: string | null
   quantity: number
-  revenue: number
-  profit: number
+  revenue: number | null
+  profit: number | null
 }
 export interface MarketCommercialDashboardData {
+  source: 'import' | 'sync'
   accountName: string
   periodStart: string | null
   periodEnd: string | null
   importCount: number
+  orderCount: number | null
+  costAvailable: boolean
   hasOverlap: boolean
   hasGaps: boolean
   gapCount: number

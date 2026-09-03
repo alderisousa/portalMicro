@@ -1,6 +1,8 @@
 import { getCurrentUserMarketAccess } from './market'
 import { supabase } from '../lib/supabase'
 import { MARKET_SALES_IMPORT_SOURCE_SYSTEM } from '../constants/marketSalesImport'
+import { canAccessMarketSalesImports } from './marketDashboardPermissions'
+import { getMarketSalesSyncContext } from './marketSalesSync'
 import type {
   MarketSalesImportAnalysis,
   MarketSalesImportBeginResult,
@@ -59,6 +61,16 @@ export async function getMarketSalesImportContext(
         : 'Esta conta Market está cancelada.'
     )
   }
+  const syncContext = await getMarketSalesSyncContext(accountId)
+  if (!canAccessMarketSalesImports(access.role, syncContext.integrationAvailable)) {
+    return {
+      access,
+      stores: access.stores.filter((store) => store.store_type === 'store'),
+      canImport: false,
+      products: [],
+      productMappings: [],
+    }
+  }
   const [products, productMappings] = await Promise.all([
     getAllMarketProducts(accountId),
     getAllMarketProductMappings(accountId),
@@ -66,7 +78,7 @@ export async function getMarketSalesImportContext(
   return {
     access,
     stores: access.stores.filter((store) => store.store_type === 'store'),
-    canImport: ['owner', 'admin', 'manager', 'operator'].includes(access.role),
+    canImport: true,
     products,
     productMappings,
   }

@@ -44,6 +44,7 @@ const request = () => ({
   startDate: '2026-09-01',
   endDate: '2026-09-02',
 })
+const singleDayRequest = () => ({ ...request(), endDate: '2026-09-01' })
 
 class MemoryRepository implements SalesSyncRepository {
   globalAdmin = true
@@ -62,10 +63,13 @@ class MemoryRepository implements SalesSyncRepository {
   finishes: Array<{ status: SyncStatus; counters: RunCounters; error: string | null }> = []
   heartbeats: string[] = []
   beginError: Error | null = null
+  lastBeginSource: string | null = null
   persisted = new Set<string>()
   rpcFailureIds = new Set<string>()
+  structuralFailureIds = new Set<string>()
   credentialCalls = 0
   latestRun = null as Awaited<ReturnType<SalesSyncRepository['getLatestRun']>>
+  run = null as Awaited<ReturnType<SalesSyncRepository['getRun']>>
 
   async isGlobalAdmin() { return this.globalAdmin }
   async hasMarketRole(_marketAccountId: string, roles: string[]) {
@@ -76,10 +80,47 @@ class MemoryRepository implements SalesSyncRepository {
   async getEligibleIntegrations() { return this.eligibleIntegrations }
   async getCredential() { this.credentialCalls += 1; return this.credential }
   async getStoreMappings() { return this.mappings }
-  async beginRun() {
+  async beginRun(input: { startDate: string; endDate: string; source: 'admin' | 'market' | 'scheduled' }) {
     if (this.beginError) throw this.beginError
+    this.lastBeginSource = input.source
+    const totalDays = Math.floor((Date.parse(input.endDate)-Date.parse(input.startDate))/86_400_000)+1
+    this.run = { runId: RUN_ID, integrationId: INTEGRATION_ID, status: 'running',
+      periodStart: input.startDate, periodEnd: input.endDate, nextDay: input.startDate,
+      lastCompletedDay: null, totalDays, completedDays: 0, startedAt: '2026-09-01T00:00:00Z',
+      heartbeatAt: '2026-09-01T00:00:00Z', finishedAt: null, pagesRead: 0,
+      ordersRead: 0, ordersInserted: 0, ordersUpdated: 0, itemsProcessed: 0,
+      paymentsProcessed: 0, skippedOrders: 0, errorMessage: null }
     return RUN_ID
   }
+  async getRun() { return this.run }
+  async resumeRun() { this.run={...this.run!,status:'running',finishedAt:null,errorMessage:null}; return this.run.nextDay! }
+  async applyDay(input: { pagesRead: number; orders: unknown[]; day: string }) {
+    let inserted=0,updated=0,items=0,payments=0,skipped=0
+    const pendingPersisted = new Set(this.persisted)
+    for (const raw of input.orders) {
+      const entry=raw as any
+      if (!entry.valid) { skipped+=1; this.errors.push({ code: entry.errorCode }); continue }
+      const id=entry.sale.externalOrderId
+      if (this.structuralFailureIds.has(id)) throw new Error('unexpected structural database failure')
+      if (this.rpcFailureIds.has(id)) { skipped+=1; this.errors.push({ code: 'SALE_PERSISTENCE_FAILED' }); continue }
+      if (pendingPersisted.has(id)) updated+=1; else { pendingPersisted.add(id); inserted+=1 }
+      items+=entry.items.length; payments+=entry.payments.length
+    }
+    const end=input.day===this.run!.periodEnd
+    const next=new Date(Date.parse(input.day)+86_400_000).toISOString().slice(0,10)
+    this.run={...this.run!,pagesRead:this.run!.pagesRead+input.pagesRead,
+      ordersRead:this.run!.ordersRead+input.orders.length,ordersInserted:this.run!.ordersInserted+inserted,
+      ordersUpdated:this.run!.ordersUpdated+updated,itemsProcessed:this.run!.itemsProcessed+items,
+      paymentsProcessed:this.run!.paymentsProcessed+payments,skippedOrders:this.run!.skippedOrders+skipped,
+      completedDays:this.run!.completedDays+1,lastCompletedDay:input.day,nextDay:end?null:next,
+      status:end?(this.run!.skippedOrders+skipped?'partial':'completed'):'running',
+      finishedAt:end?'2026-09-01T00:01:00Z':null}
+    this.persisted = pendingPersisted
+  }
+  async recordRunFailure(_id?: string,_account?: string,_code?: string,message?: string) {
+    this.run={...this.run!,status:'failed',heartbeatAt:null,finishedAt:'2026-09-01T00:01:00Z',errorMessage:message??null}
+  }
+  async reconcileStaleRuns() {}
   async heartbeatRun(runId: string) { this.heartbeats.push(runId) }
   async finishRun(_runId: string, _accountId: string, status: SyncStatus, counters: RunCounters, error: string | null) {
     this.finishes.push({ status, counters: { ...counters }, error })
@@ -131,7 +172,35 @@ test('modo Admin global preserva integrationId e periodo manual', async () => {
   const provider = new MemoryProvider([{ records: 0, page: 1, pages: 1, items: [] }])
   const result = await executeSalesSync(USER_ID, request(), dependencies(repository, provider))
   assert.deepEqual(result.summary.period, { startDate: '2026-09-01', endDate: '2026-09-02' })
-  assert.equal(result.summary.status, 'completed')
+  assert.equal(result.summary.status, 'running')
+  assert.equal(result.summary.completedDays, 1)
+  assert.equal(result.summary.currentDay, '2026-09-02')
+})
+
+test('período de vários dias confirma um dia por chamada e retoma no primeiro pendente', async () => {
+  const repository = new MemoryRepository()
+  const first = await executeSalesSync(USER_ID, request(), dependencies(repository,
+    new MemoryProvider([{ records: 1, page: 1, pages: 1, items: [order(100)] }])))
+  assert.equal(first.summary.status, 'running'); assert.equal(first.summary.lastCompletedDay, '2026-09-01')
+  assert.equal(first.summary.currentDay, '2026-09-02'); assert.equal(first.summary.completedDays, 1)
+  const second = await executeSalesSync(USER_ID, { ...request(), runId: RUN_ID }, dependencies(repository,
+    new MemoryProvider([{ records: 1, page: 1, pages: 1, items: [order(101)] }])))
+  assert.equal(second.summary.status, 'completed'); assert.equal(second.summary.lastCompletedDay, '2026-09-02')
+  assert.equal(second.summary.completedDays, 2); assert.equal(second.summary.ordersInserted, 2)
+})
+
+test('falha no dia pendente preserva checkpoint e resume o mesmo dia sem duplicar anteriores', async () => {
+  const repository = new MemoryRepository()
+  await executeSalesSync(USER_ID, request(), dependencies(repository,
+    new MemoryProvider([{ records: 1, page: 1, pages: 1, items: [order(100)] }])))
+  const failed = await executeSalesSync(USER_ID, { ...request(), runId: RUN_ID }, dependencies(repository,
+    new MemoryProvider([new Error('secret provider failure')])))
+  assert.equal(failed.summary.status, 'failed'); assert.equal(failed.summary.lastCompletedDay, '2026-09-01')
+  assert.equal(repository.run?.nextDay, '2026-09-02'); assert.equal(repository.persisted.size, 1)
+  const resumed = await executeSalesSync(USER_ID, { ...request(), runId: RUN_ID }, dependencies(repository,
+    new MemoryProvider([{ records: 1, page: 1, pages: 1, items: [order(101)] }])))
+  assert.equal(resumed.summary.status, 'completed'); assert.equal(resumed.summary.ordersInserted, 2)
+  assert.equal(repository.persisted.size, 2)
 })
 
 test('owner, admin e manager podem executar modo Market company-wide', async () => {
@@ -219,13 +288,24 @@ test('conta adulterada ou nao operacional e negada antes de credenciais', async 
   assert.equal(repository.credentialCalls, 0)
 })
 
-test('janela Market usa sete dias incluindo hoje em America/Sao_Paulo', () => {
+test('janela Market usa somente D-1 em America/Sao_Paulo', () => {
   assert.deepEqual(marketOperationalWindow(new Date('2026-09-02T02:30:00Z')), {
-    startDate: '2026-08-26', endDate: '2026-09-01',
+    startDate: '2026-08-31', endDate: '2026-08-31',
   })
   assert.deepEqual(marketOperationalWindow(new Date('2026-09-02T03:30:00Z')), {
-    startDate: '2026-08-27', endDate: '2026-09-02',
+    startDate: '2026-09-01', endDate: '2026-09-01',
   })
+})
+
+test('execucao scheduled usa source scheduled e somente o D-1 calculado em Sao Paulo', async () => {
+  const repository = new MemoryRepository()
+  const window = marketOperationalWindow(new Date('2026-09-04T07:00:00Z'))
+  const result = await executeSalesSync(null, { marketAccountId: ACCOUNT_ID, integrationId: INTEGRATION_ID,
+    startDate: window.startDate, endDate: window.endDate }, dependencies(repository,
+    new MemoryProvider([{ records: 0, page: 1, pages: 1, items: [] }])), { scheduled: true })
+  assert.deepEqual(window, { startDate: '2026-09-03', endDate: '2026-09-03' })
+  assert.equal(repository.lastBeginSource, 'scheduled')
+  assert.equal(result.summary.status, 'completed')
 })
 
 test('status permite membership ativa, filtra por conta e retorna DTO sanitizado', async () => {
@@ -234,7 +314,8 @@ test('status permite membership ativa, filtra por conta e retorna DTO sanitizado
     repository.marketRole = true
     repository.memberRole = role
     repository.latestRun = {
-      runId: RUN_ID, status: 'completed', periodStart: '2026-08-27', periodEnd: '2026-09-02',
+      runId: RUN_ID, integrationId: INTEGRATION_ID, status: 'completed', periodStart: '2026-08-27', periodEnd: '2026-09-02',
+      nextDay: null, lastCompletedDay: '2026-09-02', totalDays: 7, completedDays: 7, pagesRead: 1,
       startedAt: '2026-09-02T10:00:00Z', heartbeatAt: '2026-09-02T10:01:00Z',
       finishedAt: '2026-09-02T10:01:01Z', ordersRead: 10, ordersInserted: 1,
       ordersUpdated: 9, itemsProcessed: 12, paymentsProcessed: 10, skippedOrders: 0,
@@ -242,6 +323,7 @@ test('status permite membership ativa, filtra por conta e retorna DTO sanitizado
     }
     const result = await getSalesSyncStatus(USER_ID, { action: 'status', marketAccountId: ACCOUNT_ID }, repository)
     assert.equal(result.sync?.runId, RUN_ID, role)
+    assert.equal(result.integrationAvailable, true, role)
     const serialized = JSON.stringify(result)
     for (const forbidden of ['integrationId', 'password', 'token', 'provider', 'sql', 'customer']) {
       assert.equal(serialized.toLowerCase().includes(forbidden.toLowerCase()), false, role)
@@ -266,7 +348,7 @@ test('status nega membership inativa ou conta errada e trata ausencia de run', a
   repository.accountExists = true
   assert.deepEqual(
     await getSalesSyncStatus(USER_ID, { action: 'status', marketAccountId: ACCOUNT_ID }, repository),
-    { sync: null },
+    { integrationAvailable: true, sync: null },
   )
 })
 
@@ -294,15 +376,14 @@ test('valida conta, integracao ativa Accesys e credenciais', async () => {
 test('processa uma pagina a partir de 1 com pageSize 100 e finaliza completed', async () => {
   const repository = new MemoryRepository()
   const provider = new MemoryProvider([{ records: 1, page: 1, pages: 1, items: [order()] }])
-  const result = await executeSalesSync(USER_ID, request(), dependencies(repository, provider))
+  const result = await executeSalesSync(USER_ID, singleDayRequest(), dependencies(repository, provider))
   assert.equal(result.httpStatus, 200)
   assert.equal(result.summary.status, 'completed')
   assert.deepEqual(provider.calls, [{ page: 1, pageSize: 100 }])
   assert.equal(result.summary.ordersInserted, 1)
   assert.equal(result.summary.itemsProcessed, 1)
   assert.equal(result.summary.paymentsProcessed, 1)
-  assert.equal(repository.finishes[0].status, 'completed')
-  assert.deepEqual(repository.heartbeats, [RUN_ID])
+  assert.equal(result.summary.completedDays, 1)
 })
 
 test('percorre multiplas paginas e para na ultima', async () => {
@@ -311,11 +392,10 @@ test('percorre multiplas paginas e para na ultima', async () => {
     { records: 2, page: 1, pages: 2, items: [order(100)] },
     { records: 2, page: 2, pages: 2, items: [order(101)] },
   ])
-  const result = await executeSalesSync(USER_ID, request(), dependencies(repository, provider))
+  const result = await executeSalesSync(USER_ID, singleDayRequest(), dependencies(repository, provider))
   assert.deepEqual(provider.calls.map((call) => call.page), [1, 2])
   assert.equal(result.summary.pagesRead, 2)
   assert.equal(result.summary.ordersInserted, 2)
-  assert.deepEqual(repository.heartbeats, [RUN_ID, RUN_ID])
 })
 
 test('run concorrente e rejeitado antes de criar provider ou chamar Accesys', async () => {
@@ -347,7 +427,7 @@ test('run concorrente e rejeitado antes de criar provider ou chamar Accesys', as
 test('loja nao mapeada gera erro por pedido e run partial', async () => {
   const repository = new MemoryRepository()
   const provider = new MemoryProvider([{ records: 1, page: 1, pages: 1, items: [order(100, 2607)] }])
-  const result = await executeSalesSync(USER_ID, request(), dependencies(repository, provider))
+  const result = await executeSalesSync(USER_ID, singleDayRequest(), dependencies(repository, provider))
   assert.equal(result.summary.status, 'partial')
   assert.equal(result.summary.skippedOrders, 1)
   assert.deepEqual(result.summary.unmappedSites, [{ externalStoreId: '2607', siteName: 'Site 2607' }])
@@ -359,32 +439,46 @@ test('erro do mapper nao aborta os demais pedidos', async () => {
   const invalid = order(100)
   invalid.order.totalValue = 'valor invalido'
   const provider = new MemoryProvider([{ records: 2, page: 1, pages: 1, items: [invalid, order(101)] }])
-  const result = await executeSalesSync(USER_ID, request(), dependencies(repository, provider))
+  const result = await executeSalesSync(USER_ID, singleDayRequest(), dependencies(repository, provider))
   assert.equal(result.summary.status, 'partial')
   assert.equal(result.summary.skippedOrders, 1)
   assert.equal(result.summary.ordersInserted, 1)
   assert.equal(repository.errors[0].code, 'ORDER_MAPPING_FAILED')
 })
 
-test('erro isolado da RPC nao aborta outro pedido nem expoe SQL', async () => {
+test('erro funcional conhecido da RPC ignora a venda, continua o dia e termina partial', async () => {
   const repository = new MemoryRepository()
   repository.rpcFailureIds.add('100')
   const provider = new MemoryProvider([{ records: 2, page: 1, pages: 1, items: [order(100), order(101)] }])
-  const result = await executeSalesSync(USER_ID, request(), dependencies(repository, provider))
+  const result = await executeSalesSync(USER_ID, singleDayRequest(), dependencies(repository, provider))
   assert.equal(result.summary.ordersInserted, 1)
   assert.equal(result.summary.skippedOrders, 1)
+  assert.equal(result.summary.status, 'partial')
+  assert.equal(result.summary.completedDays, 1)
   assert.equal(repository.errors[0].code, 'SALE_PERSISTENCE_FAILED')
   assert.equal(JSON.stringify(result).includes('raw SQL'), false)
+})
+
+test('erro estrutural da RPC desfaz o dia e nao avanca o checkpoint', async () => {
+  const repository = new MemoryRepository()
+  repository.structuralFailureIds.add('101')
+  const provider = new MemoryProvider([{ records: 2, page: 1, pages: 1, items: [order(100), order(101)] }])
+  const result = await executeSalesSync(USER_ID, singleDayRequest(), dependencies(repository, provider))
+  assert.equal(result.summary.status, 'failed')
+  assert.equal(result.summary.completedDays, 0)
+  assert.equal(result.summary.lastCompletedDay, null)
+  assert.equal(repository.run?.nextDay, '2026-09-01')
+  assert.equal(repository.persisted.size, 0)
 })
 
 test('falha global apos criar run fecha como failed com finished-at pelo repositorio', async () => {
   const repository = new MemoryRepository()
   const provider = new MemoryProvider([new Error('provider body with secret')])
-  const result = await executeSalesSync(USER_ID, request(), dependencies(repository, provider))
+  const result = await executeSalesSync(USER_ID, singleDayRequest(), dependencies(repository, provider))
   assert.equal(result.summary.status, 'failed')
-  assert.equal(result.httpStatus, 500)
-  assert.equal(repository.finishes[0].status, 'failed')
-  assert.equal(repository.finishes[0].error, 'A sincronizacao nao pode ser concluida.')
+  assert.equal(result.httpStatus, 200)
+  assert.equal(repository.run?.status, 'failed')
+  assert.equal(repository.run?.errorMessage, 'A sincronizacao nao pode ser concluida.')
   assert.equal(JSON.stringify(result).includes('provider body'), false)
 })
 
@@ -394,11 +488,11 @@ test('mudanca de pages e pagina incorreta falham defensivamente sem loop', async
     { records: 2, page: 1, pages: 2, items: [order(100)] },
     { records: 2, page: 2, pages: 3, items: [order(101)] },
   ])
-  const result = await executeSalesSync(USER_ID, request(), dependencies(repository, provider))
+  const result = await executeSalesSync(USER_ID, singleDayRequest(), dependencies(repository, provider))
   assert.equal(result.summary.status, 'failed')
   assert.equal(provider.calls.length, 2)
   const invalidPage = new MemoryProvider([{ records: 0, page: 0, pages: 1, items: [] }])
-  const second = await executeSalesSync(USER_ID, request(), dependencies(new MemoryRepository(), invalidPage))
+  const second = await executeSalesSync(USER_ID, singleDayRequest(), dependencies(new MemoryRepository(), invalidPage))
   assert.equal(second.summary.status, 'failed')
 })
 

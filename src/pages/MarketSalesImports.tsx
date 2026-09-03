@@ -29,7 +29,7 @@ export function MarketSalesImports({ accountId, onBack }: MarketSalesImportsProp
     let active = true
     setContextLoading(true)
     void getMarketSalesImportContext(accountId)
-      .then((result) => { if (active) { setContext(result); if (!result.canImport) setErrorMessage('Seu perfil possui acesso somente para visualização e não pode importar vendas.') } })
+      .then((result) => { if (active) { setContext(result); if (!result.canImport) setErrorMessage('A importação manual não está disponível para esta conta ou perfil.') } })
       .catch((error) => { console.error('Falha ao preparar importação:', error); if (active) setErrorMessage(error instanceof Error ? error.message : 'Não foi possível validar o acesso à conta Market.') })
       .finally(() => { if (active) setContextLoading(false) })
     return () => { active = false }

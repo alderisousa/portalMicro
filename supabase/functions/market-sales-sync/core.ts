@@ -6,10 +6,9 @@ const DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const PAGE_SIZE = 100
 const MAX_PAGES = 10_000
 const MAX_RESPONSE_DETAILS = 50
-export const MARKET_OPERATIONAL_WINDOW_DAYS = 7
 export const MARKET_OPERATIONAL_TIME_ZONE = 'America/Sao_Paulo'
 
-export type SyncStatus = 'completed' | 'partial' | 'failed'
+export type SyncStatus = 'running' | 'completed' | 'partial' | 'failed'
 
 export type SyncIntegration = {
   id: string
@@ -51,6 +50,11 @@ export type SyncSummary = RunCounters & {
   period: { startDate: string; endDate: string }
   unmappedSites: Array<{ externalStoreId: string; siteName: string | null }>
   errors: SyncErrorSummary[]
+  currentDay: string | null
+  lastCompletedDay: string | null
+  totalDays: number
+  completedDays: number
+  continue: boolean
 }
 
 export type SyncRunStatus = {
@@ -58,9 +62,15 @@ export type SyncRunStatus = {
   status: 'running' | SyncStatus
   periodStart: string
   periodEnd: string
+  integrationId: string
+  nextDay: string | null
+  lastCompletedDay: string | null
+  totalDays: number
+  completedDays: number
   startedAt: string
   heartbeatAt: string | null
   finishedAt: string | null
+  pagesRead: number
   ordersRead: number
   ordersInserted: number
   ordersUpdated: number
@@ -83,8 +93,14 @@ export interface SalesSyncRepository {
     integrationId: string
     startDate: string
     endDate: string
-    requestedBy: string
+    requestedBy: string | null
+    source: 'admin' | 'market' | 'scheduled'
   }): Promise<string>
+  getRun(marketAccountId: string, integrationId: string, runId: string): Promise<SyncRunStatus | null>
+  resumeRun(runId: string, marketAccountId: string, integrationId: string): Promise<string>
+  applyDay(input: { runId: string; marketAccountId: string; integrationId: string; day: string; pagesRead: number; orders: unknown[] }): Promise<void>
+  recordRunFailure(runId: string, marketAccountId: string, code: string, message: string): Promise<void>
+  reconcileStaleRuns(marketAccountId: string): Promise<void>
   heartbeatRun(runId: string, marketAccountId: string): Promise<void>
   finishRun(runId: string, marketAccountId: string, status: SyncStatus, counters: RunCounters, error: string | null): Promise<void>
   recordOrderError(input: {
@@ -129,6 +145,8 @@ export type SyncDependencies = {
   }): Promise<AccesysOrdersProvider>
   now?(): Date
 }
+
+export type SyncExecutionContext = { scheduled?: boolean }
 
 function asObject(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -232,10 +250,10 @@ const dateInTimeZone = (date: Date) => {
 }
 
 export function marketOperationalWindow(now: Date) {
-  const endDate = dateInTimeZone(now)
-  const [year, month, day] = endDate.split('-').map(Number)
-  const start = new Date(Date.UTC(year, month - 1, day - (MARKET_OPERATIONAL_WINDOW_DAYS - 1)))
-  return { startDate: start.toISOString().slice(0, 10), endDate }
+  const today = dateInTimeZone(now)
+  const [year, month, day] = today.split('-').map(Number)
+  const previousDay = new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10)
+  return { startDate: previousDay, endDate: previousDay }
 }
 
 const assertOnlyFields = (body: Record<string, unknown>, allowed: string[]) => {
@@ -247,22 +265,29 @@ const assertOnlyFields = (body: Record<string, unknown>, allowed: string[]) => {
 const EXECUTION_ROLES = ['owner', 'admin', 'manager']
 const STATUS_ROLES = ['owner', 'admin', 'manager', 'operator', 'viewer']
 
-export async function executeSalesSync(userId: string, input: unknown, dependencies: SyncDependencies) {
+export async function executeSalesSync(userId: string | null, input: unknown, dependencies: SyncDependencies, context: SyncExecutionContext = {}) {
   const body = asObject(input, 'Corpo da requisicao')
   const marketAccountId = requiredUuid(body, 'marketAccountId')
   const isMarketMode = body.action === 'refresh'
+  const isScheduled = context.scheduled === true
   let integrationId: string
   let start: { value: string; timestamp: number }
   let end: { value: string; timestamp: number }
 
-  if (isMarketMode) {
+  if (isScheduled) {
+    integrationId = requiredUuid(body, 'integrationId')
+    start = parseDate(body, 'startDate')
+    end = parseDate(body, 'endDate')
+    if (start.value !== end.value) throw new SyncApiError('INVALID_PERIOD', 'O agendamento aceita somente D-1.', 400)
+  } else if (isMarketMode) {
     const authorized = await dependencies.repository.hasMarketRole(marketAccountId, EXECUTION_ROLES)
     if (!authorized) throw new SyncApiError('FORBIDDEN', 'Seu perfil nao pode atualizar vendas desta conta.', 403)
-    assertOnlyFields(body, ['action', 'marketAccountId'])
+    assertOnlyFields(body, ['action', 'marketAccountId', 'runId'])
     const window = marketOperationalWindow(dependencies.now?.() ?? new Date())
     start = parseDate({ startDate: window.startDate }, 'startDate')
     end = parseDate({ endDate: window.endDate }, 'endDate')
   } else {
+    if (userId === null) throw new SyncApiError('FORBIDDEN', 'Apenas o backend pode executar este modo.', 403)
     const globalAdmin = await dependencies.repository.isGlobalAdmin(userId)
     if (!globalAdmin) {
       const marketMember = await dependencies.repository.hasMarketRole(marketAccountId, EXECUTION_ROLES)
@@ -317,17 +342,32 @@ export async function executeSalesSync(userId: string, input: unknown, dependenc
     throw new SyncApiError('CREDENTIALS_UNAVAILABLE', 'Credenciais nao puderam ser utilizadas.', 500)
   }
 
-  const runId = await dependencies.repository.beginRun({
+  const requestedRunId = body.runId === undefined ? null : requiredUuid(body, 'runId')
+  const runId = requestedRunId ?? await dependencies.repository.beginRun({
     marketAccountId, integrationId, startDate: start.value, endDate: end.value, requestedBy: userId,
+    source: isScheduled ? 'scheduled' : isMarketMode ? 'market' : 'admin',
   })
+  let run = requestedRunId
+    ? await dependencies.repository.getRun(marketAccountId, integrationId, requestedRunId)
+    : await dependencies.repository.getRun(marketAccountId, integrationId, runId)
+  if (!run || run.periodStart !== start.value || run.periodEnd !== end.value || !['running','failed'].includes(run.status)) {
+    throw new SyncApiError('SYNC_RUN_NOT_RESUMABLE', 'Execucao inexistente, finalizada ou incompatível.', 409)
+  }
+  const workDay = await dependencies.repository.resumeRun(runId, marketAccountId, integrationId)
   const counters = emptyCounters()
   const errors: SyncErrorSummary[] = []
   const unmappedSites = new Map<string, string | null>()
-  const summary = (status: SyncStatus): SyncSummary => ({
+  const summary = (current: SyncRunStatus): SyncSummary => ({
     syncRunId: runId,
-    status,
+    status: current.status,
     period: { startDate: start.value, endDate: end.value },
-    ...counters,
+    pagesRead: current.pagesRead, ordersRead: current.ordersRead,
+    ordersInserted: current.ordersInserted, ordersUpdated: current.ordersUpdated,
+    itemsProcessed: current.itemsProcessed, paymentsProcessed: current.paymentsProcessed,
+    skippedOrders: current.skippedOrders,
+    currentDay: current.nextDay, lastCompletedDay: current.lastCompletedDay,
+    totalDays: current.totalDays, completedDays: current.completedDays,
+    continue: current.status === 'running',
     unmappedSites: Array.from(unmappedSites, ([externalStoreId, siteName]) => ({ externalStoreId, siteName }))
       .slice(0, MAX_RESPONSE_DETAILS),
     errors: errors.slice(0, MAX_RESPONSE_DETAILS),
@@ -347,9 +387,10 @@ export async function executeSalesSync(userId: string, input: unknown, dependenc
 
     let currentPage = 1
     let expectedPages: number | null = null
+    const normalizedOrders: unknown[] = []
     while (true) {
       const payload = await provider.fetchOrdersPage({
-        startDate: start.value, endDate: end.value, page: currentPage, pageSize: PAGE_SIZE,
+        startDate: workDay, endDate: workDay, page: currentPage, pageSize: PAGE_SIZE,
       })
       const page = validatePage(payload, currentPage)
       if (expectedPages === null) expectedPages = page.pages
@@ -372,18 +413,9 @@ export async function executeSalesSync(userId: string, input: unknown, dependenc
             throw new SyncApiError('STORE_MAPPING_NOT_FOUND', 'Loja externa sem mapeamento configurado.', 422)
           }
           stage = 'persistence'
-          const result = await dependencies.repository.upsertSale({
-            marketAccountId,
-            integrationId,
-            storeExternalRefId,
-            sale: mapped.sale,
-            items: mapped.items,
-            payments: mapped.payments,
-          })
-          if (result.inserted) counters.ordersInserted += 1
-          else counters.ordersUpdated += 1
-          counters.itemsProcessed += result.itemsProcessed
-          counters.paymentsProcessed += result.paymentsProcessed
+          normalizedOrders.push({ valid: true, externalOrderId: identity.externalOrderId,
+            externalStoreId: identity.externalStoreId, storeExternalRefId,
+            sale: mapped.sale, items: mapped.items, payments: mapped.payments })
         } catch (error) {
           counters.skippedOrders += 1
           const code = error instanceof SyncApiError
@@ -402,33 +434,28 @@ export async function executeSalesSync(userId: string, input: unknown, dependenc
             code,
           }
           if (errors.length < MAX_RESPONSE_DETAILS) errors.push(detail)
-          await dependencies.repository.recordOrderError({
-            marketAccountId,
-            runId,
-            ...detail,
-            message,
-          })
+          normalizedOrders.push({ valid: false, ...detail, errorCode: code })
         }
       }
-
-      await dependencies.repository.heartbeatRun(runId, marketAccountId)
 
       if (currentPage >= expectedPages) break
       currentPage += 1
     }
-
-    const status: SyncStatus = counters.skippedOrders > 0 ? 'partial' : 'completed'
-    await dependencies.repository.finishRun(runId, marketAccountId, status, counters, null)
-    return { summary: summary(status), httpStatus: 200 }
+    await dependencies.repository.applyDay({ runId, marketAccountId, integrationId, day: workDay,
+      pagesRead: counters.pagesRead, orders: normalizedOrders })
+    run = await dependencies.repository.getRun(marketAccountId, integrationId, runId)
+    if (!run) throw new SyncApiError('SYNC_RUN_LOST', 'A execucao nao foi encontrada apos o checkpoint.', 409)
+    return { summary: summary(run), httpStatus: 200 }
   } catch (error) {
     clearPassword = ''
     const failure = sanitizedGlobalError(error)
     try {
-      await dependencies.repository.finishRun(runId, marketAccountId, 'failed', counters, failure.message)
+      await dependencies.repository.recordRunFailure(runId, marketAccountId, failure.code, failure.message)
     } catch {
       // Best effort: nao substitui nem expoe a falha global original.
     }
-    return { summary: summary('failed'), httpStatus: failure.status }
+    run = await dependencies.repository.getRun(marketAccountId, integrationId, runId) ?? run
+    return { summary: summary(run), httpStatus: 200 }
   }
 }
 
@@ -443,10 +470,21 @@ export async function getSalesSyncStatus(userId: string, input: unknown, reposit
   if (!await repository.marketAccountExists(marketAccountId)) {
     throw new SyncApiError('MARKET_ACCOUNT_NOT_FOUND', 'Conta Market nao encontrada ou indisponivel.', 404)
   }
-  const run = await repository.getLatestRun(marketAccountId)
+  await repository.reconcileStaleRuns(marketAccountId)
+  const [run, integrations] = await Promise.all([
+    repository.getLatestRun(marketAccountId),
+    repository.getEligibleIntegrations(marketAccountId),
+  ])
   return {
+    integrationAvailable: integrations.length > 0,
     sync: run ? {
-      ...run,
+      runId: run.runId, status: run.status, periodStart: run.periodStart, periodEnd: run.periodEnd,
+      nextDay: run.nextDay, lastCompletedDay: run.lastCompletedDay,
+      totalDays: run.totalDays, completedDays: run.completedDays,
+      startedAt: run.startedAt, heartbeatAt: run.heartbeatAt, finishedAt: run.finishedAt,
+      pagesRead: run.pagesRead, ordersRead: run.ordersRead, ordersInserted: run.ordersInserted,
+      ordersUpdated: run.ordersUpdated, itemsProcessed: run.itemsProcessed,
+      paymentsProcessed: run.paymentsProcessed, skippedOrders: run.skippedOrders,
       errorMessage: run.errorMessage ? 'A sincronizacao nao foi concluida.' : null,
     } : null,
   }

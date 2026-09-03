@@ -7,6 +7,10 @@ uma das ações abaixo no corpo JSON:
 - `save`: `marketAccountId`, `integrationId` opcional, `provider`, `baseUrl`,
   `externalCompanyId`, `username` e `password` opcional;
 - `test`: `marketAccountId`, `integrationId`.
+- `sync-products`: `marketAccountId`, `integrationId` e `mode`: `preview`,
+  `status` ou `sync`. O preview aceita `page` e até cinco itens. O modo `sync`
+  inicia um run ou continua o `runId` informado, processando exatamente uma
+  página (100 itens por padrão) por chamada.
 
 Nesta primeira fase, todas as ações exigem Admin global GiroMicro, validado pela
 função existente `public.is_admin()`/`public.user_roles`. Não há hardcode de
@@ -42,3 +46,13 @@ A allowlist aceita somente a origem HTTPS oficial
 `POST /oar/users/login` e valida o token com uma leitura mínima em
 `GET /oar/sites/products/search`, usando `pageSize=1`, `page=1` e o `companyId` configurado. O token é
 mantido apenas em memória durante a requisição.
+
+## Sincronização administrativa de produtos
+
+O preview permanente não persiste dados e retorna no máximo dois registros
+sanitizados. O modo real usa `item.id` como identidade externa e confirma cada
+página atomicamente com o checkpoint do run. Interrupções podem continuar da
+última página confirmada; runs sem heartbeat por 30 minutos são encerrados antes
+de uma nova execução. A persistência não escreve estoque, saldo, movimentos,
+`market_store_products` nem snapshots por loja. Tokens, senhas, ciphertext e
+headers nunca fazem parte da resposta.

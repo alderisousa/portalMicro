@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'
-import { executeSalesSync, getSalesSyncStatus, SyncApiError, type RunCounters, type SalesSyncRepository, type SyncIntegration, type SyncRunStatus } from './core.ts'
+import { executeSalesSync, getSalesSyncStatus, marketOperationalWindow, SyncApiError, type RunCounters, type SalesSyncRepository, type SyncIntegration, type SyncRunStatus } from './core.ts'
 import { createAccesysOrdersProvider } from './provider.ts'
 import { ENCRYPTION_SECRET_NAME, decryptPassword, postgresByteaToBytes } from '../market-integration-admin/crypto.ts'
 import { normalizeAndValidateProviderUrl } from '../market-integration-admin/providers.ts'
@@ -8,6 +8,13 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+const configuredSecretKeys = () => {
+  try {
+    return Object.values(JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}'))
+      .filter((value): value is string => typeof value === 'string')
+  } catch { return [] }
 }
 
 const json = (body: Record<string, unknown>, status = 200) => new Response(JSON.stringify(body), {
@@ -77,7 +84,7 @@ class SupabaseSalesSyncRepository implements SalesSyncRepository {
   }
 
   async beginRun(input: {
-    marketAccountId: string; integrationId: string; startDate: string; endDate: string; requestedBy: string
+    marketAccountId: string; integrationId: string; startDate: string; endDate: string; requestedBy: string | null; source: 'admin' | 'market' | 'scheduled'
   }) {
     const { data, error } = await this.serviceClient.rpc('market_begin_sales_sync', {
       p_market_account_id: input.marketAccountId,
@@ -85,6 +92,7 @@ class SupabaseSalesSyncRepository implements SalesSyncRepository {
       p_period_start: input.startDate,
       p_period_end: input.endDate,
       p_requested_by: input.requestedBy,
+      p_source: input.source,
     })
     if (error) {
       if (error.message.includes('SYNC_ALREADY_RUNNING')) {
@@ -98,6 +106,56 @@ class SupabaseSalesSyncRepository implements SalesSyncRepository {
     }
     if (typeof data !== 'string') throw new Error('Sync run acquisition returned invalid result')
     return data
+  }
+
+  private runFromRow(data: Record<string, any>): SyncRunStatus {
+    return { runId: data.id, integrationId: data.integration_id, status: data.status,
+      periodStart: data.period_start, periodEnd: data.period_end, nextDay: data.next_day,
+      lastCompletedDay: data.last_completed_day, totalDays: data.total_days,
+      completedDays: data.completed_days, startedAt: data.started_at, heartbeatAt: data.heartbeat_at,
+      finishedAt: data.finished_at, pagesRead: data.pages_read, ordersRead: data.orders_read,
+      ordersInserted: data.orders_inserted, ordersUpdated: data.orders_updated,
+      itemsProcessed: data.items_processed, paymentsProcessed: data.payments_processed,
+      skippedOrders: data.skipped_orders, errorMessage: data.error_message }
+  }
+
+  async getRun(marketAccountId: string, integrationId: string, runId: string) {
+    const { data, error } = await this.serviceClient.from('market_sales_sync_runs').select('*')
+      .eq('id', runId).eq('market_account_id', marketAccountId).eq('integration_id', integrationId).maybeSingle()
+    if (error) throw new Error('Sync run lookup failed')
+    return data ? this.runFromRow(data) : null
+  }
+
+  async resumeRun(runId: string, marketAccountId: string, integrationId: string) {
+    const { data, error } = await this.serviceClient.rpc('market_resume_sales_sync', {
+      p_run_id: runId, p_market_account_id: marketAccountId, p_integration_id: integrationId,
+    })
+    if (error || typeof data !== 'string') throw new SyncApiError('SYNC_RUN_NOT_RESUMABLE', 'Execucao nao pode ser retomada.', 409)
+    return data
+  }
+
+  async applyDay(input: { runId: string; marketAccountId: string; integrationId: string; day: string; pagesRead: number; orders: unknown[] }) {
+    const { error } = await this.serviceClient.rpc('market_apply_sales_sync_day', {
+      p_run_id: input.runId, p_market_account_id: input.marketAccountId,
+      p_integration_id: input.integrationId, p_day: input.day,
+      p_pages_read: input.pagesRead, p_orders: input.orders,
+    })
+    if (error) throw new Error('Daily sales checkpoint failed')
+  }
+
+  async recordRunFailure(runId: string, marketAccountId: string, code: string, message: string) {
+    const { error } = await this.serviceClient.from('market_sales_sync_runs').update({
+      status: 'failed', error_code: code, error_message: message,
+      heartbeat_at: null, finished_at: new Date().toISOString(),
+    }).eq('id', runId).eq('market_account_id', marketAccountId).eq('status', 'running')
+    if (error) throw new Error('Sync failure audit failed')
+  }
+
+  async reconcileStaleRuns(marketAccountId: string) {
+    const { error } = await this.serviceClient.rpc('market_reconcile_stale_sales_sync', {
+      p_market_account_id: marketAccountId,
+    })
+    if (error) throw new Error('Stale sync reconciliation failed')
   }
 
   async heartbeatRun(runId: string, marketAccountId: string) {
@@ -164,27 +222,13 @@ class SupabaseSalesSyncRepository implements SalesSyncRepository {
 
   async getLatestRun(marketAccountId: string) {
     const { data, error } = await this.serviceClient.from('market_sales_sync_runs')
-      .select('id,status,period_start,period_end,started_at,heartbeat_at,finished_at,orders_read,orders_inserted,orders_updated,items_processed,payments_processed,skipped_orders,error_message')
+      .select('*')
       .eq('market_account_id', marketAccountId).order('started_at', { ascending: false }).limit(1).maybeSingle()
     if (error) throw new Error('Sync status lookup failed')
     if (!data) return null
-    return {
-      runId: data.id,
-      status: data.status,
-      periodStart: data.period_start,
-      periodEnd: data.period_end,
-      startedAt: data.started_at,
-      heartbeatAt: data.heartbeat_at,
-      finishedAt: data.finished_at,
-      ordersRead: data.orders_read,
-      ordersInserted: data.orders_inserted,
-      ordersUpdated: data.orders_updated,
-      itemsProcessed: data.items_processed,
-      paymentsProcessed: data.payments_processed,
-      skippedOrders: data.skipped_orders,
-      errorMessage: data.error_message,
-    } as SyncRunStatus
+    return this.runFromRow(data)
   }
+
 }
 
 Deno.serve(async (request) => {
@@ -196,25 +240,32 @@ Deno.serve(async (request) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  const secretApiKeys = configuredSecretKeys()
+  const providedApiKey = request.headers.get('apikey')
+  const adminKey = secretApiKeys[0] ?? serviceRoleKey
   const encryptionKey = Deno.env.get(ENCRYPTION_SECRET_NAME)
-  if (!supabaseUrl || !anonKey || !serviceRoleKey || !encryptionKey) {
+  if (!supabaseUrl || !anonKey || !adminKey || !encryptionKey) {
     console.error('market-sales-sync: configuracao server-side ausente')
     return json({ error: { code: 'SERVICE_NOT_CONFIGURED', message: 'Servico nao configurado.' } }, 503)
   }
 
   const authorization = request.headers.get('Authorization')
-  if (!authorization?.startsWith('Bearer ')) {
+  const schedulerSecret = Deno.env.get('MARKET_SCHEDULER_SECRET')
+  const scheduled = Boolean(providedApiKey && secretApiKeys.includes(providedApiKey)) && Boolean(schedulerSecret) &&
+    request.headers.get('x-market-scheduler-secret') === schedulerSecret
+  if (!scheduled && !authorization?.startsWith('Bearer '))
     return json({ error: { code: 'UNAUTHORIZED', message: 'Autenticacao necessaria.' } }, 401)
-  }
   const userClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: authorization } },
+    global: { headers: authorization ? { Authorization: authorization } : {} },
     auth: { autoRefreshToken: false, persistSession: false },
   })
-  const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+  const serviceClient = createClient(supabaseUrl, adminKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   })
-  const { data: authData, error: authError } = await userClient.auth.getUser(authorization.slice(7))
-  if (authError || !authData.user) {
+  const { data: authData, error: authError } = scheduled
+    ? { data: { user: null }, error: null }
+    : await userClient.auth.getUser(authorization.slice(7))
+  if (!scheduled && (authError || !authData.user)) {
     return json({ error: { code: 'UNAUTHORIZED', message: 'Sessao invalida.' } }, 401)
   }
 
@@ -231,12 +282,25 @@ Deno.serve(async (request) => {
 
   try {
     const repository = new SupabaseSalesSyncRepository(serviceClient, userClient)
+    if (scheduled) {
+      const requestBody = body as Record<string, unknown>
+      const window = marketOperationalWindow(new Date())
+      body = { marketAccountId: requestBody.marketAccountId, integrationId: requestBody.integrationId,
+        startDate: window.startDate, endDate: window.endDate }
+      const result = await executeSalesSync(null, body, {
+        repository,
+        decryptCredential: (ciphertext) => decryptPassword(postgresByteaToBytes(ciphertext), encryptionKey),
+        validateProviderUrl: normalizeAndValidateProviderUrl,
+        createProvider: (configuration) => createAccesysOrdersProvider(configuration),
+      }, { scheduled: true })
+      return json(result.summary as unknown as Record<string, unknown>, result.httpStatus)
+    }
     if (body && typeof body === 'object' && !Array.isArray(body) &&
         (body as Record<string, unknown>).action === 'status') {
-      const result = await getSalesSyncStatus(authData.user.id, body, repository)
+      const result = await getSalesSyncStatus(authData.user!.id, body, repository)
       return json(result as unknown as Record<string, unknown>)
     }
-    const result = await executeSalesSync(authData.user.id, body, {
+    const result = await executeSalesSync(authData.user!.id, body, {
       repository,
       decryptCredential: (ciphertext) => decryptPassword(postgresByteaToBytes(ciphertext), encryptionKey),
       validateProviderUrl: normalizeAndValidateProviderUrl,

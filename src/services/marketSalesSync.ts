@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase'
 import type { MarketSalesSyncResult } from '../types/marketIntegration'
-import type { MarketSalesSyncStatus } from '../types/marketSalesSync'
+import type { MarketSalesSyncContext } from '../types/marketSalesSync'
 import { marketSalesRefreshRequest, marketSalesStatusRequest } from './marketSalesSyncContract'
 
 const messages: Record<string, string> = {
@@ -38,7 +38,7 @@ const parseFunctionError = async (error: unknown): Promise<never> => {
   throw new MarketSalesSyncError(code)
 }
 
-const invoke = async (body: { action: 'refresh' | 'status'; marketAccountId: string }) => {
+const invoke = async (body: { action: 'refresh' | 'status'; marketAccountId: string; runId?: string }) => {
   const { data, error } = await supabase.functions.invoke('market-sales-sync', { body })
   if (error) return parseFunctionError(error)
   if (!data || typeof data !== 'object') throw new MarketSalesSyncError('INTERNAL_ERROR')
@@ -46,10 +46,19 @@ const invoke = async (body: { action: 'refresh' | 'status'; marketAccountId: str
 }
 
 export async function refreshMarketSales(marketAccountId: string) {
-  return invoke(marketSalesRefreshRequest(marketAccountId)) as Promise<unknown> as Promise<MarketSalesSyncResult>
+  let runId: string | undefined
+  let result: MarketSalesSyncResult
+  do {
+    result = await invoke({ ...marketSalesRefreshRequest(marketAccountId), ...(runId ? { runId } : {}) }) as unknown as MarketSalesSyncResult
+    runId = result.syncRunId
+  } while (result.continue)
+  return result
 }
 
-export async function getMarketSalesSyncStatus(marketAccountId: string) {
+export async function getMarketSalesSyncContext(marketAccountId: string) {
   const data = await invoke(marketSalesStatusRequest(marketAccountId))
-  return (data.sync ?? null) as MarketSalesSyncStatus | null
+  return {
+    integrationAvailable: data.integrationAvailable === true,
+    sync: (data.sync ?? null) as MarketSalesSyncContext['sync'],
+  }
 }

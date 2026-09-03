@@ -1,6 +1,8 @@
 import { supabase } from '../lib/supabase'
 import type {
   MarketIntegrationConfiguration,
+  MarketProductCatalogPreview,
+  MarketProductSyncRun,
   MarketSalesSyncRequest,
   MarketSalesSyncResult,
   SaveMarketIntegrationInput,
@@ -22,6 +24,9 @@ const errorMessages: Record<string, string> = {
   CREDENTIALS_UNAVAILABLE: 'As credenciais da integração não puderam ser utilizadas.',
   INVALID_PERIOD: 'O período deve ter no máximo 31 dias.',
   INTEGRATION_UNAVAILABLE: 'Ative e configure a integração Accesys antes de sincronizar.',
+  PRODUCT_SYNC_ALREADY_RUNNING: 'Já existe uma sincronização de produtos ativa. Atualize o status para continuar.',
+  PRODUCT_SYNC_NOT_FOUND: 'A execução de produtos não foi encontrada.',
+  PRODUCT_SYNC_FAILED: 'Não foi possível processar esta página do catálogo.',
   PROVIDER_INVALID_RESPONSE: 'A Accesys retornou uma resposta inesperada. Tente novamente.',
   INVALID_PROVIDER: 'Este provider ainda não é suportado.',
   INVALID_PROVIDER_URL: 'A URL configurada não é permitida para a Accesys.',
@@ -112,16 +117,68 @@ export async function testMarketIntegration(marketAccountId: string, integration
   })
 }
 
+export async function previewMarketProducts(
+  marketAccountId: string,
+  integrationId: string,
+  page = 1,
+) {
+  const data = await invokeIntegrationAdmin<{
+    mode: 'preview'; persisted: false; preview: MarketProductCatalogPreview
+  }>({
+    action: 'sync-products', mode: 'preview', marketAccountId, integrationId, page, pageSize: 5,
+  })
+  return data.preview
+}
+
+export async function getMarketProductSyncStatus(marketAccountId: string, integrationId: string) {
+  const data = await invokeIntegrationAdmin<{ mode: 'status'; run: MarketProductSyncRun | null; lastCompletedRun: MarketProductSyncRun | null }>({
+    action: 'sync-products', mode: 'status', marketAccountId, integrationId,
+  })
+  return { run: data.run, lastCompletedRun: data.lastCompletedRun }
+}
+
+export async function syncMarketProductsPage(marketAccountId: string, integrationId: string, runId?: string) {
+  const data = await invokeIntegrationAdmin<{ mode: 'sync'; run: MarketProductSyncRun }>({
+    action: 'sync-products', mode: 'sync', marketAccountId, integrationId,
+    ...(runId ? { runId } : {}),
+  })
+  return data.run
+}
+
+export async function synchronizeMarketProducts(
+  marketAccountId: string,
+  integrationId: string,
+  source: 'admin' | 'inventory' = 'admin',
+  currentRun?: MarketProductSyncRun | null,
+  onProgress?: (run: MarketProductSyncRun) => void,
+) {
+  let runId = currentRun?.status === 'running' ? currentRun.id : undefined
+  let run = await invokeIntegrationAdmin<{ mode: 'sync'; run: MarketProductSyncRun }>({
+    action: 'sync-products', mode: 'sync', source, marketAccountId, integrationId,
+    ...(runId ? { runId } : {}),
+  }).then((result) => result.run)
+  onProgress?.(run)
+  while (run.status === 'running') {
+    runId = run.id
+    run = await invokeIntegrationAdmin<{ mode: 'sync'; run: MarketProductSyncRun }>({
+      action: 'sync-products', mode: 'sync', source, marketAccountId, integrationId, runId,
+    }).then((result) => result.run)
+    onProgress?.(run)
+  }
+  return run
+}
+
 const isSalesSyncResult = (value: unknown): value is MarketSalesSyncResult => {
   if (!value || typeof value !== 'object') return false
   const result = value as Record<string, unknown>
   return typeof result.syncRunId === 'string' &&
-    (result.status === 'completed' || result.status === 'partial' || result.status === 'failed') &&
+    (result.status === 'running' || result.status === 'completed' || result.status === 'partial' || result.status === 'failed') &&
     typeof result.pagesRead === 'number' && typeof result.ordersRead === 'number' &&
     typeof result.ordersInserted === 'number' && typeof result.ordersUpdated === 'number' &&
     typeof result.itemsProcessed === 'number' && typeof result.paymentsProcessed === 'number' &&
     typeof result.skippedOrders === 'number' && Array.isArray(result.unmappedSites) &&
-    Array.isArray(result.errors)
+    Array.isArray(result.errors) && typeof result.totalDays === 'number' &&
+    typeof result.completedDays === 'number' && typeof result.continue === 'boolean'
 }
 
 export async function syncMarketSales(input: MarketSalesSyncRequest) {
@@ -131,6 +188,7 @@ export async function syncMarketSales(input: MarketSalesSyncRequest) {
       integrationId: input.integrationId,
       startDate: input.startDate,
       endDate: input.endDate,
+      ...(input.runId ? { runId: input.runId } : {}),
     },
   })
   if (!error) {

@@ -1,0 +1,8 @@
+[functions.market-sync-scheduler]
+verify_jwt = false
+
+[functions.market-integration-admin]
+verify_jwt = false
+
+[functions.market-sales-sync]
+verify_jwt = false

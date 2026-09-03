@@ -1,17 +1,22 @@
-import { CheckCircle2, CircleAlert, KeyRound, PlugZap, RefreshCw } from 'lucide-react'
+import { CheckCircle2, CircleAlert, KeyRound, PackageSearch, PlugZap, RefreshCw } from 'lucide-react'
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   ACCESYS_BASE_URL,
   findAccesysIntegrationId,
+  getMarketProductSyncStatus,
   getMarketIntegration,
+  previewMarketProducts,
   saveMarketIntegration,
+  synchronizeMarketProducts,
   syncMarketSales,
   testMarketIntegration,
 } from '../services/marketIntegration'
 import type {
   MarketIntegrationConfiguration,
   MarketIntegrationStatus,
+  MarketProductCatalogPreview,
+  MarketProductSyncRun,
   MarketSalesSyncResult,
 } from '../types/marketIntegration'
 
@@ -50,6 +55,7 @@ const formatInputDate = (value: string) => {
 }
 
 const syncStatusLabels = {
+  running: 'Em andamento',
   completed: 'Concluído',
   partial: 'Concluído com pendências',
   failed: 'Falhou',
@@ -75,6 +81,13 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [previewingProducts, setPreviewingProducts] = useState(false)
+  const [productSyncing, setProductSyncing] = useState(false)
+  const [productSyncRun, setProductSyncRun] = useState<MarketProductSyncRun | null>(null)
+  const [lastCompletedProductSyncRun, setLastCompletedProductSyncRun] = useState<MarketProductSyncRun | null>(null)
+  const [productPreview, setProductPreview] = useState<MarketProductCatalogPreview | null>(null)
+  const [productPreviewFeedback, setProductPreviewFeedback] = useState<Feedback | null>(null)
+  const [productPreviewPage, setProductPreviewPage] = useState(1)
   const [feedback, setFeedback] = useState<Feedback | null>(null)
   const [syncFeedback, setSyncFeedback] = useState<Feedback | null>(null)
   const [syncResult, setSyncResult] = useState<MarketSalesSyncResult | null>(null)
@@ -97,7 +110,6 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
     setLoading(true)
     setFeedback(null)
     setSyncFeedback(null)
-    setSyncResult(null)
     setPendingSyncPeriod(null)
     try {
       const integrationId = await findAccesysIntegrationId(marketAccountId)
@@ -106,7 +118,10 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
         setForm(emptyForm)
         return
       }
-      applyIntegration(await getMarketIntegration(marketAccountId, integrationId))
+      const loaded = await getMarketIntegration(marketAccountId, integrationId)
+      applyIntegration(loaded)
+      const productStatus = await getMarketProductSyncStatus(marketAccountId, integrationId)
+      setProductSyncRun(productStatus.run); setLastCompletedProductSyncRun(productStatus.lastCompletedRun)
     } catch (error) {
       setFeedback({
         type: 'error',
@@ -207,12 +222,16 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
     setPendingSyncPeriod(null)
     setSyncing(true)
     try {
-      const result = await syncMarketSales({
-        marketAccountId,
-        integrationId: integration.id,
-        startDate: period.startDate,
-        endDate: period.endDate,
-      })
+      let runId = syncResult && (syncResult.status === 'failed' || syncResult.status === 'running') &&
+          syncResult.period.startDate === period.startDate && syncResult.period.endDate === period.endDate
+        ? syncResult.syncRunId : undefined
+      let result: MarketSalesSyncResult
+      do {
+        result = await syncMarketSales({ marketAccountId, integrationId: integration.id,
+          startDate: period.startDate, endDate: period.endDate, runId })
+        setSyncResult(result)
+        runId = result.syncRunId
+      } while (result.continue)
       setSyncResult(result)
       setSyncFeedback(result.status === 'failed'
         ? { type: 'error', message: 'A sincronização falhou. Consulte o resumo e o ID da execução.' }
@@ -228,6 +247,33 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
       syncInFlight.current = false
       setSyncing(false)
     }
+  }
+
+  const previewProducts = async () => {
+    if (!integration?.id || previewingProducts || productSyncing || saving || testing || syncing) return
+    setPreviewingProducts(true); setProductPreview(null); setProductPreviewFeedback(null)
+    try {
+      const preview = await previewMarketProducts(marketAccountId, integration.id, productPreviewPage)
+      setProductPreview(preview)
+      setProductPreviewFeedback({ type: 'success', message: `${preview.returnedCount} produtos encontrados nesta página.` })
+    } catch (error) {
+      setProductPreviewFeedback({ type: 'error', message: safeMessage(error, 'Não foi possível consultar o catálogo de produtos.') })
+    } finally { setPreviewingProducts(false) }
+  }
+
+  const synchronizeProducts = async () => {
+    if (!integration?.id || productSyncing || previewingProducts || saving || testing || syncing) return
+    setProductSyncing(true); setProductPreviewFeedback(null)
+    try {
+      const run = await synchronizeMarketProducts(marketAccountId, integration.id, 'admin', productSyncRun, setProductSyncRun)
+      if (run.status === 'completed') setLastCompletedProductSyncRun(run)
+      setProductPreviewFeedback(run.status === 'completed'
+        ? { type: 'success', message: 'Catálogo de produtos sincronizado com sucesso.' }
+        : { type: 'error', message: run.errorMessage || 'A sincronização não foi concluída.' })
+    } catch (error) {
+      setProductPreviewFeedback({ type: 'error', message: safeMessage(error, 'A sincronização foi interrompida. Use Continuar para retomar da última página confirmada.') })
+      try { const status = await getMarketProductSyncStatus(marketAccountId, integration.id); setProductSyncRun(status.run); setLastCompletedProductSyncRun(status.lastCompletedRun) } catch { /* Mantém o último progresso conhecido. */ }
+    } finally { setProductSyncing(false) }
   }
 
   return <section className="admin-market-block admin-integration-section">
@@ -271,6 +317,31 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
       </div>
       {!integration?.id && <p className="admin-form-note">Salve a primeira configuração antes de testar a conexão.</p>}
 
+      <div className="admin-sales-sync admin-product-sync">
+        <div className="admin-sales-sync-heading">
+          <div><span className="panel-kicker">CATÁLOGO</span><h3>Produtos</h3></div>
+          <p>Consulte uma amostra ou sincronize o catálogo em páginas confirmadas e resumíveis. Estoque e configuração por loja não são alterados.</p>
+        </div>
+        <div className="admin-sales-sync-form">
+          <label>Página do preview<input type="number" min="1" step="1" value={productPreviewPage} disabled={previewingProducts || productSyncing || saving || testing || syncing} onChange={(event) => setProductPreviewPage(Math.max(1, Number.parseInt(event.target.value, 10) || 1))} /></label>
+          <button type="button" className="button button-small button-outline" disabled={!integration?.id || integration.status !== 'active' || !integration.hasCredentials || previewingProducts || productSyncing || saving || testing || syncing} onClick={() => void previewProducts()}>{previewingProducts ? <><RefreshCw size={15} /> Consultando...</> : <><PackageSearch size={15} /> Ver preview</>}</button>
+          <button type="button" className="button button-small" disabled={!integration?.id || integration.status !== 'active' || !integration.hasCredentials || previewingProducts || productSyncing || saving || testing || syncing} onClick={() => void synchronizeProducts()}>{productSyncing ? <><RefreshCw size={15} /> Sincronizando...</> : productSyncRun?.status === 'running' ? 'Continuar sincronização' : 'Sincronizar produtos'}</button>
+        </div>
+        {(!integration?.id || integration.status !== 'active' || !integration.hasCredentials) && <p className="admin-form-note">A integração precisa estar ativa e com credenciais configuradas.</p>}
+        {productPreviewFeedback && <p className={`admin-feedback ${productPreviewFeedback.type}`} role={productPreviewFeedback.type === 'error' ? 'alert' : 'status'}>{productPreviewFeedback.message}</p>}
+        {productSyncRun && <div className={`admin-sales-sync-result is-${productSyncRun.status}`}>
+          <div className="admin-sales-sync-result-heading"><strong>Status: {productSyncRun.status}</strong><small>Run: {productSyncRun.id}</small></div>
+          <dl className="admin-sales-sync-metrics"><div><dt>Progresso</dt><dd>{productSyncRun.currentPage} / {productSyncRun.totalPages ?? '?'}</dd></div><div><dt>Recebidos</dt><dd>{productSyncRun.receivedCount}</dd></div><div><dt>Criados</dt><dd>{productSyncRun.createdCount}</dd></div><div><dt>Atualizados</dt><dd>{productSyncRun.updatedCount}</dd></div><div><dt>Sem alteração</dt><dd>{productSyncRun.unchangedCount}</dd></div><div><dt>Ignorados</dt><dd>{productSyncRun.ignoredCount}</dd></div></dl>
+          {productSyncRun.errorMessage && <p>{productSyncRun.errorMessage}</p>}
+        </div>}
+        {lastCompletedProductSyncRun && lastCompletedProductSyncRun.id !== productSyncRun?.id && <p className="admin-form-note">Última conclusão: {formatTestDate(lastCompletedProductSyncRun.finishedAt)} · {lastCompletedProductSyncRun.receivedCount} recebidos.</p>}
+        {productPreview && <div className="admin-sales-sync-result is-completed">
+          <div className="admin-sales-sync-result-heading"><strong>Preview do catálogo</strong><small>HTTP {productPreview.providerHttpStatus} · página {productPreview.requestedPage} · limite {productPreview.pageSize}</small></div>
+          <dl className="admin-sales-sync-metrics"><div><dt>Tipo da raiz</dt><dd>{productPreview.rootType}</dd></div><div><dt>Coleção</dt><dd>{productPreview.collectionKey ?? 'raiz'}</dd></div><div><dt>Registros</dt><dd>{productPreview.returnedCount}</dd></div></dl>
+          <div className="admin-sales-sync-details"><h4>Chaves da raiz</h4><p>{productPreview.rootKeys.join(', ') || 'Nenhuma'}</p><h4>Chaves dos produtos</h4><p>{productPreview.productKeys.join(', ') || 'Nenhuma'}</p><h4>Paginação</h4><pre>{JSON.stringify(productPreview.paginationMetadata, null, 2)}</pre>{productPreview.products.length > 0 && <><h4>Amostra sanitizada</h4><pre>{JSON.stringify(productPreview.products, null, 2)}</pre></>}</div>
+        </div>}
+      </div>
+
       <div className="admin-sales-sync">
         <div className="admin-sales-sync-heading">
           <div><span className="panel-kicker">EXECUÇÃO MANUAL</span><h3>Sincronização de vendas</h3></div>
@@ -279,7 +350,7 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
         <div className="admin-sales-sync-form">
           <label>Data inicial<strong aria-hidden="true"> *</strong><input type="date" required value={startDate} disabled={syncing || saving || testing} onChange={(event) => setStartDate(event.target.value)} /></label>
           <label>Data final<strong aria-hidden="true"> *</strong><input type="date" required value={endDate} disabled={syncing || saving || testing} onChange={(event) => setEndDate(event.target.value)} /></label>
-          <button type="button" className="button button-small" disabled={!integration?.id || integration.status !== 'active' || !integration.hasCredentials || syncing || saving || testing} onClick={requestSalesSync}>{syncing ? <><RefreshCw size={15} /> Sincronizando...</> : 'Sincronizar vendas'}</button>
+          <button type="button" className="button button-small" disabled={!integration?.id || integration.status !== 'active' || !integration.hasCredentials || syncing || saving || testing} onClick={requestSalesSync}>{syncing ? <><RefreshCw size={15} /> Sincronizando...</> : syncResult && (syncResult.status === 'failed' || syncResult.status === 'running') ? 'Continuar sincronização' : 'Sincronizar vendas'}</button>
         </div>
         {(!integration?.id || integration.status !== 'active' || !integration.hasCredentials) && <p className="admin-form-note">A integração precisa estar ativa e com credenciais configuradas.</p>}
         {syncFeedback && <p className={`admin-feedback ${syncFeedback.type}`} role={syncFeedback.type === 'error' ? 'alert' : 'status'}>{syncFeedback.message}</p>}
@@ -293,6 +364,8 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
             <div><dt>Pagamentos processados</dt><dd>{syncResult.paymentsProcessed}</dd></div>
             <div><dt>Pedidos ignorados</dt><dd>{syncResult.skippedOrders}</dd></div>
             <div><dt>Páginas lidas</dt><dd>{syncResult.pagesRead}</dd></div>
+            <div><dt>Dias concluídos</dt><dd>{syncResult.completedDays} / {syncResult.totalDays}</dd></div>
+            <div><dt>Último dia</dt><dd>{syncResult.lastCompletedDay ? formatInputDate(syncResult.lastCompletedDay) : '—'}</dd></div>
           </dl>
           {syncResult.unmappedSites.length > 0 && <div className="admin-sales-sync-details"><h4>Lojas sem mapeamento</h4><ul>{syncResult.unmappedSites.map((site) => <li key={site.externalStoreId}><strong>{site.externalStoreId}</strong>{site.siteName ? ` — ${site.siteName}` : ''}</li>)}</ul></div>}
           {syncResult.errors.length > 0 && <div className="admin-sales-sync-details"><h4>Pedidos com pendências</h4><ul>{syncResult.errors.map((error, index) => <li key={`${error.externalOrderId ?? 'unknown'}-${index}`}>Pedido: {error.externalOrderId ?? 'não informado'} · Loja: {error.externalStoreId ?? 'não informada'} · Código: <strong>{error.code}</strong></li>)}</ul></div>}
@@ -301,7 +374,7 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
       {pendingSyncPeriod && <ConfirmDialog
         title="Sincronizar vendas?"
         description={`Confirma a sincronização das vendas da Accesys de ${formatInputDate(pendingSyncPeriod.startDate)} até ${formatInputDate(pendingSyncPeriod.endDate)}?`}
-        confirmLabel="Sincronizar vendas"
+        confirmLabel={syncResult && (syncResult.status === 'failed' || syncResult.status === 'running') ? 'Continuar sincronização' : 'Sincronizar vendas'}
         processingLabel="Sincronizando..."
         processing={false}
         confirmVariant="primary"

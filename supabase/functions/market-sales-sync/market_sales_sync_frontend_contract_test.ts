@@ -7,9 +7,17 @@ import {
   marketSalesRefreshRequest,
   marketSalesStatusRequest,
 } from '../../../src/services/marketSalesSyncContract.ts'
+import {
+  canAccessMarketSalesImports,
+  canViewMarketCommercialData,
+} from '../../../src/services/marketDashboardPermissions.ts'
 
 const dashboardSource = readFileSync(
   new URL('../../../src/pages/MarketCommercialDashboard.tsx', import.meta.url),
+  'utf8',
+)
+const marketHomeSource = readFileSync(
+  new URL('../../../src/pages/MarketDashboard.tsx', import.meta.url),
   'utf8',
 )
 
@@ -19,6 +27,43 @@ test('botao de atualizar e visivel somente para owner admin e manager', () => {
   assert.equal(canRefreshMarketSales('manager'), true)
   assert.equal(canRefreshMarketSales('operator'), false)
   assert.equal(canRefreshMarketSales('viewer'), false)
+})
+
+test('operator nao acessa dados comerciais nem importacoes; demais perfis preservam dashboard', () => {
+  assert.equal(canViewMarketCommercialData('operator'), false)
+  for (const role of ['owner', 'admin', 'manager', 'viewer'] as const) {
+    assert.equal(canViewMarketCommercialData(role), true)
+  }
+
+  assert.equal(canAccessMarketSalesImports('operator'), false)
+  assert.equal(canAccessMarketSalesImports('viewer'), false)
+  for (const role of ['owner', 'admin', 'manager'] as const) {
+    assert.equal(canAccessMarketSalesImports(role), true)
+    assert.equal(canAccessMarketSalesImports(role, true), false)
+    assert.equal(canAccessMarketSalesImports(role, null), false)
+  }
+})
+
+test('dashboard apresenta exclusivamente a fonte selecionada pela RPC', () => {
+  assert.match(dashboardSource, /Histórico importado/)
+  assert.match(dashboardSource, /Os indicadores utilizam exclusivamente vendas sincronizadas pela integração Accesys/)
+  assert.match(dashboardSource, /data\.source === 'sync'/)
+  assert.doesNotMatch(dashboardSource, /latestMarketDataDate|sem somar períodos potencialmente sobrepostos/)
+})
+
+test('importacao manual depende da ausencia de integracao ativa', () => {
+  assert.match(marketHomeSource, /getMarketSalesSyncContext\(accountId\)/)
+  assert.match(marketHomeSource, /canAccessMarketSalesImports\(access\.role, salesIntegrationAvailable\)/)
+  assert.doesNotMatch(marketHomeSource, /access\.role !== 'viewer' && <button[^>]+>Importar vendas/)
+})
+
+test('operator recebe painel operacional sem consulta ou renderizacao financeira', () => {
+  assert.match(dashboardSource, /if \(!canViewMarketCommercialData\(role\)\)/)
+  assert.match(dashboardSource, /<h1>Status operacional<\/h1>/)
+  assert.match(dashboardSource, /formatMarketSalesSyncStatus\(syncStatus\.status\)/)
+  assert.match(dashboardSource, /new Intl\.DateTimeFormat\('pt-BR'/)
+  assert.match(marketHomeSource, /access\.role === 'operator' \? 'Status de vendas'/)
+  assert.match(marketHomeSource, /canAccessMarketSalesImports\(access\.role, salesIntegrationAvailable\) && <article className="is-available"><ShoppingCart/)
 })
 
 test('status tecnico e traduzido somente para apresentacao com fallback seguro', () => {

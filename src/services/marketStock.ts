@@ -10,7 +10,7 @@ import type {
   MarketStockStartResult,
 } from '../types/marketStock'
 
-async function listActiveProducts(accountId: string): Promise<MarketStockProduct[]> {
+export async function listActiveProducts(accountId: string): Promise<MarketStockProduct[]> {
   const { data, error } = await supabase.rpc('market_get_stock_products', {
     p_market_account_id: accountId,
   })
@@ -24,7 +24,6 @@ export async function getMarketStockContext(accountId: string): Promise<MarketSt
   if (access.status !== 'pilot' && access.status !== 'active') throw new Error('Esta conta Market não está disponível.')
   return {
     access,
-    products: await listActiveProducts(accountId),
     canStart: access.role !== 'viewer',
   }
 }

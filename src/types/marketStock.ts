@@ -31,7 +31,6 @@ export interface MarketStockBalanceRow {
 
 export interface MarketStockContext {
   access: CurrentUserMarketAccess
-  products: MarketStockProduct[]
   canStart: boolean
 }
 

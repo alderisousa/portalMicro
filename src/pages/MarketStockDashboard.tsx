@@ -2,10 +2,12 @@ import { ArrowLeft, Boxes, CheckCircle2, Minus, Plus, RefreshCw, ScanBarcode, Se
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import {
   cancelMarketInventoryDraft, finalizeMarketInventoryDraft, getMarketInventoryDraft,
-  getMarketStockBalance, getMarketStockContext, saveMarketInventoryDraft,
+  getMarketStockBalance, getMarketStockContext, listActiveProducts, saveMarketInventoryDraft,
 } from '../services/marketStock'
 import type { MarketInitialInventoryItem, MarketInventoryDraft, MarketStockBalanceRow, MarketStockContext, MarketStockProduct } from '../types/marketStock'
 import { BarcodeScanner } from '../components/BarcodeScanner'
+import { findAccesysIntegrationId, getMarketProductSyncStatus, synchronizeMarketProducts } from '../services/marketIntegration'
+import type { MarketProductSyncRun } from '../types/marketIntegration'
 
 interface Props { accountId: string; onBack: () => void }
 type SaveState = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
@@ -14,6 +16,8 @@ const number = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 })
 const normalizeSearch = (value: string) => value.trim().toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 const initialDateTime = () => { const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset()); return now.toISOString().slice(0, 16) }
 const toLocalDateTime = (value: string) => { const date = new Date(value); date.setMinutes(date.getMinutes() - date.getTimezoneOffset()); return date.toISOString().slice(0, 16) }
+const formatProductSyncDate = (value: string) => new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+  .format(new Date(value)).replace(', ', ' às ')
 const externalCodes = (product: MarketStockProduct) => [...product.externalEans, ...product.externalProductCodes]
 const productIdentifier = (product: MarketStockProduct) => product.ean
   ? `EAN ${product.ean}`
@@ -50,6 +54,7 @@ const isVersionConflict = (cause: unknown) => typeof cause === 'object' && cause
 
 export function MarketStockDashboard({ accountId, onBack }: Props) {
   const [context, setContext] = useState<MarketStockContext | null>(null)
+  const [products, setProducts] = useState<MarketStockProduct[] | null>(null)
   const [storeId, setStoreId] = useState('')
   const [balance, setBalance] = useState<MarketStockBalanceRow[]>([])
   const [draft, setDraft] = useState<MarketInventoryDraft | null>(null)
@@ -68,6 +73,10 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
   const [revision, setRevision] = useState(0)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [productIntegrationId, setProductIntegrationId] = useState<string | null>(null)
+  const [productSyncRun, setProductSyncRun] = useState<MarketProductSyncRun | null>(null)
+  const [lastProductSync, setLastProductSync] = useState<MarketProductSyncRun | null>(null)
+  const [productSyncing, setProductSyncing] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const itemRefs = useRef<Record<string, HTMLElement | null>>({})
   const quantityRefs = useRef<Record<string, HTMLInputElement | null>>({})
@@ -98,6 +107,19 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
       const nextContext = await getMarketStockContext(accountId)
       const nextStoreId = preferredStoreId && nextContext.access.stores.some((store) => store.id === preferredStoreId) ? preferredStoreId : nextContext.access.stores[0]?.id ?? ''
       setContext(nextContext); setStoreId(nextStoreId); await applyStoreData(nextStoreId, nextContext)
+      try {
+        const integrationId = await findAccesysIntegrationId(accountId)
+        setProductIntegrationId(integrationId ?? null)
+        if (integrationId) {
+          const status = await getMarketProductSyncStatus(accountId, integrationId)
+          setProductSyncRun(status.run); setLastProductSync(status.lastCompletedRun)
+        } else {
+          setProductSyncRun(null); setLastProductSync(null)
+        }
+      } catch (cause) {
+        console.error('Falha ao carregar status da sincronizacao de produtos:', cause)
+        setProductIntegrationId(null); setProductSyncRun(null); setLastProductSync(null)
+      }
     } catch (cause) { console.error('Falha ao carregar estoque:', cause); setError('Não foi possível carregar os dados de estoque.') }
     finally { setLoading(false) }
   }, [accountId])
@@ -106,7 +128,7 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
   useEffect(() => { if (counting && !confirming) window.setTimeout(() => searchRef.current?.focus(), 0) }, [counting, confirming])
 
   const selectedStore = context?.access.stores.find((store) => store.id === storeId) ?? null
-  const searchResults = useMemo(() => findMarketStockProducts(context?.products ?? [], query).slice(0, 8), [context, query])
+  const searchResults = useMemo(() => findMarketStockProducts(products ?? [], query).slice(0, 8), [products, query])
   const positiveItems = items.filter((item) => item.quantity > 0)
   const isCycleInventory = draft?.inventoryType === 'cycle'
   const countedItems = isCycleInventory ? items : positiveItems
@@ -171,6 +193,9 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     if (!selectedStore || saving) return
     setSaving(true); setError('')
     try {
+      // O catálogo completo só é carregado quando a contagem realmente começa.
+      const nextProducts = products ?? await listActiveProducts(accountId)
+      if (!products) setProducts(nextProducts)
       const nextStartedAt = initialDateTime()
       setStartedAt(nextStartedAt); startedAtRef.current = nextStartedAt
       const created = await saveMarketInventoryDraft(selectedStore.id, null, null, new Date(nextStartedAt).toISOString(), [])
@@ -181,10 +206,19 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     } finally { setSaving(false) }
   }
 
-  const resumeDraft = () => {
-    if (!draft) return
-    setItems(draft.items); itemsRef.current = draft.items; setStartedAt(toLocalDateTime(draft.startedAt))
-    startedAtRef.current = toLocalDateTime(draft.startedAt); dirtyRef.current = false; setSaveState('saved'); setCounting(true)
+  const resumeDraft = async () => {
+    if (!draft || saving) return
+    setSaving(true); setError('')
+    try {
+      // Busca e scanner continuam usando o catálogo em memória durante a contagem.
+      const nextProducts = products ?? await listActiveProducts(accountId)
+      if (!products) setProducts(nextProducts)
+      setItems(draft.items); itemsRef.current = draft.items; setStartedAt(toLocalDateTime(draft.startedAt))
+      startedAtRef.current = toLocalDateTime(draft.startedAt); dirtyRef.current = false; setSaveState('saved'); setCounting(true)
+    } catch (cause) {
+      console.error('Falha ao carregar produtos para continuar o inventário:', cause)
+      setError('Não foi possível carregar o catálogo para continuar o inventário.')
+    } finally { setSaving(false) }
   }
 
   const focusExistingItem = (productId: string) => {
@@ -204,17 +238,17 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
   }
 
   const changeSearch = (value: string) => {
-    const exactProduct = findExactMarketStockProduct(context?.products ?? [], value)
+    const exactProduct = findExactMarketStockProduct(products ?? [], value)
     if (exactProduct) { selectProduct(exactProduct, true); return }
     setQuery(value)
   }
 
   const handleScannedCode = (code: string) => {
     setScannerOpen(false); setError('')
-    const products = context?.products ?? []
-    const exactProduct = findExactMarketStockProduct(products, code)
+    const loadedProducts = products ?? []
+    const exactProduct = findExactMarketStockProduct(loadedProducts, code)
     if (exactProduct) { selectProduct(exactProduct, true); return }
-    const matches = findMarketStockProducts(products, code)
+    const matches = findMarketStockProducts(loadedProducts, code)
     setQuery(code)
     setError(matches.length
       ? 'Este código corresponde a mais de um produto. Escolha o item correto na lista.'
@@ -274,10 +308,31 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     onBack()
   }
 
+  const syncProducts = async () => {
+    if (!productIntegrationId || productSyncing || context?.access.role === 'viewer') return
+    setProductSyncing(true); setError(''); setSuccess('')
+    try {
+      const run = await synchronizeMarketProducts(accountId, productIntegrationId, 'inventory', productSyncRun, setProductSyncRun)
+      if (run.status !== 'completed') throw new Error(run.errorMessage || 'Sincronizacao nao concluida.')
+      const status = await getMarketProductSyncStatus(accountId, productIntegrationId)
+      setProductSyncRun(status.run); setLastProductSync(status.lastCompletedRun)
+      setProducts(null)
+      setSuccess('Catalogo de produtos sincronizado com sucesso.')
+    } catch (cause) {
+      console.error('Falha ao sincronizar produtos no inventario:', cause)
+      setError('Nao foi possivel sincronizar os produtos. O catalogo existente foi preservado.')
+      try {
+        const status = await getMarketProductSyncStatus(accountId, productIntegrationId)
+        setProductSyncRun(status.run); setLastProductSync(status.lastCompletedRun)
+      } catch { /* Mantem o ultimo estado confiavel carregado. */ }
+    } finally { setProductSyncing(false) }
+  }
+
   if (loading && !context) return <div className="admin-message" role="status"><RefreshCw size={20} /> Carregando estoque...</div>
   if (!context) return <div className="admin-message is-error" role="alert"><p>{error || 'Estoque indisponível.'}</p><button className="button button-small button-outline" onClick={onBack}>Voltar</button></div>
 
   return <div className="market-stock-dashboard">
+    {!counting && <section className="market-product-sync-card"><div><span className="panel-kicker">CATÁLOGO</span><h2>Última sincronização de produtos</h2><p>{lastProductSync?.finishedAt ? formatProductSyncDate(lastProductSync.finishedAt) : 'Nenhuma sincronização de produtos concluída.'}</p>{lastProductSync && <small>{number.format(lastProductSync.receivedCount)} produtos sincronizados</small>}{productSyncing && productSyncRun && <small>Página {productSyncRun.currentPage}{productSyncRun.totalPages ? ` de ${productSyncRun.totalPages}` : ''}</small>}</div>{context.access.role !== 'viewer' && <button className="button button-small" disabled={!productIntegrationId || productSyncing} onClick={() => void syncProducts()}><RefreshCw size={15} /> {productSyncing ? 'Sincronizando...' : productSyncRun?.status === 'running' ? 'Continuar sincronização' : 'Sincronizar produtos'}</button>}</section>}
     <button className="button button-small button-outline" onClick={() => void leaveStock()}><ArrowLeft size={16} /> Gestão do Mercado</button>
     <header className="market-import-header market-stock-header"><p className="eyebrow"><Boxes size={16} /> GiroMicro Market</p><h1>Estoque</h1><p>Conte os produtos direto pelo celular, sem sair da tela.</p></header>
     <div className="market-dashboard-filter"><label htmlFor="market-stock-store">Local de estoque</label><select id="market-stock-store" value={storeId} onChange={(event) => void changeStore(event.target.value)} disabled={loading || counting}><option value="">Selecione um local</option>{context.access.stores.map((store) => <option key={store.id} value={store.id}>{store.store_type === 'warehouse' ? 'Galpão' : 'Loja'} — {store.external_code ? `${store.external_code} — ` : ''}{store.name}</option>)}</select>{selectedStore && <span>{selectedStore.name}</span>}</div>
@@ -288,14 +343,14 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
 
     {selectedStore && !selectedStore.stock_control_started_at && !counting && !draft && <section className="market-stock-start market-stock-welcome"><Boxes size={34} /><div><span className="panel-kicker">ESTOQUE</span><h2>Controle de estoque ainda não iniciado</h2><p>Faça uma contagem rápida dos produtos que estão neste local agora.</p></div>{context.canStart ? <button className="button market-stock-primary-action" disabled={saving} onClick={() => void startDraft()}>{saving ? 'Iniciando...' : 'Iniciar inventário'}</button> : <div className="admin-message">Seu perfil possui acesso somente para visualização.</div>}</section>}
 
-    {selectedStore && !counting && draft && <section className="market-stock-start market-stock-welcome"><RefreshCw size={34} /><div><span className="panel-kicker">{draft.inventoryType === 'cycle' ? 'CONFERÊNCIA SALVA' : 'RASCUNHO SALVO'}</span><h2>Inventário em andamento</h2><p>{draft.items.length} {draft.items.length === 1 ? 'produto contado' : 'produtos contados'} · última atualização {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(draft.updatedAt))}</p></div>{context.canStart ? <div className="market-draft-actions"><button className="button" onClick={resumeDraft}>Continuar inventário</button><button className="button button-outline" onClick={() => setConfirmCancel(true)}>Cancelar inventário</button></div> : <div className="admin-message">Seu perfil permite apenas visualizar este rascunho.</div>}{confirmCancel && <div className="market-inventory-confirm"><div><strong>Cancelar este rascunho?</strong><p>Nenhum movimento de estoque será criado.</p></div><div><button className="button button-outline" onClick={() => setConfirmCancel(false)}>Voltar</button><button className="button" disabled={saving} onClick={() => void cancelDraft()}>{saving ? 'Cancelando...' : 'Confirmar cancelamento'}</button></div></div>}</section>}
+    {selectedStore && !counting && draft && <section className="market-stock-start market-stock-welcome"><RefreshCw size={34} /><div><span className="panel-kicker">{draft.inventoryType === 'cycle' ? 'CONFERÊNCIA SALVA' : 'RASCUNHO SALVO'}</span><h2>Inventário em andamento</h2><p>{draft.items.length} {draft.items.length === 1 ? 'produto contado' : 'produtos contados'} · última atualização {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(draft.updatedAt))}</p></div>{context.canStart ? <div className="market-draft-actions"><button className="button" disabled={saving} onClick={() => void resumeDraft()}>{saving ? 'Carregando...' : 'Continuar inventário'}</button><button className="button button-outline" onClick={() => setConfirmCancel(true)}>Cancelar inventário</button></div> : <div className="admin-message">Seu perfil permite apenas visualizar este rascunho.</div>}{confirmCancel && <div className="market-inventory-confirm"><div><strong>Cancelar este rascunho?</strong><p>Nenhum movimento de estoque será criado.</p></div><div><button className="button button-outline" onClick={() => setConfirmCancel(false)}>Voltar</button><button className="button" disabled={saving} onClick={() => void cancelDraft()}>{saving ? 'Cancelando...' : 'Confirmar cancelamento'}</button></div></div>}</section>}
 
     {selectedStore && counting && draft && <section className="market-quick-inventory">
       <header className="market-quick-heading"><div><span className="panel-kicker">{isCycleInventory ? 'CONFERÊNCIA DE ESTOQUE' : 'INVENTÁRIO RÁPIDO'}</span><h2>{selectedStore.name}</h2></div><div className={`market-draft-status ${saveState}`}><strong>{countedItems.length} {countedItems.length === 1 ? 'produto contado' : 'produtos contados'}</strong><small>{saveState === 'saving' ? 'Salvando...' : saveState === 'saved' ? 'Rascunho salvo' : saveState === 'error' ? 'Não foi possível salvar' : saveState === 'conflict' ? 'Conflito em outro dispositivo' : 'Alterações locais'}</small></div></header>
       <div className="market-product-search"><Search size={23} /><input ref={searchRef} type="search" inputMode="search" autoComplete="off" placeholder="Buscar por nome, EAN, código externo ou SKU" value={query} onChange={(event) => changeSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && searchResults[0]) { event.preventDefault(); selectProduct(searchResults[0]) } }} /><button className="market-scanner-button" type="button" onClick={() => setScannerOpen(true)} aria-label="Escanear código de barras"><ScanBarcode /></button><small>EAN, código externo ou SKU exato entra automaticamente. Para nomes, pressione Enter ou escolha o produto.</small></div>
       {query && <div className="market-product-results" role="listbox">{searchResults.length ? searchResults.map((product) => <button key={product.id} type="button" onClick={() => selectProduct(product)}><span><strong>{product.name}</strong><small>{productIdentifier(product)}</small></span></button>) : <p>Nenhum produto encontrado.</p>}</div>}
       <div className="market-counted-products">{items.length ? items.map((item) => {
-        const product = context.products.find((candidate) => candidate.id === item.productId)
+        const product = products?.find((candidate) => candidate.id === item.productId)
         if (!product) return null
         const currentQuantity = balanceByProduct.get(item.productId) ?? 0
         const difference = item.quantity - currentQuantity
@@ -311,7 +366,7 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
       {!confirming ? <div className="market-inventory-finish"><span>{countedItems.length} {countedItems.length === 1 ? (isCycleInventory ? 'produto será reconciliado' : 'produto será enviado') : (isCycleInventory ? 'produtos serão reconciliados' : 'produtos serão enviados')}</span><button className="button" disabled={!countedItems.length || !startedAt || saveState === 'conflict'} onClick={() => setConfirming(true)}>Finalizar inventário</button></div> : <div className="market-inventory-confirm"><div><span className="panel-kicker">CONFIRMAR INVENTÁRIO</span><h3>{selectedStore.name}</h3>{isCycleInventory ? <div className="market-cycle-summary"><p><strong>{items.length}</strong> produtos contados</p><p><strong>{cycleSummary.adjustmentInProducts}</strong> ajustes de entrada · {number.format(cycleSummary.adjustmentInQuantity)} unidades</p><p><strong>{cycleSummary.adjustmentOutProducts}</strong> ajustes de saída · {number.format(cycleSummary.adjustmentOutQuantity)} unidades</p><p><strong>{cycleSummary.unchangedProducts}</strong> sem diferença</p></div> : <p>{positiveItems.length} {positiveItems.length === 1 ? 'produto contado' : 'produtos contados'} · marco em {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(startedAt))}</p>}</div><div><button className="button button-outline" disabled={saving} onClick={() => setConfirming(false)}>Continuar inventário</button><button className="button" disabled={saving} onClick={() => void finalizeDraft()}>{saving ? 'Finalizando...' : isCycleInventory ? 'Confirmar inventário' : 'Confirmar e iniciar estoque'}</button></div></div>}
     </section>}
 
-    {selectedStore?.stock_control_started_at && !counting && <section className="market-stock-balance"><div><span className="panel-kicker">SALDO ATUAL</span><h2>Controle de estoque iniciado</h2><p>Marco inicial: {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(selectedStore.stock_control_started_at))}</p></div>{!draft && context.canStart && <button className="button market-stock-primary-action" disabled={saving} onClick={() => void startDraft()}>{saving ? 'Iniciando...' : 'Novo inventário'}</button>}{balance.length ? <div className="market-preview-table-wrap"><table className="market-preview-table market-stock-table"><thead><tr><th>Produto</th><th>Identificador</th><th>Quantidade atual</th></tr></thead><tbody>{balance.map((row) => { const product = context.products.find((candidate) => candidate.id === row.productId); return <tr key={`${row.marketStoreId}:${row.productId}`}><td>{row.productName}</td><td>{product ? productIdentifier(product) : row.ean || row.sku || '—'}</td><td><strong>{number.format(row.quantityOnHand)} {row.unit}</strong></td></tr> })}</tbody></table></div> : <div className="admin-message">Nenhum saldo encontrado para este local.</div>}</section>}
+    {selectedStore?.stock_control_started_at && !counting && <section className="market-stock-balance"><div><span className="panel-kicker">SALDO ATUAL</span><h2>Controle de estoque iniciado</h2><p>Marco inicial: {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(selectedStore.stock_control_started_at))}</p></div>{!draft && context.canStart && <button className="button market-stock-primary-action" disabled={saving} onClick={() => void startDraft()}>{saving ? 'Iniciando...' : 'Novo inventário'}</button>}{balance.length ? <div className="market-preview-table-wrap"><table className="market-preview-table market-stock-table"><thead><tr><th>Produto</th><th>Identificador</th><th>Quantidade atual</th></tr></thead><tbody>{balance.map((row) => { const product = products?.find((candidate) => candidate.id === row.productId); return <tr key={`${row.marketStoreId}:${row.productId}`}><td>{row.productName}</td><td>{product ? productIdentifier(product) : row.ean || row.sku || '—'}</td><td><strong>{number.format(row.quantityOnHand)} {row.unit}</strong></td></tr> })}</tbody></table></div> : <div className="admin-message">Nenhum saldo encontrado para este local.</div>}</section>}
     {scannerOpen && <BarcodeScanner onDetected={handleScannedCode} onClose={() => { setScannerOpen(false); window.setTimeout(() => searchRef.current?.focus(), 0) }} />}
   </div>
 }
