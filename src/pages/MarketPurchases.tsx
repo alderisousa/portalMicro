@@ -1,10 +1,15 @@
 import { ArrowLeft, ChevronDown, FileKey2, Link2, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { PurchaseItemReconciliationDialog } from '../components/PurchaseItemReconciliationDialog'
 import {
   importMarketPurchase, isPurchaseReimportEligible, listMarketPurchaseItems,
   listMarketPurchaseSummaries, MarketPurchaseImportError,
 } from '../services/marketPurchases'
+import {
+  listMarketProductsByIds, reprocessPurchasePendingItems, undoPurchaseItemReconciliation,
+  ReconciliationError, type ReconciledProductSummary,
+} from '../services/marketReconciliation'
 import type { MarketStore } from '../types/market'
 import type {
   MarketPurchaseImportRequest, MarketPurchaseImportSourceType, MarketPurchaseItem,
@@ -24,9 +29,13 @@ const reconciliationLabels: Record<MarketPurchaseItemReconciliationStatus, strin
   pending: 'Pendente', matched_auto: 'Vinculado automaticamente', matched_manual: 'Vinculado manualmente',
   mapped: 'Mapeado (de/para)', not_found: 'Produto não encontrado', needs_review: 'Requer revisão',
 }
+const reconciliationMethodLabels: Record<string, string> = { ean_exact: 'EAN', purchase_mapping: 'De/para', manual: 'Manual' }
+const isReconciledStatus = (status: MarketPurchaseItemReconciliationStatus) =>
+  status === 'matched_auto' || status === 'matched_manual' || status === 'mapped'
 
-interface ItemsState { loading: boolean; error: boolean; items: MarketPurchaseItem[] }
+interface ItemsState { loading: boolean; error: boolean; items: MarketPurchaseItem[]; products: Record<string, ReconciledProductSummary> }
 interface ReimportPrompt { request: MarketPurchaseImportRequest; invoiceNumber: string | null; supplierName: string | null }
+interface ReconcileTarget { purchaseId: string; item: MarketPurchaseItem }
 
 export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Props) {
   const [purchases, setPurchases] = useState<MarketPurchaseListItem[]>([])
@@ -40,6 +49,9 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
   const [itemsState, setItemsState] = useState<Record<string, ItemsState>>({})
   const [reimportPrompt, setReimportPrompt] = useState<ReimportPrompt | null>(null)
   const [reimporting, setReimporting] = useState(false)
+  const [reconcileTarget, setReconcileTarget] = useState<ReconcileTarget | null>(null)
+  const [undoingItemId, setUndoingItemId] = useState<string | null>(null)
+  const [reprocessingId, setReprocessingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -51,14 +63,55 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
   useEffect(() => { void load() }, [load])
 
   const loadItems = useCallback(async (purchaseId: string) => {
-    setItemsState((prev) => ({ ...prev, [purchaseId]: { loading: true, error: false, items: prev[purchaseId]?.items ?? [] } }))
+    setItemsState((prev) => ({
+      ...prev,
+      [purchaseId]: { loading: true, error: false, items: prev[purchaseId]?.items ?? [], products: prev[purchaseId]?.products ?? {} },
+    }))
     try {
       const items = await listMarketPurchaseItems(accountId, purchaseId)
-      setItemsState((prev) => ({ ...prev, [purchaseId]: { loading: false, error: false, items } }))
+      const productIds = Array.from(new Set(items.map((item) => item.marketProductId).filter((id): id is string => Boolean(id))))
+      const products = await listMarketProductsByIds(accountId, productIds)
+      const productsById = Object.fromEntries(products.map((product) => [product.id, product]))
+      setItemsState((prev) => ({ ...prev, [purchaseId]: { loading: false, error: false, items, products: productsById } }))
     } catch {
-      setItemsState((prev) => ({ ...prev, [purchaseId]: { loading: false, error: true, items: [] } }))
+      setItemsState((prev) => ({ ...prev, [purchaseId]: { loading: false, error: true, items: [], products: {} } }))
     }
   }, [accountId])
+
+  const handleReconciled = () => {
+    if (!reconcileTarget) return
+    void loadItems(reconcileTarget.purchaseId)
+    void load()
+    setReconcileTarget(null)
+  }
+
+  const handleUndo = async (purchaseId: string, itemId: string) => {
+    setUndoingItemId(itemId); setMessage(null)
+    try {
+      await undoPurchaseItemReconciliation(accountId, itemId)
+      await loadItems(purchaseId)
+      await load()
+    } catch (cause) {
+      setMessage({ error: true, text: cause instanceof ReconciliationError ? cause.message : 'Não foi possível desfazer a conciliação.' })
+    } finally { setUndoingItemId(null) }
+  }
+
+  const handleReprocess = async (purchaseId: string) => {
+    setReprocessingId(purchaseId); setMessage(null)
+    try {
+      const result = await reprocessPurchasePendingItems(accountId, purchaseId)
+      await loadItems(purchaseId)
+      await load()
+      setMessage({
+        error: false,
+        text: result.itemsMatched > 0
+          ? `Reprocessado: ${result.itemsMatched} de ${result.itemsProcessed} itens conciliados automaticamente.`
+          : `Reprocessado: nenhum dos ${result.itemsProcessed} itens pendentes encontrou correspondência ainda.`,
+      })
+    } catch (cause) {
+      setMessage({ error: true, text: cause instanceof ReconciliationError ? cause.message : 'Não foi possível reprocessar os pendentes.' })
+    } finally { setReprocessingId(null) }
+  }
 
   const toggle = (purchaseId: string) => {
     setExpandedIds((prev) => {
@@ -190,6 +243,7 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
                 <div><dt>Emissão</dt><dd>{purchase.issuedAt ? date.format(new Date(purchase.issuedAt)) : '-'}</dd></div>
                 <div><dt>Valor final</dt><dd>{purchase.totalAmount === null ? '-' : currency.format(purchase.totalAmount)}</dd></div>
                 <div><dt>Itens</dt><dd>{purchase.totalItems}</dd></div>
+                <div><dt>Conciliados</dt><dd>{purchase.reconciledItems} / {purchase.totalItems}</dd></div>
                 <div><dt>Pendentes</dt><dd>{purchase.pendingItems}</dd></div>
                 <div><dt>Status</dt><dd><span className={`market-row-status ${purchase.status}`}>{statusLabels[purchase.status]}</span></dd></div>
               </dl>
@@ -199,9 +253,22 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
               {!state || state.loading ? <p className="market-purchase-card-items-status">Carregando itens...</p>
                 : state.error ? <p className="market-purchase-card-items-status">Não foi possível carregar os itens desta nota. <button type="button" className="button button-small button-outline" onClick={() => void loadItems(purchase.id)}>Tentar de novo</button></p>
                 : !state.items.length ? <p className="market-purchase-card-items-status">Nenhum item encontrado.</p>
-                : <div className="market-purchase-items-table-wrap"><table className="market-purchase-items-table">
-                  <thead><tr><th>Linha</th><th>Descrição</th><th>Código do fornecedor</th><th className="is-numeric">Quantidade</th><th>Unidade</th><th className="is-numeric">Valor unitário</th><th className="is-numeric">Total da linha</th><th className="is-numeric">Custo unit. calculado</th><th>Conciliação</th></tr></thead>
-                  <tbody>{state.items.map((item) => <tr key={item.id}>
+                : <>
+                  {(() => {
+                    const pendingCount = state.items.filter((item) => !isReconciledStatus(item.reconciliationStatus)).length
+                    return <div className="market-purchase-items-toolbar">
+                      <p>{pendingCount > 0 ? `${pendingCount} ${pendingCount === 1 ? 'item pendente' : 'itens pendentes'} de conciliação` : 'Todos os itens estão conciliados.'}</p>
+                      <button type="button" className="button button-small button-outline" disabled={pendingCount === 0 || reprocessingId === purchase.id} onClick={() => void handleReprocess(purchase.id)}>
+                        {reprocessingId === purchase.id ? 'Reprocessando...' : 'Reprocessar pendentes'}
+                      </button>
+                    </div>
+                  })()}
+                  <div className="market-purchase-items-table-wrap"><table className="market-purchase-items-table">
+                  <thead><tr><th>Linha</th><th>Descrição</th><th>Código do fornecedor</th><th className="is-numeric">Quantidade</th><th>Unidade</th><th className="is-numeric">Valor unitário</th><th className="is-numeric">Total da linha</th><th className="is-numeric">Custo unit. calculado</th><th>Conciliação</th><th>Ação</th></tr></thead>
+                  <tbody>{state.items.map((item) => {
+                    const reconciled = isReconciledStatus(item.reconciliationStatus)
+                    const product = item.marketProductId ? state.products[item.marketProductId] : undefined
+                    return <tr key={item.id}>
                     <td>{item.lineNumber}</td>
                     <td className="market-purchase-item-desc">{item.descriptionRaw || '-'}</td>
                     <td>{item.supplierProductCode || '-'}</td>
@@ -210,13 +277,37 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
                     <td className="is-numeric">{formatMoney(item.unitPrice)}</td>
                     <td className="is-numeric">{formatMoney(item.grossAmount)}</td>
                     <td className="is-numeric">{formatMoney(item.calculatedUnitCost)}</td>
-                    <td><span className={`market-row-status ${item.reconciliationStatus}`}>{reconciliationLabels[item.reconciliationStatus]}</span></td>
-                  </tr>)}</tbody>
-                </table></div>}
+                    <td>
+                      <span className={`market-row-status ${item.reconciliationStatus}`}>{reconciliationLabels[item.reconciliationStatus]}</span>
+                      {reconciled && product && <div className="market-purchase-item-product">
+                        <strong>{product.name}</strong>
+                        <span>{product.sku ? `SKU ${product.sku}` : 'Sem SKU'}{item.reconciliationMethod ? ` · ${reconciliationMethodLabels[item.reconciliationMethod] ?? item.reconciliationMethod}` : ''}</span>
+                      </div>}
+                    </td>
+                    <td>
+                      {reconciled
+                        ? (item.stockEntryStatus === 'pending'
+                          ? <button type="button" className="button button-small button-outline" disabled={undoingItemId === item.id} onClick={() => void handleUndo(purchase.id, item.id)}>
+                              {undoingItemId === item.id ? 'Desfazendo...' : 'Desfazer'}
+                            </button>
+                          : null)
+                        : <button type="button" className="button button-small" onClick={() => setReconcileTarget({ purchaseId: purchase.id, item })}>Conciliar</button>}
+                    </td>
+                  </tr>
+                  })}</tbody>
+                </table></div>
+                </>}
             </div>}
           </article>
         })}
       </div>}
     </section>
+
+    {reconcileTarget && <PurchaseItemReconciliationDialog
+      accountId={accountId}
+      item={reconcileTarget.item}
+      onCancel={() => setReconcileTarget(null)}
+      onConfirmed={handleReconciled}
+    />}
   </>
 }

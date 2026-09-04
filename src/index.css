@@ -686,12 +686,63 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-purchase-card-items { padding: 0 20px 22px; border-top: 1px solid var(--line); }
 .market-purchase-card-items-status { display: flex; align-items: center; gap: 10px; padding: 18px 0; color: var(--muted); font-size: 13px; }
 .market-purchase-items-table-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
-.market-purchase-items-table { width: 100%; min-width: 760px; border-collapse: collapse; }
+.market-purchase-items-table { width: 100%; min-width: 1000px; border-collapse: collapse; }
 .market-purchase-items-table th, .market-purchase-items-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 12.5px; text-align: left; vertical-align: top; }
 .market-purchase-items-table th { background: #edf0eb; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
 .market-purchase-items-table td.is-numeric, .market-purchase-items-table th.is-numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .market-purchase-items-table td.market-purchase-item-desc { min-width: 220px; white-space: normal; }
 .market-purchase-items-table tbody tr:last-child td { border-bottom: 0; }
+.market-purchase-item-product { display: grid; gap: 2px; margin-top: 4px; }
+.market-purchase-item-product strong { font-size: 12px; }
+.market-purchase-item-product span { color: var(--muted); font-size: 11px; }
+.market-purchase-items-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; }
+.market-purchase-items-toolbar p { margin: 0; color: var(--muted); font-size: 12px; }
+
+.market-reconcile-dialog { width: min(100%, 880px); max-height: min(90vh, 780px); display: flex; flex-direction: column; padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: #fffaf2; box-shadow: 0 24px 70px rgba(24, 51, 46, .26); overflow-y: auto; }
+.market-reconcile-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.market-reconcile-dialog-header h2 { margin: 6px 0 0; }
+.market-reconcile-help-button { display: flex; flex: none; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 50%; background: #fff; color: var(--muted); cursor: pointer; transition: border-color .2s, color .2s; }
+.market-reconcile-help-button:hover, .market-reconcile-help-button:focus-visible { border-color: var(--green); color: var(--green); }
+.market-reconcile-hint { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+.market-reconcile-dialog-body { display: grid; grid-template-columns: minmax(220px, .85fr) minmax(280px, 1.15fr); gap: 24px; }
+.market-reconcile-side h3 { margin: 0 0 12px; font-size: 15px; }
+.market-reconcile-fiscal dl { display: grid; gap: 10px; margin: 0; }
+.market-reconcile-fiscal dt { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.market-reconcile-fiscal dd { margin: 2px 0 0; color: var(--ink); font-size: 13px; }
+.market-reconcile-packaging-hint { margin: 14px 0 0; padding: 10px 12px; border-left: 3px solid var(--coral); background: #fff2ea; color: #8a4a30; font-size: 12px; border-radius: 0 6px 6px 0; }
+.market-reconcile-search-row { display: flex; gap: 10px; align-items: center; }
+.market-reconcile-search-row .market-reconcile-search-input { flex: 1; }
+.market-reconcile-search-row .button { flex: none; min-height: 42px; white-space: nowrap; }
+.market-reconcile-search-input { width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid #b9c7bc; border-radius: 6px; background: #fff; color: var(--ink); font: inherit; font-size: 13.5px; }
+.market-reconcile-status-text { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+.market-reconcile-suggestions-title { margin: 18px 0 8px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+.market-reconcile-results { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; max-height: 260px; overflow-y: auto; }
+.market-reconcile-results li button { display: grid; gap: 4px; width: 100%; padding: 11px 13px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.market-reconcile-results li button:hover { border-color: var(--green); background: var(--mint); }
+.market-reconcile-results li button span { color: var(--muted); font-size: 11.5px; }
+.market-reconcile-reasons { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.market-reconcile-reason-tag { display: inline-block; padding: 2px 7px; border-radius: 999px; background: var(--mint); color: var(--green); font-size: 10px; font-weight: 700; }
+.market-reconcile-selected { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid #b7d5c3; border-radius: 8px; background: var(--mint); }
+.market-reconcile-selected strong { display: block; color: var(--green); font-size: 13.5px; }
+.market-reconcile-selected span { color: var(--green); font-size: 11.5px; }
+.market-reconcile-mapping-checkbox { display: flex; align-items: center; gap: 9px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--ink); font-size: 13px; }
+.market-reconcile-mapping-checkbox input { width: 16px; min-height: 16px; accent-color: var(--green); }
+.market-reconcile-dialog .admin-message.is-error { margin-top: 16px; padding: 12px 14px; }
+
+.market-reconcile-help-backdrop { position: fixed; z-index: 21; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(24, 51, 46, .56); backdrop-filter: blur(2px); }
+.market-reconcile-help { width: min(100%, 480px); max-height: min(85vh, 640px); display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; background: #fffaf2; box-shadow: 0 24px 70px rgba(24, 51, 46, .26); overflow: hidden; }
+.market-reconcile-help-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 18px 14px; border-bottom: 1px solid var(--line); }
+.market-reconcile-help-header h2 { margin: 0; font-size: 19px; }
+.market-reconcile-help-close { display: flex; flex: none; align-items: center; justify-content: center; width: 38px; height: 38px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; }
+.market-reconcile-help-close:hover, .market-reconcile-help-close:focus-visible { background: #edf0eb; color: var(--ink); }
+.market-reconcile-help-body { padding: 16px 18px 20px; overflow-y: auto; }
+.market-reconcile-help-body h3 { margin: 0 0 10px; font-size: 14px; color: var(--green); }
+.market-reconcile-help-body section + section { margin-top: 22px; }
+.market-reconcile-help-body ol { display: grid; gap: 10px; margin: 0; padding-left: 20px; color: var(--ink); font-size: 13.5px; line-height: 1.55; }
+.market-reconcile-help-glossary { display: grid; gap: 12px; margin: 0; }
+.market-reconcile-help-glossary dt { color: var(--ink); font-size: 13.5px; font-weight: 700; }
+.market-reconcile-help-glossary dd { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.market-reconcile-help-note { margin: 20px 0 0; padding: 12px 14px; border-left: 3px solid var(--coral); background: #fff2ea; color: #8a4a30; font-size: 12px; line-height: 1.55; border-radius: 0 6px 6px 0; }
 .market-commercial-dashboard { padding-top: 2px; }
 .market-stock-dashboard { padding-top: 2px; }
 .market-stock-start, .market-stock-balance { display: grid; gap: 22px; margin-top: 30px; padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: #fffaf2; }
@@ -995,6 +1046,10 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 	.market-purchase-card-header { flex-direction: column; align-items: flex-start; }
 	.market-purchase-card-stats { width: 100%; justify-content: space-between; gap: 14px; }
 	.market-purchase-card-toggle { align-self: flex-end; }
+	.market-purchase-items-toolbar { flex-direction: column; align-items: stretch; }
+	.market-reconcile-dialog { padding: 20px; }
+	.market-reconcile-dialog-body { grid-template-columns: 1fr; gap: 20px; }
+	.market-reconcile-search-row { flex-direction: column; align-items: stretch; }
 	.client-list { padding: 55px 0; }
 	.client-grid { grid-template-columns: 1fr; }
 	.business-identity { gap: 10px; }
