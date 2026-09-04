@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.market-sales-sync]
 verify_jwt = false
+
+[functions.market-purchase-import]
+verify_jwt = false

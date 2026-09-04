@@ -1,0 +1,798 @@
+
+
+<!DOCTYPE html>
+<html lang="pt-br" dir="ltr">
+<head id="Head"><title>
+	Consulta Resumida NFC-e - Secretaria da Fazenda - Governo do Estado de São Paulo
+</title><meta charset="utf-8" /><meta name="viewport" content="width=device-width,&#32;initial-scale=1" /><meta http-equiv="X-UA-Compatible" content="IE=9,&#32;IE=edge" /><meta name="format-detection" content="telephone=no" />
+    <script src="../Scripts/jquery-3.7.1.min.js"></script>
+    <script src="../Scripts/jquery-ui-1.13.2.min.js"></script>
+    <script type="text/javascript">
+
+        $(document).ready(function () {
+            $('body').hide();
+            ExibirImagemCancelada();
+            ExibirImagemDenegada();
+            setTimeout(AjustarExibicaoEPEC, 200);
+            setTimeout(function () {
+                $('body').show()
+            }, 400);
+        });
+
+        $(window).resize(function () {
+            setTimeout(AjustarExibicaoEPEC, 300);
+            $('body').hide();
+            setTimeout(function () {
+                $('body').show()
+            }, 400);
+        });
+    </script>
+    <script src="../Xsl/nfce_rj_v1.00/js/jquery.mobile.compat.js"></script>
+    <script src="../Xsl/nfce_rj_v1.00/js/jquery.placeholder.min.js"></script>
+    <script src="../Xsl/nfce_rj_v1.00/js/index.js"></script>
+
+    <link rel="stylesheet" media="all" href="../Xsl/nfce_rj_v1.00/css/jquery.mobile.compat.css" type="text/css" /><link rel="stylesheet" media="all" href="../Xsl/nfce_rj_v2.05/css/nfceMob.css" type="text/css" /><link rel="stylesheet" media="all" href="../Xsl/nfce_rj_v2.05/css/nfceMob_ie.css" type="text/css" /><link rel="stylesheet" media="all" href="../Content/botoes.css" type="text/css" />
+    <style>
+        .msgErro {
+            font-size: 80%;
+            font-weight: bold;
+            color: Red;
+        }
+
+        .BotoesResponsivos input:first-child {
+            margin-left: 2px;
+        }
+
+        #erro {
+            margin-top:250px;
+        }
+
+        @media print {
+            .naoImprimir {
+                display: none;
+                visibility: hidden;
+            }
+            #erro {
+                max-height:none !important;
+            }
+            body {
+                height:99% !important;
+            }
+        }
+    </style>
+</head>
+<body >
+    <form method="post" action="ConsultaResponsiva/ConsultaResumidaRJFrame_v400.aspx" id="ctl00">
+<div class="aspNetHidden">
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="tZMcJpcNeSvYdk+9NGzFhGfyMx1AdwJJ6DLw3QMiYThVEXwKjFDoooVNXnmMK7kgNTEZyhX5LxbEV0EcpA3o9mxRPawdNB0p+hvLhx5cY4P2YxwkmzBrayq1GExWHBb2JKayFP9dB9lDW8TO0paCU1cCu/WW6E4XpeZBO+2XTZj8XG1TIonOWyzw69k71ud1NoOctDha/1evyKWK9MmI8cJ9RDLpnmaBtHnPm/p7Gos=" />
+</div>
+
+<script type="text/javascript">
+//<![CDATA[
+var theForm = document.forms['ctl00'];
+if (!theForm) {
+    theForm = document.ctl00;
+}
+function __doPostBack(eventTarget, eventArgument) {
+    if (!theForm.onsubmit || (theForm.onsubmit() != false)) {
+        theForm.__EVENTTARGET.value = eventTarget;
+        theForm.__EVENTARGUMENT.value = eventArgument;
+        theForm.submit();
+    }
+}
+//]]>
+</script>
+
+
+        <div style="width: 100%; max-width: 510px; margin: 10px auto;">
+
+
+
+            <div class="page" style="position: relative;">
+                <div class="jqm-header" xmlns:n="http://www.portalfiscal.inf.br/nfe" xmlns:chave="http://exslt.org/chaveacesso" xmlns:r="http://www.serpro.gov.br/nfe/remessanfe.xsd">
+  <h1 class="tit">
+    <img src="../Xsl/nfce_rj_v2.05/imagens/logoNFCe.png" width="90" height="64" alt="NFC-e">
+    <p>DOCUMENTO AUXILIAR DA NOTA FISCAL DE CONSUMIDOR ELETRÔNICA</p>
+    <p>
+    </p>
+  </h1>
+</div>
+<div class="jqm-content" xmlns:n="http://www.portalfiscal.inf.br/nfe" xmlns:chave="http://exslt.org/chaveacesso" xmlns:r="http://www.serpro.gov.br/nfe/remessanfe.xsd">
+  <div id="conteudo">
+    <div id="avisos">
+    </div>
+    <div class="txtCenter">
+      <div id="u20" class="txtTopo">DISTRIBUIDORA DE PRODUTOS ALIMENTICIOS MARSIL LTDA</div>
+      <div class="text">
+								CNPJ:
+								61.182.051/0001-76</div>
+      <div class="text">GUARANTA
+							,
+							580
+							,
+
+							,
+							PARI
+							,
+							SAO PAULO
+							,
+							SP</div>
+    </div>
+    <table border="0" align="center" cellpadding="0" cellspacing="0" id="tabResult" class="filterable">
+      <tr id="Item + 1">
+        <td valign="top">
+          <span class="txtTit">SUCRILH 240GR KELLOG ORIGINAL . UN0001UN</span>
+          <span class="RCod">
+										(Código:
+										1316445
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>9</span>
+          <span class="RUN">
+            <strong>UN: </strong>UN</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										7,49</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">67,41</span></td>
+      </tr>
+      <tr id="Item + 2">
+        <td valign="top">
+          <span class="txtTit">BATATA PRINGLES 109G CHURRASCO . UN0001UN</span>
+          <span class="RCod">
+										(Código:
+										1171808
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>11</span>
+          <span class="RUN">
+            <strong>UN: </strong>UN</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										9,59</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">105,49</span></td>
+      </tr>
+      <tr id="Item + 3">
+        <td valign="top">
+          <span class="txtTit">BEB STARBUCKS 280ML CHOC.CAFE . GF0001GF</span>
+          <span class="RCod">
+										(Código:
+										1286502
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>3</span>
+          <span class="RUN">
+            <strong>UN: </strong>GF</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										9,79</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">29,37</span></td>
+      </tr>
+      <tr id="Item + 4">
+        <td valign="top">
+          <span class="txtTit">BEB STARBUCKS 280ML CARAMELO.CAFE . GF0001GF</span>
+          <span class="RCod">
+										(Código:
+										1286526
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>3</span>
+          <span class="RUN">
+            <strong>UN: </strong>GF</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										9,79</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">29,37</span></td>
+      </tr>
+      <tr id="Item + 5">
+        <td valign="top">
+          <span class="txtTit">BISC LOOK DP 55GR IT CHOCOLATE . DP0001DP</span>
+          <span class="RCod">
+										(Código:
+										814140
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>8</span>
+          <span class="RUN">
+            <strong>UN: </strong>DP</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										2,49</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">19,92</span></td>
+      </tr>
+      <tr id="Item + 6">
+        <td valign="top">
+          <span class="txtTit">BATATA PRINGLES 109G QUEIJO . UN0001UN</span>
+          <span class="RCod">
+										(Código:
+										1258608
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>6</span>
+          <span class="RUN">
+            <strong>UN: </strong>UN</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										9,9</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">59,40</span></td>
+      </tr>
+      <tr id="Item + 7">
+        <td valign="top">
+          <span class="txtTit">PAST TIC TAC 14X14GR MENTA . DP0001DP</span>
+          <span class="RCod">
+										(Código:
+										1252385
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>1</span>
+          <span class="RUN">
+            <strong>UN: </strong>DP</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										31,39</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">31,39</span></td>
+      </tr>
+      <tr id="Item + 8">
+        <td valign="top">
+          <span class="txtTit">BISC MAISE 115G LOWC . . PC0001PC</span>
+          <span class="RCod">
+										(Código:
+										1285666
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>9</span>
+          <span class="RUN">
+            <strong>UN: </strong>PC</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										10,39</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">93,51</span></td>
+      </tr>
+      <tr id="Item + 9">
+        <td valign="top">
+          <span class="txtTit">TRE SPE 12X26G PEC CHOC.AVELA . DP0001DP</span>
+          <span class="RCod">
+										(Código:
+										1218244
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>1</span>
+          <span class="RUN">
+            <strong>UN: </strong>DP</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										29,99</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">29,99</span></td>
+      </tr>
+      <tr id="Item + 10">
+        <td valign="top">
+          <span class="txtTit">BACONZITOS 86GR . . PC0001PC</span>
+          <span class="RCod">
+										(Código:
+										1291315
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>10</span>
+          <span class="RUN">
+            <strong>UN: </strong>PC</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										9,09</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">90,90</span></td>
+      </tr>
+      <tr id="Item + 11">
+        <td valign="top">
+          <span class="txtTit">CEBOLITOS 91GR . . PC0001PC</span>
+          <span class="RCod">
+										(Código:
+										1291353
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>10</span>
+          <span class="RUN">
+            <strong>UN: </strong>PC</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										8,99</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">89,90</span></td>
+      </tr>
+      <tr id="Item + 12">
+        <td valign="top">
+          <span class="txtTit">CHEETOS LUA 80GR PARMESAO . PC0001PC</span>
+          <span class="RCod">
+										(Código:
+										1344585
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>6</span>
+          <span class="RUN">
+            <strong>UN: </strong>PC</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										8,49</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">50,94</span></td>
+      </tr>
+      <tr id="Item + 13">
+        <td valign="top">
+          <span class="txtTit">CHEETOS ONDA 40GR REQUEIJAO . PC0001PC</span>
+          <span class="RCod">
+										(Código:
+										1291544
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>20</span>
+          <span class="RUN">
+            <strong>UN: </strong>PC</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										2,87</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">57,40</span></td>
+      </tr>
+      <tr id="Item + 14">
+        <td valign="top">
+          <span class="txtTit">CHEETOS MIX 36GR QUEIJO . PC0001PC</span>
+          <span class="RCod">
+										(Código:
+										1291520
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>20</span>
+          <span class="RUN">
+            <strong>UN: </strong>PC</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										2,87</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">57,40</span></td>
+      </tr>
+      <tr id="Item + 15">
+        <td valign="top">
+          <span class="txtTit">KINDER MENINO 12UN  AO LEITE . DP0001DP</span>
+          <span class="RCod">
+										(Código:
+										1166446
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>1</span>
+          <span class="RUN">
+            <strong>UN: </strong>DP</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										99,9</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">99,90</span></td>
+      </tr>
+      <tr id="Item + 16">
+        <td valign="top">
+          <span class="txtTit">BATON 30X16GR AO LEITE . DP0001DP</span>
+          <span class="RCod">
+										(Código:
+										321853
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>1</span>
+          <span class="RUN">
+            <strong>UN: </strong>DP</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										47,99</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">47,99</span></td>
+      </tr>
+      <tr id="Item + 17">
+        <td valign="top">
+          <span class="txtTit">KINDER RECH 6X12,5GR CHOCOLATE . PC0001PC</span>
+          <span class="RCod">
+										(Código:
+										1290233
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>10</span>
+          <span class="RUN">
+            <strong>UN: </strong>PC</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										13,99</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">139,90</span></td>
+      </tr>
+      <tr id="Item + 18">
+        <td valign="top">
+          <span class="txtTit">KINDER RECH 6X12,5GR CHOCOLATE . PC0001PC</span>
+          <span class="RCod">
+										(Código:
+										1290233
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>10</span>
+          <span class="RUN">
+            <strong>UN: </strong>PC</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										13,99</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">139,90</span></td>
+      </tr>
+      <tr id="Item + 19">
+        <td valign="top">
+          <span class="txtTit">KINDER B WHITE 39GR CHOC BCO.AVELA . DP0030UN</span>
+          <span class="RCod">
+										(Código:
+										1212686
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>1</span>
+          <span class="RUN">
+            <strong>UN: </strong>DP</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										221,7</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">221,70</span></td>
+      </tr>
+      <tr id="Item + 20">
+        <td valign="top">
+          <span class="txtTit">BARRA CRISP BAR 45G  OVOMALTINE . DP0012UN</span>
+          <span class="RCod">
+										(Código:
+										1336832
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>6</span>
+          <span class="RUN">
+            <strong>UN: </strong>DP</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										95,88</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">575,28</span></td>
+      </tr>
+      <tr id="Item + 21">
+        <td valign="top">
+          <span class="txtTit">KINDER RECH 6X12,5GR CHOCOLATE . PC0001PC</span>
+          <span class="RCod">
+										(Código:
+										1290233
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>12</span>
+          <span class="RUN">
+            <strong>UN: </strong>PC</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										13,99</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">167,88</span></td>
+      </tr>
+      <tr id="Item + 22">
+        <td valign="top">
+          <span class="txtTit">KINDER RECH 6X12,5GR CHOCOLATE . DP0010PC</span>
+          <span class="RCod">
+										(Código:
+										1290233
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>3</span>
+          <span class="RUN">
+            <strong>UN: </strong>DP</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										139,9</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">419,70</span></td>
+      </tr>
+      <tr id="Item + 23">
+        <td valign="top">
+          <span class="txtTit">BOLIN ROLL 34G BAUDU CHOCOLATE . DP0015UN</span>
+          <span class="RCod">
+										(Código:
+										1231991
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>2</span>
+          <span class="RUN">
+            <strong>UN: </strong>DP</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										25,35</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">50,70</span></td>
+      </tr>
+      <tr id="Item + 24">
+        <td valign="top">
+          <span class="txtTit">TRAKINAS CARINHAS 14 CHOCOLATE . CX0054PC</span>
+          <span class="RCod">
+										(Código:
+										1131475
+										)
+									</span>
+          <br>
+          <span class="Rqtd">
+            <strong>Qtde.:</strong>1</span>
+          <span class="RUN">
+            <strong>UN: </strong>CX</span>
+          <span class="RvlUnit">
+            <strong>Vl. Unit.:</strong>
+
+										139,86</span>
+        </td>
+        <td align="right" valign="top" class="txtTit noWrap">
+									Vl. Total
+									<br><span class="valor">139,86</span></td>
+      </tr>
+    </table>
+    <div id="totalNota" class="txtRight">
+      <div id="linhaTotal">
+        <label>Qtd. total de itens:</label>
+        <span class="totalNumb">24</span>
+      </div>
+      <div id="linhaTotal">
+        <label>Valor total R$:</label>
+        <span class="totalNumb">2.815,20</span>
+      </div>
+      <div id="linhaTotal">
+        <label>Descontos R$:</label>
+        <span class="totalNumb">105,06</span>
+      </div>
+      <div id="linhaTotal" class="linhaShade">
+        <label>Valor a pagar R$:</label>
+        <span class="totalNumb txtMax">2.710,14</span>
+      </div>
+      <div id="linhaForma">
+        <label>Forma de pagamento:</label>
+        <span class="totalNumb txtTitR">Valor pago R$:</span>
+      </div>
+      <div id="linhaTotal">
+        <label class="tx">
+											Cartão de Crédito
+										</label>
+        <span class="totalNumb">2.710,14</span>
+      </div>
+      <div id="linhaTotal">
+        <label class="tx">Troco </label>
+        <span class="totalNumb">NaN</span>
+      </div>
+      <div id="linhaTotal" class="spcTop">
+        <label class="txtObs">Informação dos Tributos Totais Incidentes
+									(Lei Federal 12.741/2012) R$</label>
+        <span class="totalNumb txtObs">921,57</span>
+      </div>
+    </div>
+  </div>
+  <div id="infos" class="txtCenter">
+    <div class="jqm-collapsible v400 icon-collapsed-carat-d icon-expanded-carat-u expanded">
+      <h4>Informações gerais da Nota</h4>
+      <ul class="jqm-listview">
+        <li>
+          <strong>EMISSÃO NORMAL</strong>
+          <br>
+          <br>
+          <strong>Número: </strong>24505<strong> Série: </strong>112<strong> Emissão: </strong>03/09/2026 14:05:36
+								- Via Consumidor
+								<br><br><strong>Protocolo de Autorização: </strong>135266022870190       03/09/2026 14:05:40<br><br><strong>
+										Ambiente de Produção -
+
+									Versão XML:
+									4.00
+									- Versão XSLT: 2.05
+								</strong></li>
+      </ul>
+    </div>
+    <div class="jqm-collapsible v400 icon-collapsed-carat-d icon-expanded-carat-u expanded">
+      <h4>Chave de acesso</h4>
+      <ul class="jqm-listview">
+        <li>
+								Consulte pela Chave de Acesso em
+
+								https://www.nfce.fazenda.sp.gov.br/consulta<br><br><strong>Chave de acesso:</strong><br><span class="chave">3526 0961 1820 5100 0176 6511 2000 0245 0513 5752 3012</span></li>
+      </ul>
+    </div>
+    <div class="jqm-collapsible v400 icon-collapsed-carat-d icon-expanded-carat-u expanded">
+      <h4>Consumidor</h4>
+      <ul class="jqm-listview">
+        <li>
+          <strong>Consumidor não identificado</strong>
+        </li>
+      </ul>
+    </div>
+    <div class="jqm-collapsible v400 icon-collapsed-carat-d icon-expanded-carat-u expanded">
+      <h4>Informações de interesse do contribuinte</h4>
+      <ul class="jqm-listview">
+        <li>Trib.aprox.:R$ 447,22(16,50%)Federal, R$ 474,35(17,50%)Estadual, R$ 0,00(0,00%)Municipal Fonte:IBPT/EMPRESOMETRO.COM.BR-B8217A |</li>
+      </ul>
+    </div>
+  </div>
+</div>
+            </div>
+        </div>
+        <div style="width: 100%; max-width: 510px; margin: 10px auto; background-color: white;">
+            <div>
+                <div style="width: 50%; float: left; text-align: left">
+
+<span class="timestampConsulta">Data/Hora: 04/09/2026 08:50</span>
+
+                </div>
+                <div style="width: 50%; float: right; text-align: right;">
+
+
+                </div>
+            </div>
+            <div id="Botoes" class="naoImprimir BotoesResponsivos" style="float: left; margin-top: 20px; margin-bottom: 80px; width: 100%;">
+                <div style="width: 39%; float: left;">
+                    <input type="button" name="btnImprimir" value="Imprimir&#32;DANFE&#32;NFC-e" onclick="window.print();&#32;return&#32;true;__doPostBack(&#39;btnImprimir&#39;,&#39;&#39;)" id="btnImprimir" class="primario&#32;|&#32;imprimir" />
+                </div>
+                <div style="width: 34%; float: left;">
+                    <input type="button" name="btnVisualizarAbas" value="Visualizar&#32;em&#32;Abas" onclick="javascript:__doPostBack(&#39;btnVisualizarAbas&#39;,&#39;&#39;)" id="btnVisualizarAbas" class="primario&#32;|&#32;visualizar" />
+                </div>
+                <div style="width: 25%; float: left">
+                    <input type="button" name="btnNovaConsulta" value="Nova&#32;consulta" onclick="javascript:__doPostBack(&#39;btnNovaConsulta&#39;,&#39;&#39;)" id="btnNovaConsulta" class="primario&#32;|&#32;consultar" />
+                </div>
+            </div>
+        </div>
+
+<div class="aspNetHidden">
+
+	<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="2CB5E186" />
+	<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="Ptm6gj1IxdxNUTe4sQ530dZt6mDGKPj+/atT8b+EvcpfWJMXfdrZ9DEmBO0qkAY5UGIFCe2mZ+a5pe5/996D0l2JaCzXeYD/9DlLcJ4sKAC5KFx5D8VC54YnQSUwC9UfLjd4kmZsYE/n1/q/kRtDDTYsaEBvZJqVC06Nu45xK20=" />
+</div></form>
+    <script type="text/javascript">
+
+        function ExibirImagemCancelada() {
+            var objImg = document.getElementById('imgInvalido1');
+            if ($('#hdfNotaCancelada').length) {
+                AcertarDivErro(objImg);
+            }
+        }
+
+        function ExibirImagemDenegada() {
+            var objImg = document.getElementById('imgInvalido2');
+            if ($('#hdfNotaDenegada').length) {
+                AcertarDivErro(objImg);
+            }
+        }
+
+        function AjustarExibicaoEPEC()
+        {
+            if ($('#hdfSomenteEPEC').length) {
+                $('.jqm-page').css({ "minHeight": "500px" });
+            }
+        }
+
+        function AcertarDivErro(objImg) {
+            $('#erro').css({ "display": "block" });
+            $('#erro').css({ "maxWidth": "510px" });
+            $('#erro').css({ "maxHeight": "200px" });
+            objImg.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
