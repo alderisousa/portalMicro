@@ -21,6 +21,7 @@
     "firebase-admin": "^14.3.0",
     "lucide-react": "latest",
     "multer": "^2.2.0",
+    "pdfjs-dist": "^6.3.289",
     "react": "latest",
     "react-dom": "latest",
     "tesseract.js": "^7.0.0",

@@ -1,4 +1,5 @@
 import { loadDecodableImage } from './imageQualityCheck'
+import { computeWorkingImageScale } from './ocrImageLimits'
 
 // Preparo de imagem so para alimentar o Tesseract — NUNCA altera a imagem original
 // nem a miniatura mostrada ao usuario (essa continua vindo do arquivo original).
@@ -6,8 +7,8 @@ import { loadDecodableImage } from './imageQualityCheck'
 // as transformacoes com maior risco de criar artefatos numa foto real antes de
 // termos exemplos reais para calibrar. So amplia quando a imagem e pequena para o
 // OCR, converte para tons de cinza e aplica um alongamento leve de contraste.
-const OCR_TARGET_SHORT_SIDE = 1600
-const OCR_MAX_LONG_SIDE = 2400
+// Os tetos de resolucao usados aqui vem de ocrImageLimits.ts (compartilhados com o
+// decode inicial em imageQualityCheck.ts e com o render de PDF escaneado).
 const CONTRAST_CLIP_RATIO = 0.02 // ignora os ~2% de pixels mais escuros/claros ao esticar o contraste
 
 export interface PreparedOcrImage {
@@ -15,15 +16,6 @@ export interface PreparedOcrImage {
   width: number
   height: number
   scale: number
-}
-
-function computeOcrScale(width: number, height: number): number {
-  const shortSide = Math.min(width, height)
-  const longSide = Math.max(width, height)
-  let scale = 1
-  if (shortSide < OCR_TARGET_SHORT_SIDE) scale = OCR_TARGET_SHORT_SIDE / shortSide
-  if (longSide * scale > OCR_MAX_LONG_SIDE) scale = OCR_MAX_LONG_SIDE / longSide
-  return scale
 }
 
 // Alongamento de contraste por percentil (nao pelo min/max bruto): evita que um
@@ -62,7 +54,7 @@ function stretchContrast(data: Uint8ClampedArray, width: number, height: number)
 export async function prepareImageForOcr(file: File): Promise<PreparedOcrImage> {
   const { image, width, height, cleanup } = await loadDecodableImage(file)
   try {
-    const scale = computeOcrScale(width, height)
+    const scale = computeWorkingImageScale(width, height)
     const targetWidth = Math.max(1, Math.round(width * scale))
     const targetHeight = Math.max(1, Math.round(height * scale))
 

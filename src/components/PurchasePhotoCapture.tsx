@@ -2,13 +2,19 @@ import { AlertTriangle, Camera, Copy, ImagePlus, Loader2, RefreshCw, ShieldCheck
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { checkImageQuality, type ImageQualityResult } from '../utils/imageQualityCheck'
 import { prepareImageForOcr } from '../utils/imagePreprocess'
+import { extractPurchaseOcrDocument } from '../utils/purchaseOcrExtraction'
+import type { PurchaseOcrDocument } from '../types/purchaseOcr'
+import { PurchaseOcrReview } from './PurchaseOcrReview'
 
-// PoC (checkpoint 5D.1/5D.1.1): so leitura local de texto bruto via Tesseract.js,
-// para avaliar se OCR client-side e gratuito e suficiente para fotos reais de nota.
-// Nao envia a imagem a lugar nenhum, nao monta itens/fornecedor/CNPJ e nao toca
-// em market_purchases/conciliacao. O modelo em lista (varias "paginas") existe so
-// para nao travar uma evolucao futura para 1..N imagens; cada pagina e analisada
-// isoladamente, sem nenhuma consolidacao entre paginas neste checkpoint.
+// PoC (checkpoint 5D.1/5D.1.1/5D.2/5D.2.2): leitura local de FOTO/IMAGEM via
+// Tesseract.js + extracao de dados estruturados + validacao/revisao. A entrada de
+// PDF tem tela propria (PurchasePdfCapture) desde a Sprint 5D.2.2, selecionada
+// separadamente no formato de entrada da tela de Compras — nao mistura mais as
+// duas fontes na mesma UI. Nao envia a imagem a lugar nenhum, nao grava em
+// market_purchases/market_purchase_items e nao toca na conciliacao real. O modelo
+// em lista (varias "paginas") existe so para nao travar uma evolucao futura para
+// 1..N imagens; cada pagina e analisada e revisada isoladamente, sem nenhuma
+// consolidacao entre paginas neste checkpoint.
 
 // Page Segmentation Mode do Tesseract, exposto como controle de diagnostico para
 // calibrar com fotos reais — "Automático" e o comportamento padrao/anterior, nada
@@ -26,7 +32,7 @@ const PSM_LABEL_BY_CHOICE: Record<PsmChoice, string> = {
 }
 
 interface OcrState {
-  status: 'idle' | 'running' | 'done' | 'error'
+  status: 'idle' | 'preparing' | 'running' | 'done' | 'error'
   text: string
   confidence: number | null
   progress: number
@@ -35,6 +41,15 @@ interface OcrState {
   mode: 'original' | 'preprocessed' | null
   processedWidth: number | null
   processedHeight: number | null
+  document: PurchaseOcrDocument | null
+  // Diagnostico de memoria/desempenho (Sprint 5D.2.2) — ajuda a calibrar os
+  // limites de resolucao de trabalho durante os testes em celular real.
+  fileSizeBytes: number | null
+  prepMs: number | null
+  // Incrementado a cada execucao — usado so como "key" para remontar a tela de
+  // revisao do zero (descartando edicoes antigas) quando o usuario reanalisa a
+  // mesma pagina com outro PSM/pre-processamento.
+  runId: number
 }
 
 interface PhotoPage {
@@ -49,7 +64,8 @@ interface PhotoPage {
 
 const idleOcr: OcrState = {
   status: 'idle', text: '', confidence: null, progress: 0, elapsedMs: null, error: null,
-  mode: null, processedWidth: null, processedHeight: null,
+  mode: null, processedWidth: null, processedHeight: null, document: null,
+  fileSizeBytes: null, prepMs: null, runId: 0,
 }
 
 async function copyText(text: string) {
@@ -73,6 +89,10 @@ async function copyText(text: string) {
 export function PurchasePhotoCapture() {
   const [pages, setPages] = useState<PhotoPage[]>([])
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  // Trava global (nao por pagina): impede iniciar um segundo worker Tesseract
+  // enquanto outro ainda roda — mobile com pouca memoria nao deve processar
+  // varias fotos/paginas em paralelo (Sprint 5D.2.2, parte C4).
+  const [ocrBusy, setOcrBusy] = useState(false)
   const pagesRef = useRef(pages)
   pagesRef.current = pages
 
@@ -129,20 +149,38 @@ export function PurchasePhotoCapture() {
 
   const runOcr = async (id: string) => {
     const page = pages.find((item) => item.id === id)
-    if (!page || page.ocr.status === 'running') return
-    setPages((prev) => prev.map((item) => (item.id === id ? { ...item, ocr: { ...idleOcr, status: 'running' } } : item)))
+    if (!page || ocrBusy) return
+    setOcrBusy(true)
+    const nextRunId = page.ocr.runId + 1
+    setPages((prev) => prev.map((item) => (item.id === id ? {
+      ...item,
+      ocr: { ...idleOcr, status: 'preparing', fileSizeBytes: item.file.size, runId: nextRunId },
+    } : item)))
     const startedAt = Date.now()
     // O pre-processamento (ampliar/tons de cinza/contraste) roda so numa copia em
     // canvas usada apenas para o OCR — a miniatura (previewUrl) segue vindo sempre
-    // do arquivo original, sem nenhuma alteracao.
+    // do arquivo original, sem nenhuma alteracao. "preparing" e um estado proprio
+    // (distinto de "running") para nao dar a impressao de trava/falta de memoria
+    // durante essa etapa em fotos grandes.
     let processed: Awaited<ReturnType<typeof prepareImageForOcr>> | null = null
+    let prepError: string | null = null
     if (page.preprocessEnabled) {
       try {
         processed = await prepareImageForOcr(page.file)
       } catch {
-        processed = null // segue com a imagem original se o pre-processamento falhar
+        prepError = 'Não foi possível preparar esta imagem para leitura (etapa de redimensionamento). Tente novamente ou escolha outra foto.'
       }
     }
+    const prepMs = Date.now() - startedAt
+    if (prepError) {
+      setPages((prev) => prev.map((item) => (item.id === id ? {
+        ...item, ocr: { ...idleOcr, status: 'error', error: prepError, fileSizeBytes: item.file.size, prepMs, runId: nextRunId },
+      } : item)))
+      setOcrBusy(false)
+      return
+    }
+    setPages((prev) => prev.map((item) => (item.id === id ? { ...item, ocr: { ...item.ocr, status: 'running', prepMs } } : item)))
+
     type TesseractModule = typeof import('tesseract.js')
     let worker: Awaited<ReturnType<TesseractModule['createWorker']>> | null = null
     try {
@@ -155,8 +193,12 @@ export function PurchasePhotoCapture() {
         },
       })
       await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM[PSM_KEY_BY_CHOICE[page.psm]] })
-      const { data } = await worker.recognize(processed ? processed.canvas : page.file)
+      // blocks:true pede ao Tesseract os dados posicionais (words/lines/bbox/
+      // confianca individual) usados pela extracao estruturada — sem isso so
+      // teriamos o texto corrido, que a Sprint 5D.2 pediu para nao depender.
+      const { data } = await worker.recognize(processed ? processed.canvas : page.file, {}, { text: true, blocks: true })
       const elapsedMs = Date.now() - startedAt
+      const structuredDocument = extractPurchaseOcrDocument(data.blocks)
       setPages((prev) => prev.map((item) => (item.id === id ? {
         ...item,
         ocr: {
@@ -166,16 +208,22 @@ export function PurchasePhotoCapture() {
           mode: processed ? 'preprocessed' : 'original',
           processedWidth: processed ? processed.width : (item.quality && item.quality !== 'loading' ? item.quality.metrics.width : null),
           processedHeight: processed ? processed.height : (item.quality && item.quality !== 'loading' ? item.quality.metrics.height : null),
+          document: structuredDocument, fileSizeBytes: item.file.size, prepMs, runId: nextRunId,
         },
       } : item)))
     } catch {
       const elapsedMs = Date.now() - startedAt
       setPages((prev) => prev.map((item) => (item.id === id ? {
         ...item,
-        ocr: { ...idleOcr, status: 'error', elapsedMs, error: 'Não foi possível processar esta imagem localmente. Tente novamente ou use outra foto.' },
+        ocr: { ...idleOcr, status: 'error', elapsedMs, prepMs, fileSizeBytes: item.file.size, error: 'Não foi possível processar esta imagem localmente. Tente novamente ou use outra foto.', runId: nextRunId },
       } : item)))
     } finally {
       if (worker) await worker.terminate()
+      // O canvas pre-processado so era necessario para o Tesseract acima; libera
+      // o backing store imediatamente (celular com pouca memoria nao deve manter
+      // esse buffer vivo esperando o coletor de lixo).
+      if (processed) { processed.canvas.width = 0; processed.canvas.height = 0 }
+      setOcrBusy(false)
     }
   }
 
@@ -199,7 +247,7 @@ export function PurchasePhotoCapture() {
 
   return <div className="market-ocr-poc">
     <div className="market-ocr-poc-privacy"><ShieldCheck size={16} /> Esta imagem é processada localmente neste dispositivo e não é enviada para nossos servidores.</div>
-    <p className="market-ocr-poc-note">Teste (PoC) de leitura local de imagem por OCR. Nenhuma nota é importada e nenhum estoque é alterado aqui — é só para avaliar a qualidade do reconhecimento de texto.</p>
+    <p className="market-ocr-poc-note">Teste (PoC) de leitura local por OCR de imagem, com revisão dos dados extraídos. Nenhuma nota é importada, nenhum item é gravado e nenhum estoque é alterado aqui — é só para validar a leitura antes de decidirmos levar isso ao fluxo real de compras.</p>
 
     <div className="market-ocr-poc-add-row">
       <label className="button button-outline market-ocr-poc-add-btn">
@@ -235,7 +283,7 @@ export function PurchasePhotoCapture() {
               <input
                 type="checkbox"
                 checked={page.preprocessEnabled}
-                disabled={page.ocr.status === 'running'}
+                disabled={ocrBusy}
                 onChange={(event) => setPreprocessEnabled(page.id, event.target.checked)}
               />
               Aplicar pré-processamento (ampliar/tons de cinza/contraste)
@@ -244,7 +292,7 @@ export function PurchasePhotoCapture() {
               Modo de segmentação (PSM)
               <select
                 value={page.psm}
-                disabled={page.ocr.status === 'running'}
+                disabled={ocrBusy}
                 onChange={(event) => setPsm(page.id, event.target.value as PsmChoice)}
               >
                 {(Object.keys(PSM_LABEL_BY_CHOICE) as PsmChoice[]).map((choice) => (
@@ -260,12 +308,14 @@ export function PurchasePhotoCapture() {
               <input type="file" accept="image/*" onChange={(event) => handleReplaceInput(event, page.id)} />
             </label>
             <button type="button" className="button button-small button-outline" onClick={() => removePage(page.id)}><Trash2 size={14} /> Remover</button>
-            <button type="button" className="button button-small" disabled={page.ocr.status === 'running'} onClick={() => void runOcr(page.id)}>
-              {page.ocr.status === 'running' ? <><Loader2 size={14} className="market-ocr-poc-spin" /> Analisando...</> : 'Analisar imagem'}
+            <button type="button" className="button button-small" disabled={ocrBusy} onClick={() => void runOcr(page.id)}>
+              {page.ocr.status === 'preparing' ? <><Loader2 size={14} className="market-ocr-poc-spin" /> Preparando imagem...</>
+                : page.ocr.status === 'running' ? <><Loader2 size={14} className="market-ocr-poc-spin" /> Analisando documento...</>
+                : 'Analisar documento'}
             </button>
           </div>
 
-          {page.ocr.status === 'running' && <div className="market-ocr-poc-progress"><div style={{ width: `${Math.round(page.ocr.progress * 100)}%` }} /></div>}
+          {(page.ocr.status === 'preparing' || page.ocr.status === 'running') && <div className="market-ocr-poc-progress"><div style={{ width: `${Math.round(page.ocr.progress * 100)}%` }} /></div>}
 
           {page.ocr.status === 'error' && <div className="admin-message is-error" role="alert">{page.ocr.error}</div>}
 
@@ -278,10 +328,26 @@ export function PurchasePhotoCapture() {
               <span>Tempo: {page.ocr.elapsedMs !== null ? `${(page.ocr.elapsedMs / 1000).toFixed(1)}s` : '-'}</span>
               {page.ocr.confidence !== null && <span>Confiança média (Tesseract): {Math.round(page.ocr.confidence)}%</span>}
             </div>
-            <pre className="market-ocr-poc-text">{page.ocr.text || '(nenhum texto reconhecido)'}</pre>
-            <button type="button" className="button button-small button-outline" onClick={() => void handleCopy(page)}>
-              <Copy size={14} /> {copiedId === page.id ? 'Copiado!' : 'Copiar texto'}
-            </button>
+            <details className="market-ocr-poc-raw-details">
+              <summary>Diagnóstico técnico (texto bruto, memória e tempos)</summary>
+              <p className="market-ocr-pdf-diagnostic-meta">
+                {page.quality && page.quality !== 'loading' && `Resolução original: ${page.quality.metrics.width} × ${page.quality.metrics.height} px · `}
+                {page.ocr.fileSizeBytes !== null && `Arquivo: ${(page.ocr.fileSizeBytes / (1024 * 1024)).toFixed(2)} MB · `}
+                {page.ocr.prepMs !== null && `Preparação: ${(page.ocr.prepMs / 1000).toFixed(1)}s · `}
+                {page.ocr.elapsedMs !== null && page.ocr.prepMs !== null && `OCR: ${((page.ocr.elapsedMs - page.ocr.prepMs) / 1000).toFixed(1)}s`}
+              </p>
+              <pre className="market-ocr-poc-text">{page.ocr.text || '(nenhum texto reconhecido)'}</pre>
+              <button type="button" className="button button-small button-outline" onClick={() => void handleCopy(page)}>
+                <Copy size={14} /> {copiedId === page.id ? 'Copiado!' : 'Copiar texto'}
+              </button>
+            </details>
+            {page.ocr.document && <PurchaseOcrReview
+              key={`review-${page.id}-${page.ocr.runId}`}
+              document={page.ocr.document}
+              origin="Foto / imagem — OCR local"
+              ocrConfidence={page.ocr.confidence}
+              imageQualityWarningsCount={page.quality && page.quality !== 'loading' ? page.quality.warnings.length : 0}
+            />}
           </div>}
         </div>
       </article>)}

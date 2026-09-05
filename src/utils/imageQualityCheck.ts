@@ -1,3 +1,5 @@
+import { OCR_IMAGE_LIMITS } from './ocrImageLimits'
+
 // Verificacoes heuristicas e 100% locais (Canvas API), sem OpenCV nem libs pesadas.
 // Os limiares abaixo sao um ponto de partida e precisam ser calibrados com fotos
 // reais de notas antes de qualquer bloqueio automatico (por isso o PoC so avisa,
@@ -32,13 +34,25 @@ export interface ImageQualityResult {
 
 // Exportado para ser reaproveitado pelo pre-processamento de imagem (imagePreprocess.ts),
 // que usa a mesma decodificacao antes de preparar a versao enviada ao OCR.
+//
+// IMPORTANTE (Sprint 5D.2.2 — correcao de memoria): para arquivos grandes (fotos
+// de camera moderna), decodificar em resolucao nativa antes de qualquer reducao e
+// a causa real de erro de memoria insuficiente observada em celular real. Por
+// isso, acima de OCR_IMAGE_LIMITS.largeFileBytesThreshold, o decode ja pede ao
+// navegador para reduzir durante a propria decodificacao (resizeWidth), evitando
+// materializar o bitmap gigante. Arquivos pequenos (screenshots) decodificam sem
+// esse teto, para nao ampliar (upscale) uma imagem que ja esta adequada.
 export async function loadDecodableImage(file: File): Promise<{ image: CanvasImageSource; width: number; height: number; cleanup: () => void }> {
+  const needsSafeDecodeCap = file.size > OCR_IMAGE_LIMITS.largeFileBytesThreshold
   if (typeof createImageBitmap === 'function') {
     try {
-      const bitmap = await createImageBitmap(file)
+      const bitmap = needsSafeDecodeCap
+        ? await createImageBitmap(file, { resizeWidth: OCR_IMAGE_LIMITS.safeDecodeCapPx, resizeQuality: 'medium', imageOrientation: 'from-image' })
+        : await createImageBitmap(file, { imageOrientation: 'from-image' })
       return { image: bitmap, width: bitmap.width, height: bitmap.height, cleanup: () => bitmap.close() }
     } catch {
-      // Alguns formatos podem falhar aqui dependendo do navegador; cai no fallback abaixo.
+      // Alguns formatos/combinacoes de opcao podem falhar dependendo do navegador;
+      // cai no fallback abaixo (que sempre respeita a orientacao EXIF nativamente).
     }
   }
   const url = URL.createObjectURL(file)
@@ -91,6 +105,11 @@ export async function checkImageQuality(file: File): Promise<ImageQualityResult>
     context.drawImage(image, 0, 0, sampleWidth, sampleHeight)
 
     const { data } = context.getImageData(0, 0, sampleWidth, sampleHeight)
+    // Canvas so era necessario para a leitura de pixels acima; libera a memoria do
+    // backing store imediatamente em vez de esperar o coletor de lixo (relevante
+    // em celulares com pouca memoria disponivel).
+    canvas.width = 0
+    canvas.height = 0
     const gray = toGrayscale(data, sampleWidth, sampleHeight)
     const avgLuminance = gray.reduce((sum, value) => sum + value, 0) / gray.length
     const sharpness = laplacianVariance(gray, sampleWidth, sampleHeight)
