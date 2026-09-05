@@ -669,6 +669,9 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-purchase-import-form label { display: grid; gap: 7px; color: var(--ink); font-size: 12px; font-weight: 700; }
 .market-purchase-import-form input, .market-purchase-import-form select { width: 100%; min-height: 46px; padding: 11px 13px; border: 1px solid #b9c7bc; border-radius: 6px; background: #fff; color: var(--ink); font: inherit; font-size: 14px; }
 .market-purchase-import-form .button { min-height: 46px; white-space: nowrap; }
+.market-purchase-import-input-group { display: flex; align-items: center; gap: 8px; }
+.market-purchase-import-input-group input { flex: 1; }
+.market-purchase-import-input-group .market-scanner-button { flex: none; width: 46px; height: 46px; }
 .market-purchase-import-card .template-market-note { margin-top: 20px; }
 .market-purchase-list { display: grid; gap: 12px; }
 .market-purchase-card { border: 1px solid var(--line); border-radius: 10px; background: #fffaf2; overflow: hidden; }
@@ -697,6 +700,16 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-purchase-item-product span { color: var(--muted); font-size: 11px; }
 .market-purchase-items-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; }
 .market-purchase-items-toolbar p { margin: 0; color: var(--muted); font-size: 12px; }
+.market-purchase-items-cards { display: none; gap: 10px; margin-top: 16px; }
+.market-purchase-item-card { display: grid; gap: 10px; padding: 14px 15px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.market-purchase-item-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.market-purchase-item-card-line { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+.market-purchase-item-card-desc { font-size: 13.5px; }
+.market-purchase-item-card-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 14px; margin: 0; }
+.market-purchase-item-card-grid dt { margin-bottom: 2px; color: var(--muted); font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.market-purchase-item-card-grid dd { margin: 0; color: var(--ink); font-size: 13px; font-weight: 700; }
+.market-purchase-item-card-action { margin-top: 2px; }
+.market-purchase-item-card-action .button { width: 100%; }
 
 .market-reconcile-dialog { width: min(100%, 880px); max-height: min(90vh, 780px); display: flex; flex-direction: column; padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: #fffaf2; box-shadow: 0 24px 70px rgba(24, 51, 46, .26); overflow-y: auto; }
 .market-reconcile-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
@@ -1047,6 +1060,9 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 	.market-purchase-card-stats { width: 100%; justify-content: space-between; gap: 14px; }
 	.market-purchase-card-toggle { align-self: flex-end; }
 	.market-purchase-items-toolbar { flex-direction: column; align-items: stretch; }
+	.market-purchase-items-toolbar .button { width: 100%; }
+	.market-purchase-items-table-wrap { display: none; }
+	.market-purchase-items-cards { display: grid; }
 	.market-reconcile-dialog { padding: 20px; }
 	.market-reconcile-dialog-body { grid-template-columns: 1fr; gap: 20px; }
 	.market-reconcile-search-row { flex-direction: column; align-items: stretch; }

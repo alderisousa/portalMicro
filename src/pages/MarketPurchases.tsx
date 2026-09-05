@@ -1,7 +1,8 @@
-import { ArrowLeft, ChevronDown, FileKey2, Link2, RefreshCw } from 'lucide-react'
+import { ArrowLeft, ChevronDown, FileKey2, Link2, QrCode, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { PurchaseItemReconciliationDialog } from '../components/PurchaseItemReconciliationDialog'
+import { QrCodeScanner } from '../components/QrCodeScanner'
 import {
   importMarketPurchase, isPurchaseReimportEligible, listMarketPurchaseItems,
   listMarketPurchaseSummaries, MarketPurchaseImportError,
@@ -45,13 +46,15 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
   const [loading, setLoading] = useState(true)
   const [importing, setImporting] = useState(false)
   const [message, setMessage] = useState<{ error: boolean; text: string } | null>(null)
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const [itemsState, setItemsState] = useState<Record<string, ItemsState>>({})
   const [reimportPrompt, setReimportPrompt] = useState<ReimportPrompt | null>(null)
   const [reimporting, setReimporting] = useState(false)
   const [reconcileTarget, setReconcileTarget] = useState<ReconcileTarget | null>(null)
   const [undoingItemId, setUndoingItemId] = useState<string | null>(null)
   const [reprocessingId, setReprocessingId] = useState<string | null>(null)
+  const [scannerOpen, setScannerOpen] = useState(false)
+  const [scannerError, setScannerError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -114,13 +117,22 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
   }
 
   const toggle = (purchaseId: string) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(purchaseId)) next.delete(purchaseId)
-      else next.add(purchaseId)
-      return next
-    })
+    setExpandedId((prev) => (prev === purchaseId ? null : purchaseId))
     if (!itemsState[purchaseId]) void loadItems(purchaseId)
+  }
+
+  const handleQrDetected = (rawValue: string) => {
+    const value = rawValue.trim()
+    const isUrl = /^https?:\/\//i.test(value)
+    const isAccessKey = /^\d{44}$/.test(value)
+    setScannerOpen(false)
+    if (!isUrl && !isAccessKey) {
+      setScannerError('QR Code não reconhecido como nota fiscal. Tente novamente ou informe os dados manualmente.')
+      return
+    }
+    setScannerError(null)
+    setSourceType(isAccessKey ? 'access_key' : 'qrcode_url')
+    setSourceValue(value)
   }
 
   // Comum ao sucesso de uma importacao nova e de uma reimportacao confirmada: atualiza
@@ -137,12 +149,7 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
       delete next[purchaseId]
       return next
     })
-    setExpandedIds((prev) => {
-      if (!prev.has(purchaseId)) return prev
-      const next = new Set(prev)
-      next.delete(purchaseId)
-      return next
-    })
+    setExpandedId((prev) => (prev === purchaseId ? null : prev))
   }
 
   const submit = async (event: FormEvent) => {
@@ -206,13 +213,18 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
         </div>
         <div className="market-purchase-import-row market-purchase-import-row-main">
           <label>{sourceType === 'access_key' ? <FileKey2 size={16} /> : <Link2 size={16} />} {sourceType === 'access_key' ? 'Chave de 44 dígitos' : 'URL HTTPS do QR Code'}
-            <input required value={sourceValue} onChange={(event) => setSourceValue(event.target.value)} placeholder={sourceType === 'access_key' ? 'Cole a chave da nota' : 'https://...'} />
+            <div className="market-purchase-import-input-group">
+              <input required value={sourceValue} onChange={(event) => setSourceValue(event.target.value)} placeholder={sourceType === 'access_key' ? 'Cole a chave da nota' : 'https://...'} />
+              <button type="button" className="market-scanner-button" onClick={() => { setScannerError(null); setScannerOpen(true) }} aria-label="Ler QR Code da nota" title="Ler QR Code da nota"><QrCode /></button>
+            </div>
           </label>
           <button className="button" disabled={importing || !destinationStoreId || !!reimportPrompt}>{importing ? 'Importando...' : 'Importar nota'}</button>
         </div>
       </form>
+      {scannerError && <div className="admin-message is-error" role="alert">{scannerError} <button type="button" className="button button-small button-outline" onClick={() => { setScannerError(null); setScannerOpen(true) }}>Tentar novamente</button></div>}
       <p className="template-market-note">A nota será importada para conferência antes de entrar no estoque.</p>
     </section>}
+    {scannerOpen && <QrCodeScanner onDetected={handleQrDetected} onClose={() => setScannerOpen(false)} />}
     {!canImport && <div className="admin-message">Seu perfil permite consultar as compras, mas não importar novas notas.</div>}
     {message && <div className={`admin-message${message.error ? ' is-error' : ''}`} role={message.error ? 'alert' : 'status'}>{message.text}</div>}
 
@@ -231,7 +243,7 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
       <div className="market-section-heading"><div><span className="panel-kicker">EM CONFERÊNCIA</span><h2>Notas importadas</h2></div><button className="button button-small button-outline" onClick={() => void load()} disabled={loading}><RefreshCw size={15} /> Atualizar</button></div>
       {loading ? <div className="admin-message">Carregando notas...</div> : !purchases.length ? <div className="admin-message">Nenhuma nota importada.</div> : <div className="market-purchase-list">
         {purchases.map((purchase) => {
-          const expanded = expandedIds.has(purchase.id)
+          const expanded = expandedId === purchase.id
           const state = itemsState[purchase.id]
           return <article key={purchase.id} className={`market-purchase-card${expanded ? ' is-expanded' : ''}`}>
             <button type="button" className="market-purchase-card-header" onClick={() => toggle(purchase.id)} aria-expanded={expanded}>
@@ -268,6 +280,13 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
                   <tbody>{state.items.map((item) => {
                     const reconciled = isReconciledStatus(item.reconciliationStatus)
                     const product = item.marketProductId ? state.products[item.marketProductId] : undefined
+                    const action = reconciled
+                      ? (item.stockEntryStatus === 'pending'
+                        ? <button type="button" className="button button-small button-outline" disabled={undoingItemId === item.id} onClick={() => void handleUndo(purchase.id, item.id)}>
+                            {undoingItemId === item.id ? 'Desfazendo...' : 'Desfazer'}
+                          </button>
+                        : null)
+                      : <button type="button" className="button button-small" onClick={() => setReconcileTarget({ purchaseId: purchase.id, item })}>Conciliar</button>
                     return <tr key={item.id}>
                     <td>{item.lineNumber}</td>
                     <td className="market-purchase-item-desc">{item.descriptionRaw || '-'}</td>
@@ -284,18 +303,39 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
                         <span>{product.sku ? `SKU ${product.sku}` : 'Sem SKU'}{item.reconciliationMethod ? ` · ${reconciliationMethodLabels[item.reconciliationMethod] ?? item.reconciliationMethod}` : ''}</span>
                       </div>}
                     </td>
-                    <td>
-                      {reconciled
-                        ? (item.stockEntryStatus === 'pending'
-                          ? <button type="button" className="button button-small button-outline" disabled={undoingItemId === item.id} onClick={() => void handleUndo(purchase.id, item.id)}>
-                              {undoingItemId === item.id ? 'Desfazendo...' : 'Desfazer'}
-                            </button>
-                          : null)
-                        : <button type="button" className="button button-small" onClick={() => setReconcileTarget({ purchaseId: purchase.id, item })}>Conciliar</button>}
-                    </td>
+                    <td>{action}</td>
                   </tr>
                   })}</tbody>
                 </table></div>
+                <div className="market-purchase-items-cards">{state.items.map((item) => {
+                  const reconciled = isReconciledStatus(item.reconciliationStatus)
+                  const product = item.marketProductId ? state.products[item.marketProductId] : undefined
+                  const action = reconciled
+                    ? (item.stockEntryStatus === 'pending'
+                      ? <button type="button" className="button button-small button-outline" disabled={undoingItemId === item.id} onClick={() => void handleUndo(purchase.id, item.id)}>
+                          {undoingItemId === item.id ? 'Desfazendo...' : 'Desfazer'}
+                        </button>
+                      : null)
+                    : <button type="button" className="button button-small" onClick={() => setReconcileTarget({ purchaseId: purchase.id, item })}>Conciliar</button>
+                  return <article key={item.id} className="market-purchase-item-card">
+                    <div className="market-purchase-item-card-head">
+                      <span className="market-purchase-item-card-line">Linha {item.lineNumber}</span>
+                      <span className={`market-row-status ${item.reconciliationStatus}`}>{reconciliationLabels[item.reconciliationStatus]}</span>
+                    </div>
+                    <strong className="market-purchase-item-card-desc">{item.descriptionRaw || '-'}</strong>
+                    <dl className="market-purchase-item-card-grid">
+                      <div><dt>Código do fornecedor</dt><dd>{item.supplierProductCode || '-'}</dd></div>
+                      <div><dt>Quantidade</dt><dd>{quantityFormat.format(item.quantity)} {item.unit || ''}</dd></div>
+                      <div><dt>Valor unitário</dt><dd>{formatMoney(item.unitPrice)}</dd></div>
+                      <div><dt>Total da linha</dt><dd>{formatMoney(item.grossAmount)}</dd></div>
+                    </dl>
+                    {reconciled && product && <div className="market-purchase-item-product">
+                      <strong>{product.name}</strong>
+                      <span>{product.sku ? `SKU ${product.sku}` : 'Sem SKU'}{item.reconciliationMethod ? ` · ${reconciliationMethodLabels[item.reconciliationMethod] ?? item.reconciliationMethod}` : ''}</span>
+                    </div>}
+                    {action && <div className="market-purchase-item-card-action">{action}</div>}
+                  </article>
+                })}</div>
                 </>}
             </div>}
           </article>
