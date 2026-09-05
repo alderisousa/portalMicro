@@ -2,6 +2,7 @@ import { ArrowLeft, ChevronDown, FileKey2, Link2, QrCode, RefreshCw } from 'luci
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { PurchaseItemReconciliationDialog } from '../components/PurchaseItemReconciliationDialog'
+import { PurchasePhotoCapture } from '../components/PurchasePhotoCapture'
 import { QrCodeScanner } from '../components/QrCodeScanner'
 import {
   importMarketPurchase, isPurchaseReimportEligible, listMarketPurchaseItems,
@@ -55,6 +56,9 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
   const [reprocessingId, setReprocessingId] = useState<string | null>(null)
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerError, setScannerError] = useState<string | null>(null)
+  // PoC (checkpoint 5D.1): habilita so a UI de teste local de OCR: nao afeta
+  // sourceType/submit, que seguem exclusivos do fluxo NFC-e ja existente.
+  const [photoPocActive, setPhotoPocActive] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -198,10 +202,18 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
       <form className="market-purchase-import-form" onSubmit={submit}>
         <div className="market-purchase-import-row">
           <label>Formato de entrada
-            <select value={sourceType} onChange={(event) => setSourceType(event.target.value as MarketPurchaseImportSourceType)}>
+            <select
+              value={photoPocActive ? 'photo' : sourceType}
+              onChange={(event) => {
+                const value = event.target.value
+                if (value === 'photo') { setPhotoPocActive(true); return }
+                setPhotoPocActive(false)
+                setSourceType(value as MarketPurchaseImportSourceType)
+              }}
+            >
               <option value="access_key">Chave de acesso (44 dígitos)</option>
               <option value="qrcode_url">URL do QR Code</option>
-              <option value="photo" disabled>Foto da nota (em breve)</option>
+              <option value="photo">Foto da nota (teste OCR local)</option>
             </select>
           </label>
           <label>Galpão de destino
@@ -211,7 +223,7 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
             </select>
           </label>
         </div>
-        <div className="market-purchase-import-row market-purchase-import-row-main">
+        {!photoPocActive && <div className="market-purchase-import-row market-purchase-import-row-main">
           <label>{sourceType === 'access_key' ? <FileKey2 size={16} /> : <Link2 size={16} />} {sourceType === 'access_key' ? 'Chave de 44 dígitos' : 'URL HTTPS do QR Code'}
             <div className="market-purchase-import-input-group">
               <input required value={sourceValue} onChange={(event) => setSourceValue(event.target.value)} placeholder={sourceType === 'access_key' ? 'Cole a chave da nota' : 'https://...'} />
@@ -219,10 +231,11 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
             </div>
           </label>
           <button className="button" disabled={importing || !destinationStoreId || !!reimportPrompt}>{importing ? 'Importando...' : 'Importar nota'}</button>
-        </div>
+        </div>}
       </form>
-      {scannerError && <div className="admin-message is-error" role="alert">{scannerError} <button type="button" className="button button-small button-outline" onClick={() => { setScannerError(null); setScannerOpen(true) }}>Tentar novamente</button></div>}
-      <p className="template-market-note">A nota será importada para conferência antes de entrar no estoque.</p>
+      {!photoPocActive && scannerError && <div className="admin-message is-error" role="alert">{scannerError} <button type="button" className="button button-small button-outline" onClick={() => { setScannerError(null); setScannerOpen(true) }}>Tentar novamente</button></div>}
+      {photoPocActive && <PurchasePhotoCapture />}
+      {!photoPocActive && <p className="template-market-note">A nota será importada para conferência antes de entrar no estoque.</p>}
     </section>}
     {scannerOpen && <QrCodeScanner onDetected={handleQrDetected} onClose={() => setScannerOpen(false)} />}
     {!canImport && <div className="admin-message">Seu perfil permite consultar as compras, mas não importar novas notas.</div>}

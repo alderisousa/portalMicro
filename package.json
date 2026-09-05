@@ -23,6 +23,7 @@
     "multer": "^2.2.0",
     "react": "latest",
     "react-dom": "latest",
+    "tesseract.js": "^7.0.0",
     "typescript": "latest",
     "vite": "latest"
   },

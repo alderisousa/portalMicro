@@ -711,6 +711,36 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-purchase-item-card-action { margin-top: 2px; }
 .market-purchase-item-card-action .button { width: 100%; }
 
+.market-ocr-poc { display: grid; gap: 14px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.market-ocr-poc-privacy { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-radius: 8px; background: var(--mint); color: var(--green); font-size: 12px; font-weight: 700; }
+.market-ocr-poc-note { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.market-ocr-poc-add-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.market-ocr-poc-add-btn { flex: 1 1 200px; justify-content: center; cursor: pointer; }
+.market-ocr-poc input[type="file"] { display: none; }
+.market-ocr-poc-empty { margin: 0; color: var(--muted); font-size: 13px; font-style: italic; }
+.market-ocr-poc-pages { display: grid; gap: 14px; }
+.market-ocr-poc-page { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #fffaf2; }
+.market-ocr-poc-preview img { display: block; width: 100%; max-width: 320px; border-radius: 8px; }
+.market-ocr-poc-page-body { display: grid; gap: 10px; min-width: 0; }
+.market-ocr-poc-dims { color: var(--muted); font-size: 12px; font-weight: 700; }
+.market-ocr-poc-warnings { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.market-ocr-poc-warnings li { display: flex; align-items: flex-start; gap: 7px; padding: 8px 10px; border-radius: 7px; background: #fff1c9; color: #795b12; font-size: 12px; line-height: 1.4; }
+.market-ocr-poc-warnings li svg { flex: none; margin-top: 1px; }
+.market-ocr-poc-diagnostics { display: grid; gap: 10px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 8px; background: #f6f0e2; }
+.market-ocr-poc-checkbox { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 12.5px; }
+.market-ocr-poc-checkbox input { width: 16px; min-height: 16px; accent-color: var(--green); }
+.market-ocr-poc-psm-select { display: grid; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.market-ocr-poc-psm-select select { min-height: 40px; padding: 8px 10px; border: 1px solid #b9c7bc; border-radius: 6px; background: #fff; color: var(--ink); font: inherit; font-size: 13px; text-transform: none; letter-spacing: normal; }
+.market-ocr-poc-page-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.market-ocr-poc-page-actions .button, .market-ocr-poc-page-actions label.button { flex: 1 1 130px; justify-content: center; min-height: 42px; cursor: pointer; }
+.market-ocr-poc-progress { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.market-ocr-poc-progress > div { height: 100%; background: var(--green); transition: width .2s ease; }
+.market-ocr-poc-spin { animation: market-ocr-poc-spin .8s linear infinite; }
+@keyframes market-ocr-poc-spin { to { transform: rotate(360deg); } }
+.market-ocr-poc-result { display: grid; gap: 10px; }
+.market-ocr-poc-result-meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.market-ocr-poc-text { max-height: 320px; margin: 0; padding: 12px; overflow-x: hidden; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font-family: inherit; font-size: 12.5px; line-height: 1.55; }
+
 .market-reconcile-dialog { width: min(100%, 880px); max-height: min(90vh, 780px); display: flex; flex-direction: column; padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: #fffaf2; box-shadow: 0 24px 70px rgba(24, 51, 46, .26); overflow-y: auto; }
 .market-reconcile-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .market-reconcile-dialog-header h2 { margin: 6px 0 0; }
