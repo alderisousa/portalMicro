@@ -6,6 +6,7 @@ registerHooks({ resolve(s,c,n) { return n(s.startsWith('.') && !/\.[a-z]+$/.test
 const {
   pdfStagingDocument, canReviewPurchaseItem, isHumanReviewed, reviewProblems,
   purchaseConversionRequired, purchaseStockQuantity, purchaseStockUnitCost, reviewValueChanged,
+  shouldSuggestNetAmountFromGross,
 } = await import('../src/utils/purchaseReview.ts')
 const { extractPurchaseOcrDocumentFromPdfTextItems: parse } = await import('../src/utils/purchaseOcrExtraction.ts')
 for (const name of ['jf','carmel']) test(`${name}: original, código e EAN separados no payload`, () => {
@@ -51,4 +52,10 @@ test('destaque de "Original" só aparece quando o valor mudou', () => {
   assert.equal(reviewValueChanged('UN','CX'),true)
   assert.equal(reviewValueChanged(null,null),false)
   assert.equal(reviewValueChanged(null,'UN'),true)
+})
+test('sugestão "usar total da linha" só aparece com net_amount ausente e gross_amount preenchido; nunca sobrescreve net_amount existente', () => {
+  assert.equal(shouldSuggestNetAmountFromGross({net_amount:null,gross_amount:167.4}),true) // caso real Norac
+  assert.equal(shouldSuggestNetAmountFromGross({net_amount:null,gross_amount:null}),false) // nada para sugerir
+  assert.equal(shouldSuggestNetAmountFromGross({net_amount:167.4,gross_amount:167.4}),false) // já informado, não mostra
+  assert.equal(shouldSuggestNetAmountFromGross({net_amount:0,gross_amount:167.4}),false) // 0 é um valor informado, não "ausente"
 })

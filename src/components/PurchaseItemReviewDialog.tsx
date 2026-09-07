@@ -19,7 +19,11 @@ export function PurchaseItemReviewDialog({ accountId, item, onCancel, onSaved }:
   const [current, setCurrent] = useState<MarketPurchaseItem | null>(null)
   const [values, setValues] = useState<PurchaseReviewValues | null>(null)
   const [factorInput, setFactorInput] = useState('')
-  const [saveForReuse, setSaveForReuse] = useState(false)
+  // Marcado por padrão: o operador desmarca quando não quiser reaproveitar a
+  // conversão para as próximas compras deste fornecedor/código. Este estado
+  // não persiste nada sozinho — só é lido no momento em que o operador aciona
+  // um dos botões de salvar abaixo.
+  const [saveForReuse, setSaveForReuse] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -101,9 +105,9 @@ export function PurchaseItemReviewDialog({ accountId, item, onCancel, onSaved }:
       </>}
     <div className="market-purchase-items-toolbar">
       <button ref={cancel} type="button" className="button button-outline" disabled={busy} onClick={onCancel}>Cancelar</button>
-      <button type="button" className="button button-outline" disabled={busy || !current || !values} onClick={() => void save(false)}>Salvar correções</button>
-      <button type="button" className="button" disabled={busy || !canConfirm} onClick={() => void save(true)}>Conferi este item</button>
+      <button type="button" className="button" disabled={busy || !current || !values} onClick={() => void save(true)}>Salvar correções e conferir</button>
+      <button type="button" className="button button-outline" disabled={busy || !canConfirm} onClick={() => void save(true)}>Conferi este item</button>
     </div>
-    <p className="market-reconcile-dialog-hint">"Salvar correções" grava os dados e a conversão sem confirmar a conferência. "Conferi este item" confirma a conferência humana — nenhum dos dois recebe mercadoria nem movimenta estoque.</p>
+    <p className="market-reconcile-dialog-hint">"Salvar correções e conferir" grava os dados e a conversão e, na sequência, confirma a conferência humana. Se a conferência ainda não puder ser confirmada (ex.: conversão pendente), os dados corrigidos são salvos mesmo assim e o motivo é exibido acima, sem fechar esta tela. "Conferi este item" confirma a conferência sem alterar os dados aqui. Nenhum dos dois recebe mercadoria nem movimenta estoque.</p>
   </section></div>
 }

@@ -27,7 +27,7 @@ const purchaseItemColumns = `
   calculated_unit_cost, conversion_factor, stock_unit, stock_quantity, stock_unit_cost,
   market_product_id, reconciliation_status,
   reconciliation_confidence, reconciliation_method, reconciliation_notes,
-  stock_entry_status, created_at, updated_at, original_data, reviewed_at, reviewed_by
+  stock_entry_status, received_at, received_by, created_at, updated_at, original_data, reviewed_at, reviewed_by
 `
 
 function camelizeRow<T>(row: Record<string, unknown>): T {
@@ -56,6 +56,8 @@ function reviewError(error: { message: string; code?: string }): Error {
     PURCHASE_ACCESS_KEY_INVALID: 'A chave de acesso informada não tem 44 dígitos.',
     PURCHASE_ACCOUNT_NOT_AVAILABLE: 'Esta conta Market não está disponível para importar compras no momento.',
     PURCHASE_SOURCE_TYPE_INVALID: 'Origem do documento não reconhecida.',
+    PURCHASE_RECEIVE_NO_READY_ITEMS: 'Nenhum item novo está pronto para entrada (conciliado, com conversão e custo unitário resolvidos, e conferido).',
+    PURCHASE_DELETE_NOT_ALLOWED: 'Esta nota já possui item conciliado, conferido ou recebido e não pode mais ser excluída.',
   }
   return new Error(error.code === 'PGRST202' || error.code === '42703'
     ? 'A atualização de conferência precisa ser aplicada manualmente no banco antes de usar este recurso.'
@@ -82,6 +84,32 @@ export async function savePurchaseItemConversion(
 
 export async function completePurchaseReview(accountId: string, purchaseId: string) {
   const { error } = await supabase.rpc('market_complete_purchase_review', { p_market_account_id: accountId, p_purchase_id: purchaseId })
+  if (error) throw reviewError(error)
+}
+
+export interface ReceivePurchaseItemsResult {
+  purchaseId: string
+  itemsReceivedNow: number
+  itemsReceivedTotal: number
+  itemsTotal: number
+  purchaseStatus: MarketPurchaseStatus
+}
+
+// Único botão de entrada: processa automaticamente todos os itens ainda não
+// recebidos que já estejam conciliados + com conversão resolvida + conferidos.
+// Sem seleção manual de linha; RPC revalida tudo de novo (nunca confia neste
+// service nem em contagens client-side para decidir o que efetivamente entra).
+export async function receivePurchaseReadyItems(accountId: string, purchaseId: string): Promise<ReceivePurchaseItemsResult> {
+  const { data, error } = await supabase.rpc('market_receive_purchase_items', { p_market_account_id: accountId, p_purchase_id: purchaseId })
+  if (error) throw reviewError(error)
+  return data as ReceivePurchaseItemsResult
+}
+
+// Só permitido quando a compra ainda está intocada (nenhum item conciliado,
+// conferido ou recebido) — a RPC revalida o estado real dos itens; esta
+// função nunca decide sozinha se a exclusão é segura.
+export async function deleteImportedPurchase(accountId: string, purchaseId: string): Promise<void> {
+  const { error } = await supabase.rpc('market_delete_purchase_staging', { p_market_account_id: accountId, p_purchase_id: purchaseId })
   if (error) throw reviewError(error)
 }
 

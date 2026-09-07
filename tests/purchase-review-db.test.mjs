@@ -34,13 +34,33 @@ await db.exec(`
   insert into market_products values('${product}','${account}','active','7892840825133','A','UN','Produto A','Produto A'),
     ('${product2}','${account}','active',null,'B','UN','Produto B','Produto B'),
     ('${otherProduct}','${other}','active','7892840825133','C','UN','Outro Market','Outro Market');
-  create table market_stock_movements(id integer); create table market_stock_balance(id integer);
-  insert into market_stock_movements values(1); insert into market_stock_balance values(1);
+  -- Forma final (pós-202609070005) do livro-razão: precisão já alargada e
+  -- reference_item_id/índice de idempotência já presentes, para não precisar
+  -- carregar 202609010001 inteira (que depende de market_account_members/
+  -- market_member_stores, fora do escopo destes testes de compras).
+  create table market_stock_movements(
+    id uuid primary key default gen_random_uuid(), market_account_id uuid not null, market_store_id uuid not null,
+    product_id uuid not null,
+    movement_type text not null check (movement_type in ('PURCHASE','SALE','TRANSFER_IN','TRANSFER_OUT','ADJUSTMENT_IN','ADJUSTMENT_OUT','LOSS','INVENTORY')),
+    direction text not null check (direction in ('IN','OUT')), quantity numeric(18,4) not null check (quantity > 0),
+    unit_cost numeric(18,6) null check (unit_cost is null or unit_cost >= 0),
+    reference_type text null, reference_id uuid null, reference_item_id uuid null, notes text null,
+    occurred_at timestamptz not null default now(), created_by uuid null references auth.users(id) on delete set null,
+    created_at timestamptz not null default now()
+  );
+  create unique index ux_market_stock_movements_source_item on market_stock_movements
+    (market_account_id, movement_type, reference_type, reference_id, reference_item_id)
+    where reference_type is not null and reference_id is not null and reference_item_id is not null;
+  create view market_stock_balance as
+    select market_account_id, market_store_id, product_id,
+      sum(case when direction='IN' then quantity else -quantity end)::numeric(18,4) as quantity_on_hand,
+      max(occurred_at) as last_movement_at
+    from market_stock_movements group by market_account_id, market_store_id, product_id;
 `)
 const core=sqlFile('202608310001_create_market_multitenant_core.sql')
 await db.exec(core.slice(core.indexOf('create table if not exists public.market_purchases ('),core.indexOf('-- 6. IMPORTAÇÃO DE VENDAS')))
 await db.exec('alter table market_purchases enable row level security; alter table market_purchase_items enable row level security;')
-for (const name of ['202609040001_create_market_purchase_staging_foundation.sql','202609040002_import_market_purchase_staging.sql','202609040003_reimport_purchase_staging.sql','202609040004_purchase_reconciliation.sql','202609040005_purchase_reconciliation_accesys_scope.sql','202609070001_purchase_human_review.sql','202609070002_purchase_unit_conversion.sql','202609070003_fix_purchase_unit_conversion_resolution.sql','202609070004_purchase_ai_text_staging.sql']) await db.exec(sqlFile(name))
+for (const name of ['202609040001_create_market_purchase_staging_foundation.sql','202609040002_import_market_purchase_staging.sql','202609040003_reimport_purchase_staging.sql','202609040004_purchase_reconciliation.sql','202609040005_purchase_reconciliation_accesys_scope.sql','202609070001_purchase_human_review.sql','202609070002_purchase_unit_conversion.sql','202609070003_fix_purchase_unit_conversion_resolution.sql','202609070004_purchase_ai_text_staging.sql','202609070005_purchase_receiving.sql','202609070006_purchase_receiving_require_unit_cost.sql']) await db.exec(sqlFile(name))
 
 const query = async (sql,params=[]) => (await db.query(sql,params)).rows
 const values={supplier_product_code:'7892840825133',barcode_raw:'7892840825133',description_raw:'Produto',quantity:15,unit:'UN',unit_price:7.69,gross_amount:115.35,net_amount:115.35,discount_amount:0,freight_amount:0,other_amount:0}
@@ -49,6 +69,10 @@ const importDoc=async(ref,item=values,a=account,s=store) => (await query('select
 const getItem=async(id) => (await query('select * from market_purchase_items where market_purchase_id=$1',[id]))[0]
 const save=async(item,v,confirm=false,a=account) => query('select market_save_purchase_item_review($1,$2,$3,$4,$5)',[a,item.id,v,item.updated_at,confirm])
 const saveConversion=async(item,factor,reuse=false,a=account) => query('select market_save_purchase_item_conversion($1,$2,$3,$4,$5)',[a,item.id,factor,item.updated_at,reuse])
+const receive=async(purchaseId,a=account) => (await query('select market_receive_purchase_items($1,$2) as result',[a,purchaseId]))[0].result
+const deleteNote=async(purchaseId,a=account) => query('select market_delete_purchase_staging($1,$2)',[a,purchaseId])
+const getPurchase=async(id) => (await query('select * from market_purchases where id=$1',[id]))[0]
+const itemsOf=async(purchaseId) => query('select * from market_purchase_items where market_purchase_id=$1 order by line_number',[purchaseId])
 let purchase, item
 test('PDF persistido: EAN automático preserva original e não confere nem recebe',async()=>{
   purchase=await importDoc('pdf:test:1'); item=await getItem(purchase)
@@ -271,8 +295,8 @@ test('desfazer a reconciliação limpa a conversão; escrita REST direta na tabe
   await db.exec('reset role')
 })
 test('conversão não gera movimento nem altera saldo de estoque',async()=>{
-  assert.deepEqual(await query('select * from market_stock_movements'),[{id:1}])
-  assert.deepEqual(await query('select * from market_stock_balance'),[{id:1}])
+  assert.deepEqual(await query('select * from market_stock_movements'),[])
+  assert.deepEqual(await query('select * from market_stock_balance'),[])
 })
 test('RPC autenticada funciona, RLS não revela compras de outro tenant',async()=>{
   await db.exec('set role authenticated')
@@ -348,11 +372,163 @@ test('origem inválida é rejeitada explicitamente',async()=>{
   await assert.rejects(query('select market_import_pdf_purchase_staging($1,$2,$3,$4,$4,$5) as id',[account,store,'bad-source',doc,'texto_livre']),/PURCHASE_SOURCE_TYPE_INVALID/)
 })
 test('nenhuma conferência alterou ledger ou saldo',async()=>{
-  assert.deepEqual(await query('select * from market_stock_movements'),[{id:1}])
-  assert.deepEqual(await query('select * from market_stock_balance'),[{id:1}])
+  assert.deepEqual(await query('select * from market_stock_movements'),[])
+  assert.deepEqual(await query('select * from market_stock_balance'),[])
   assert.doesNotMatch(sqlFile('202609070001_purchase_human_review.sql'),/\b(insert\s+into|update|delete\s+from)\s+(public\.)?market_stock_(movements|balance)\b/i)
   assert.doesNotMatch(sqlFile('202609070002_purchase_unit_conversion.sql'),/\b(insert\s+into|update|delete\s+from)\s+(public\.)?market_stock_(movements|balance)\b/i)
   assert.doesNotMatch(sqlFile('202609070003_fix_purchase_unit_conversion_resolution.sql'),/\b(insert\s+into|update|delete\s+from)\s+(public\.)?market_stock_(movements|balance)\b/i)
   assert.doesNotMatch(sqlFile('202609070004_purchase_ai_text_staging.sql'),/\b(insert\s+into|update|delete\s+from)\s+(public\.)?market_stock_(movements|balance)\b/i)
+})
+
+let recvId
+test('monta compra RECV: 1 item pronto, 1 não conciliado, 1 não conferido, 1 com conversão pendente',async()=>{
+  const items=[
+    {supplier_product_code:'recv-1',barcode_raw:null,description_raw:'Pronto para receber',quantity:2,unit:'UN',unit_price:10,gross_amount:20,net_amount:20,discount_amount:0,freight_amount:0,other_amount:0},
+    {supplier_product_code:'recv-2',barcode_raw:null,description_raw:'Não conciliado',quantity:1,unit:'UN',unit_price:20,gross_amount:20,net_amount:20,discount_amount:0,freight_amount:0,other_amount:0},
+    {supplier_product_code:'recv-3',barcode_raw:null,description_raw:'Não conferido',quantity:1,unit:'UN',unit_price:20,gross_amount:20,net_amount:20,discount_amount:0,freight_amount:0,other_amount:0},
+    {supplier_product_code:'recv-4',barcode_raw:null,description_raw:'Conversão pendente',quantity:1,unit:'CX',unit_price:167.4,gross_amount:167.4,net_amount:167.4,discount_amount:0,freight_amount:0,other_amount:0},
+  ]
+  const total=items.reduce((sum,i)=>sum+i.gross_amount,0)
+  const doc={header:{supplierName:'Fornecedor RECV',supplierCnpj:'32193036000125',documentNumber:'RECV-1',series:'1',issueDate:'01/09/2026',productsTotal:total,invoiceTotal:total},items}
+  recvId=(await query('select market_import_pdf_purchase_staging($1,$2,$3,$4,$4) as id',[account,store,'pdf:recv:1',doc]))[0].id
+  let rows=await itemsOf(recvId)
+  // recv-1: concilia com `product` (UN, mesma unidade do documento -> fator 1 automático) e confere
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,false)',[account,rows[0].id,product])
+  rows=await itemsOf(recvId)
+  await save(rows[0],items[0],true)
+  // recv-2: fica pendente de conciliação (não tocado)
+  // recv-3: concilia (com `product`, o único "vigente" após o teste de catálogo Accesys) mas NÃO confere
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,false)',[account,rows[2].id,product])
+  // recv-4: concilia com `product` (UN), mas documento está em CX -> conversão fica pendente; não confere
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,false)',[account,rows[3].id,product])
+  rows=await itemsOf(recvId)
+  assert.equal(rows[0].stock_entry_status,'pending'); assert.ok(rows[0].reviewed_at) // pronto, ainda não recebido
+  assert.equal(rows[1].reconciliation_status,'pending')
+  assert.equal(rows[2].reconciliation_status,'matched_manual'); assert.equal(rows[2].reviewed_at,null)
+  assert.equal(rows[3].conversion_factor,null); assert.equal(rows[3].stock_unit,'UN') // unidade já conhecida (produto), só o fator fica pendente
+})
+test('1./2./3./4. só o item pronto entra; não conciliado, não conferido e conversão pendente ficam de fora',async()=>{
+  const result=await receive(recvId)
+  assert.equal(result.itemsReceivedNow,1); assert.equal(result.itemsTotal,4); assert.equal(result.itemsReceivedTotal,1)
+  assert.equal(result.purchaseStatus,'receiving') // 8./9./10.: 0 < recebidos < total
+  const rows=await itemsOf(recvId)
+  assert.equal(rows[0].stock_entry_status,'received'); assert.ok(rows[0].received_at); assert.equal(rows[0].received_by,actor)
+  assert.equal(rows[1].stock_entry_status,'pending')
+  assert.equal(rows[2].stock_entry_status,'pending')
+  assert.equal(rows[3].stock_entry_status,'pending')
+  const purchaseRow=await getPurchase(recvId)
+  assert.equal(purchaseRow.status,'receiving')
+})
+test('5./19. item já recebido não entra de novo; retry sem itens novos não duplica movimento',async()=>{
+  await assert.rejects(receive(recvId),/PURCHASE_RECEIVE_NO_READY_ITEMS/)
+  const movements=await query('select * from market_stock_movements where reference_id=$1',[recvId])
+  assert.equal(movements.length,1)
+})
+test('6./27. item recebido é imutável: nenhuma RPC de edição/conciliação/conversão o altera',async()=>{
+  const received=(await itemsOf(recvId))[0]
+  const sameValues={supplier_product_code:'recv-1',barcode_raw:null,description_raw:'tentativa de editar',quantity:2,unit:'UN',unit_price:10,gross_amount:20,net_amount:20,discount_amount:0,freight_amount:0,other_amount:0}
+  await assert.rejects(save(received,sameValues),/RECONCILE_STOCK_ALREADY_ADVANCED/)
+  await assert.rejects(query('select market_confirm_purchase_item_reconciliation($1,$2,$3,false)',[account,received.id,product2]),/RECONCILE_STOCK_ALREADY_ADVANCED/)
+  await assert.rejects(query('select market_undo_purchase_item_reconciliation($1,$2)',[account,received.id]),/RECONCILE_STOCK_ALREADY_ADVANCED/)
+  await assert.rejects(saveConversion(received,2),/RECONCILE_STOCK_ALREADY_ADVANCED/)
+})
+test('16./17./18. custo unitário, custo total e referências à compra/item preservados no movimento',async()=>{
+  const movement=(await query('select * from market_stock_movements where reference_id=$1',[recvId]))[0]
+  const item=(await itemsOf(recvId))[0]
+  assert.equal(Number(movement.quantity),Number(item.stock_quantity))
+  assert.equal(Number(movement.unit_cost),Number(item.stock_unit_cost))
+  assert.equal(Number(movement.quantity)*Number(movement.unit_cost)>0,true)
+  assert.equal(movement.movement_type,'PURCHASE'); assert.equal(movement.direction,'IN')
+  assert.equal(movement.reference_type,'PURCHASE'); assert.equal(movement.reference_id,recvId); assert.equal(movement.reference_item_id,item.id)
+  assert.equal(movement.market_store_id,store); assert.equal(movement.product_id,product)
+  const balance=(await query('select * from market_stock_balance where market_account_id=$1 and market_store_id=$2 and product_id=$3',[account,store,product]))[0]
+  assert.equal(Number(balance.quantity_on_hand),Number(item.stock_quantity))
+})
+test('caso real Norac: net_amount ausente bloqueia o recebimento mesmo com conversão resolvida e item conferido',async()=>{
+  const noracValues={...values,supplier_product_code:'norac-1',barcode_raw:null,net_amount:null}
+  const id=await importDoc('pdf:norac-cost:1',noracValues)
+  let row=await getItem(id)
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,false)',[account,row.id,product])
+  row=await getItem(id)
+  await save(row,noracValues,true)
+  row=await getItem(id)
+  assert.ok(row.reviewed_at) // conferido normalmente: net_amount não é exigido para conferir
+  assert.equal(Number(row.conversion_factor),1); assert.equal(row.stock_unit,'UN') // PT/UN→UN: conversão 1:1 resolvida
+  assert.equal(Number(row.stock_quantity),15) // não depende de net_amount
+  assert.equal(row.stock_unit_cost,null) // só falta o custo
+  await assert.rejects(receive(id),/PURCHASE_RECEIVE_NO_READY_ITEMS/)
+  // menor caminho já existente: operador informa o valor líquido em "Revisar dados" (mesmo campo de sempre) e reconfirma
+  row=await getItem(id)
+  await save(row,{...noracValues,net_amount:noracValues.gross_amount},true)
+  row=await getItem(id)
+  assert.ok(row.stock_unit_cost)
+  const result=await receive(id)
+  assert.equal(result.itemsReceivedNow,1)
+})
+test('7./11. resolvendo os itens restantes, a próxima entrada recebe o resto e conclui automaticamente',async()=>{
+  let rows=await itemsOf(recvId)
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,false)',[account,rows[1].id,product])
+  rows=await itemsOf(recvId)
+  await save(rows[1],{supplier_product_code:'recv-2',barcode_raw:null,description_raw:'Não conciliado',quantity:1,unit:'UN',unit_price:20,gross_amount:20,net_amount:20,discount_amount:0,freight_amount:0,other_amount:0},true)
+  rows=await itemsOf(recvId)
+  await save(rows[2],{supplier_product_code:'recv-3',barcode_raw:null,description_raw:'Não conferido',quantity:1,unit:'UN',unit_price:20,gross_amount:20,net_amount:20,discount_amount:0,freight_amount:0,other_amount:0},true)
+  rows=await itemsOf(recvId)
+  await saveConversion(rows[3],6)
+  rows=await itemsOf(recvId)
+  await save(rows[3],{supplier_product_code:'recv-4',barcode_raw:null,description_raw:'Conversão pendente',quantity:1,unit:'CX',unit_price:167.4,gross_amount:167.4,net_amount:167.4,discount_amount:0,freight_amount:0,other_amount:0},true)
+
+  const result=await receive(recvId)
+  assert.equal(result.itemsReceivedNow,3); assert.equal(result.itemsReceivedTotal,4); assert.equal(result.itemsTotal,4)
+  assert.equal(result.purchaseStatus,'completed')
+  const purchaseRow=await getPurchase(recvId)
+  assert.equal(purchaseRow.status,'completed'); assert.ok(purchaseRow.received_at)
+  const movements=await query('select * from market_stock_movements where reference_id=$1',[recvId])
+  assert.equal(movements.length,4) // nenhuma linha duplicada (1 da entrada anterior + 3 novas)
+  assert.equal(new Set(movements.map((m)=>m.reference_item_id)).size,4) // uma entrada por item, nunca duas para a mesma linha
+})
+test('após concluída, a compra continua bloqueada para qualquer edição',async()=>{
+  const rows=await itemsOf(recvId)
+  await assert.rejects(saveConversion(rows[0],9),/PURCHASE_REVIEW_LOCKED/)
+  await assert.rejects(receive(recvId),/PURCHASE_REVIEW_LOCKED/)
+})
+test('22. exclusão de nota intacta funciona (nenhum item tocado)',async()=>{
+  const id=await importDoc('pdf:delete:untouched',{...values,supplier_product_code:'del-0',barcode_raw:null})
+  await deleteNote(id)
+  assert.equal((await query('select * from market_purchases where id=$1',[id])).length,0)
+  assert.equal((await query('select * from market_purchase_items where market_purchase_id=$1',[id])).length,0)
+})
+test('23. exclusão é bloqueada depois de conciliar um item',async()=>{
+  const id=await importDoc('pdf:delete:reconciled',{...values,supplier_product_code:'del-1',barcode_raw:null})
+  const row=await getItem(id)
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,false)',[account,row.id,product])
+  await assert.rejects(deleteNote(id),/PURCHASE_DELETE_NOT_ALLOWED/)
+  assert.equal((await query('select * from market_purchases where id=$1',[id])).length,1)
+})
+test('24. exclusão é bloqueada depois de conferir um item',async()=>{
+  const id=await importDoc('pdf:delete:reviewed',{...values,supplier_product_code:'del-2',barcode_raw:null})
+  let row=await getItem(id)
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,false)',[account,row.id,product])
+  row=await getItem(id)
+  await save(row,{...values,supplier_product_code:'del-2',barcode_raw:null},true)
+  await assert.rejects(deleteNote(id),/PURCHASE_DELETE_NOT_ALLOWED/)
+})
+test('25./26. exclusão é bloqueada depois de receber; mapping global salvo não é apagado',async()=>{
+  const id=await importDoc('pdf:delete:received',{...values,supplier_product_code:'del-3',barcode_raw:null})
+  let row=await getItem(id)
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,true)',[account,row.id,product])
+  row=await getItem(id)
+  await save(row,{...values,supplier_product_code:'del-3',barcode_raw:null},true)
+  await receive(id)
+  const mappingCountBefore=(await query('select count(*)::int as n from market_purchase_product_mappings where supplier_product_code=$1',['del-3']))[0].n
+  assert.equal(mappingCountBefore,1)
+  await assert.rejects(deleteNote(id),/PURCHASE_DELETE_NOT_ALLOWED/)
+  const mappingCountAfter=(await query('select count(*)::int as n from market_purchase_product_mappings where supplier_product_code=$1',['del-3']))[0].n
+  assert.equal(mappingCountAfter,1)
+})
+test('exclusão nunca movimenta estoque; contagem final do ledger bate com o que foi efetivamente recebido',async()=>{
+  assert.doesNotMatch(sqlFile('202609070005_purchase_receiving.sql'),/\bdelete\s+from\s+(public\.)?market_stock_movements\b/i)
+  assert.doesNotMatch(sqlFile('202609070006_purchase_receiving_require_unit_cost.sql'),/\bdelete\s+from\s+(public\.)?market_stock_movements\b/i)
+  const total=(await query('select count(*)::int as n from market_stock_movements'))[0].n
+  assert.equal(total,6) // 4 itens da compra RECV + 1 de 'pdf:norac-cost:1' + 1 de 'pdf:delete:received' (del-3); nenhuma tentativa de exclusão gerou movimento
   await db.close()
 })

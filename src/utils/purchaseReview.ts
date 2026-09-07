@@ -13,6 +13,44 @@ export function itemReviewValues(item: MarketPurchaseItem): PurchaseReviewValues
 
 export const canReviewPurchaseItem = (item: MarketPurchaseItem) => item.stockEntryStatus === 'pending'
 
+const RECONCILED_STATUSES = new Set(['matched_auto', 'matched_manual', 'mapped'])
+export const isPurchaseItemReconciled = (item: Pick<MarketPurchaseItem, 'reconciliationStatus'>) =>
+  RECONCILED_STATUSES.has(item.reconciliationStatus)
+
+// Espelha o critério de prontidão para recebimento já validado no banco
+// (market_receive_purchase_items): conciliado + conversão resolvida + custo
+// unitário de estoque resolvido + conferido + ainda não recebido. Não geramos
+// entrada de estoque sem custo de aquisição — stock_unit_cost pode ficar null
+// mesmo com a conversão resolvida quando o documento não trouxe net_amount
+// (comum no Texto IA, que não promove gross_amount a net_amount sozinho). Só
+// UX (rótulo do botão, números da confirmação) — a RPC sempre revalida tudo
+// de novo, inclusive se o produto continua ativo/vigente no Accesys.
+export function isPurchaseItemReadyToReceive(item: MarketPurchaseItem): boolean {
+  return item.stockEntryStatus === 'pending'
+    && item.marketProductId !== null
+    && isPurchaseItemReconciled(item)
+    && item.conversionFactor !== null
+    && item.stockUnit !== null
+    && item.stockUnitCost !== null
+    && isHumanReviewed(item)
+}
+
+// "Intocado": nenhuma conciliação, conferência ou recebimento aconteceu ainda
+// — mesma condição que market_delete_purchase_staging exige antes de excluir
+// a nota. Só UX; a RPC revalida o estado real de cada item.
+export function isPurchaseItemUntouched(item: MarketPurchaseItem): boolean {
+  return item.reconciliationStatus === 'pending' && !isHumanReviewed(item) && item.stockEntryStatus === 'pending'
+}
+
+// "Usar total da linha como valor líquido" (PurchaseReviewFields): sugestão
+// discreta e explícita, nunca fallback automático — só aparece quando
+// net_amount ainda não foi informado e há um total bruto para sugerir. Nunca
+// sobrescreve um net_amount já existente. Preencher não confere nem salva
+// sozinho: o operador ainda revisa, salva e reconfirma a conferência.
+export function shouldSuggestNetAmountFromGross(values: Pick<PurchaseReviewValues, 'net_amount' | 'gross_amount'>): boolean {
+  return values.net_amount === null && values.gross_amount !== null
+}
+
 // Conversão de embalagem->estoque: dado adicional sobre o item, nunca sobre o
 // documento. Só é exigível depois que o produto foi conciliado (antes disso
 // não há unidade de estoque para comparar). Saber o fator não é conferir o

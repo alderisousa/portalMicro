@@ -1,16 +1,16 @@
-import { ArrowLeft, ChevronDown, FileKey2, Link2, QrCode, RefreshCw } from 'lucide-react'
+import { ArrowLeft, ChevronDown, FileKey2, History, Link2, PackageCheck, QrCode, RefreshCw, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { PurchaseItemReconciliationDialog } from '../components/PurchaseItemReconciliationDialog'
 import { PurchaseItemReviewDialog } from '../components/PurchaseItemReviewDialog'
-import { canReviewPurchaseItem, isHumanReviewed } from '../utils/purchaseReview'
+import { canReviewPurchaseItem, isHumanReviewed, isPurchaseItemReadyToReceive, isPurchaseItemUntouched } from '../utils/purchaseReview'
 import { PurchaseAiTextCapture } from '../components/PurchaseAiTextCapture'
 import { PurchasePdfCapture } from '../components/PurchasePdfCapture'
 import { PurchasePhotoCapture } from '../components/PurchasePhotoCapture'
 import { QrCodeScanner } from '../components/QrCodeScanner'
 import {
   importMarketPurchase, isPurchaseReimportEligible, listMarketPurchaseItems,
-  listMarketPurchaseSummaries, MarketPurchaseImportError, completePurchaseReview,
+  listMarketPurchaseSummaries, MarketPurchaseImportError, receivePurchaseReadyItems, deleteImportedPurchase,
 } from '../services/marketPurchases'
 import {
   listMarketProductsByIds, reprocessPurchasePendingItems, undoPurchaseItemReconciliation,
@@ -27,13 +27,22 @@ interface Props { accountId: string; warehouses: MarketStore[]; canImport: boole
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
 const quantityFormat = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 })
 const date = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' })
+const dateTimeFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
 const formatMoney = (value: number | null) => (value === null ? '-' : currency.format(value))
 const formatStockEntry = (item: MarketPurchaseItem) =>
   item.stockQuantity === null || item.stockUnit === null ? 'Aguardando conversão' : `${quantityFormat.format(item.stockQuantity)} ${item.stockUnit}`
-const formatStockUnitCost = (item: MarketPurchaseItem) =>
-  item.stockUnitCost === null || item.stockUnit === null ? 'Aguardando conversão' : `${formatMoney(item.stockUnitCost)} / ${item.stockUnit}`
+// stock_unit_cost pode ser null por dois motivos bem diferentes: conversão
+// ainda não resolvida (conversion_factor/stock_unit ausentes) ou conversão já
+// resolvida mas net_amount ausente no documento (comum no Texto IA, que não
+// promove gross_amount a net_amount automaticamente). Rótulos distintos para
+// não sugerir "conversão pendente" quando na verdade falta é o custo.
+const formatStockUnitCost = (item: MarketPurchaseItem) => {
+  if (item.conversionFactor === null || item.stockUnit === null) return 'Aguardando conversão'
+  if (item.stockUnitCost === null) return 'Custo não informado'
+  return `${formatMoney(item.stockUnitCost)} / ${item.stockUnit}`
+}
 
-const statusLabels: Record<string, string> = { imported: 'Importada', reconciling: 'Conciliando', pending: 'Pendente', ready: 'Pronta', receiving: 'Recebendo', completed: 'Concluída', cancelled: 'Cancelada', failed: 'Falhou' }
+const statusLabels: Record<string, string> = { imported: 'Importada', reconciling: 'Conciliando', pending: 'Pendente', ready: 'Pronta', receiving: 'Parcialmente recebida', completed: 'Concluída', cancelled: 'Cancelada', failed: 'Falhou' }
 
 const reconciliationLabels: Record<MarketPurchaseItemReconciliationStatus, string> = {
   pending: 'Pendente', matched_auto: 'Vinculado automaticamente', matched_manual: 'Vinculado manualmente',
@@ -46,6 +55,8 @@ const isReconciledStatus = (status: MarketPurchaseItemReconciliationStatus) =>
 interface ItemsState { loading: boolean; error: boolean; items: MarketPurchaseItem[]; products: Record<string, ReconciledProductSummary> }
 interface ReimportPrompt { request: MarketPurchaseImportRequest; invoiceNumber: string | null; supplierName: string | null }
 interface ReconcileTarget { purchaseId: string; item: MarketPurchaseItem }
+interface ReceivePrompt { purchaseId: string; storeName: string; readyCount: number; remainingCount: number; receivedSoFar: number; totalItems: number }
+interface DeletePrompt { purchaseId: string; invoiceNumber: string | null }
 
 export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Props) {
   const [purchases, setPurchases] = useState<MarketPurchaseListItem[]>([])
@@ -61,9 +72,13 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
   const [reimporting, setReimporting] = useState(false)
   const [reconcileTarget, setReconcileTarget] = useState<ReconcileTarget | null>(null)
   const [reviewTarget, setReviewTarget] = useState<ReconcileTarget | null>(null)
-  const [completingId, setCompletingId] = useState<string | null>(null)
   const [undoingItemId, setUndoingItemId] = useState<string | null>(null)
   const [reprocessingId, setReprocessingId] = useState<string | null>(null)
+  const [receivePrompt, setReceivePrompt] = useState<ReceivePrompt | null>(null)
+  const [receivingId, setReceivingId] = useState<string | null>(null)
+  const [deletePrompt, setDeletePrompt] = useState<DeletePrompt | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'compras' | 'historico'>('compras')
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerError, setScannerError] = useState<string | null>(null)
   // PoC (checkpoint 5D.1/5D.2.2): habilita so a UI de teste local de OCR (foto OU
@@ -107,14 +122,62 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
     if (!reviewTarget) return
     void loadItems(reviewTarget.purchaseId); void load(); setReviewTarget(null)
   }
-  const finishReview = async (purchaseId: string) => {
-    setCompletingId(purchaseId); setMessage(null)
-    try { await completePurchaseReview(accountId,purchaseId); await load(); setMessage({ error:false,text:'Conferência concluída. Pronta para futuro recebimento; estoque intocado.' }) }
-    catch (cause) { setMessage({ error:true,text:cause instanceof Error ? cause.message : 'Não foi possível concluir a conferência.' }) }
-    finally { setCompletingId(null) }
+  // "Dar entrada": único botão, sempre automático sobre todos os itens ainda
+  // não recebidos que já estejam conciliados + conversão resolvida +
+  // conferidos (isPurchaseItemReadyToReceive). Sem seleção manual de linha.
+  // A RPC revalida tudo de novo; a contagem usada aqui é só para a confirmação.
+  const confirmReceive = (purchase: MarketPurchaseListItem, items: MarketPurchaseItem[]) => {
+    const remaining = items.filter((item) => item.stockEntryStatus !== 'received')
+    const ready = remaining.filter(isPurchaseItemReadyToReceive)
+    if (!ready.length) return
+    const storeName = warehouses.find((store) => store.id === purchase.destinationStoreId)?.name ?? 'do galpão selecionado'
+    setReceivePrompt({
+      purchaseId: purchase.id, storeName, readyCount: ready.length, remainingCount: remaining.length,
+      receivedSoFar: items.length - remaining.length, totalItems: items.length,
+    })
   }
+  const handleReceive = async () => {
+    if (!receivePrompt) return
+    const { purchaseId } = receivePrompt
+    setReceivingId(purchaseId); setMessage(null)
+    try {
+      const result = await receivePurchaseReadyItems(accountId, purchaseId)
+      setReceivePrompt(null)
+      await loadItems(purchaseId); await load()
+      setMessage({
+        error: false,
+        text: result.itemsReceivedTotal === result.itemsTotal
+          ? `Entrada registrada: ${result.itemsReceivedNow} ${result.itemsReceivedNow === 1 ? 'item' : 'itens'} lançados no estoque. Compra concluída e movida para o Histórico.`
+          : `Entrada registrada: ${result.itemsReceivedNow} ${result.itemsReceivedNow === 1 ? 'item' : 'itens'} lançados agora. ${result.itemsReceivedTotal} recebidos, ${result.itemsTotal - result.itemsReceivedTotal} restantes.`,
+      })
+    } catch (cause) {
+      setReceivePrompt(null)
+      setMessage({ error: true, text: cause instanceof Error ? cause.message : 'Não foi possível dar entrada no estoque.' })
+      await loadItems(purchaseId); await load()
+    } finally { setReceivingId(null) }
+  }
+
+  const confirmDelete = (purchase: MarketPurchaseListItem) => setDeletePrompt({ purchaseId: purchase.id, invoiceNumber: purchase.invoiceNumber })
+  const handleDelete = async () => {
+    if (!deletePrompt) return
+    const { purchaseId } = deletePrompt
+    setDeletingId(purchaseId); setMessage(null)
+    try {
+      await deleteImportedPurchase(accountId, purchaseId)
+      setDeletePrompt(null)
+      setItemsState((prev) => { if (!(purchaseId in prev)) return prev; const next = { ...prev }; delete next[purchaseId]; return next })
+      setExpandedId((prev) => (prev === purchaseId ? null : prev))
+      await load()
+      setMessage({ error: false, text: 'Nota excluída.' })
+    } catch (cause) {
+      setDeletePrompt(null)
+      setMessage({ error: true, text: cause instanceof Error ? cause.message : 'Não foi possível excluir esta nota.' })
+      await loadItems(purchaseId); await load()
+    } finally { setDeletingId(null) }
+  }
+
   const itemActions = (purchase: MarketPurchaseListItem, item: MarketPurchaseItem) => {
-    if (!canImport || !canReviewPurchaseItem(item) || !['imported','reconciling','pending','ready'].includes(purchase.status)) return null
+    if (!canImport || !canReviewPurchaseItem(item) || !['imported','reconciling','pending','ready','receiving'].includes(purchase.status)) return null
     return <div className="market-purchase-items-toolbar">
       <button type="button" className="button button-small" onClick={() => setReviewTarget({ purchaseId:purchase.id,item })}>Revisar dados</button>
       <button type="button" className="button button-small button-outline" onClick={() => setReconcileTarget({ purchaseId:purchase.id,item })}>{item.marketProductId ? 'Trocar produto' : 'Conciliar produto'}</button>
@@ -299,10 +362,42 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
       onConfirm={() => void confirmReimport()}
     />}
 
+    {deletePrompt && <ConfirmDialog
+      title="Excluir esta nota importada?"
+      description={`Esta ação removerá a nota${deletePrompt.invoiceNumber ? ` ${deletePrompt.invoiceNumber}` : ''} e seus itens. A exclusão é permitida porque nenhum item desta compra foi conciliado, conferido ou recebido.`}
+      confirmLabel="Excluir nota"
+      processingLabel="Excluindo..."
+      processing={deletingId === deletePrompt.purchaseId}
+      confirmVariant="destructive"
+      onCancel={() => setDeletePrompt(null)}
+      onConfirm={() => void handleDelete()}
+    />}
+
+    {receivePrompt && <ConfirmDialog
+      title={receivePrompt.readyCount === receivePrompt.remainingCount ? 'Dar entrada no estoque?' : 'Dar entrada parcial no estoque?'}
+      description={receivePrompt.readyCount === receivePrompt.remainingCount
+        ? `${receivePrompt.readyCount} de ${receivePrompt.remainingCount} itens serão lançados no estoque do ${receivePrompt.storeName}. Após a entrada, esses itens ficarão bloqueados para alteração.`
+        : `${receivePrompt.readyCount} itens serão lançados agora no estoque do ${receivePrompt.storeName}. Depois desta operação: ${receivePrompt.receivedSoFar + receivePrompt.readyCount} recebidos, ${receivePrompt.totalItems - receivePrompt.receivedSoFar - receivePrompt.readyCount} restantes. Os itens recebidos ficarão bloqueados para alteração.`}
+      confirmLabel="Confirmar entrada"
+      processingLabel="Registrando entrada..."
+      processing={receivingId === receivePrompt.purchaseId}
+      confirmVariant="primary"
+      onCancel={() => setReceivePrompt(null)}
+      onConfirm={() => void handleReceive()}
+    />}
+
     <section className="market-dashboard-section">
-      <div className="market-section-heading"><div><span className="panel-kicker">EM CONFERÊNCIA</span><h2>Notas importadas</h2></div><button className="button button-small button-outline" onClick={() => void load()} disabled={loading}><RefreshCw size={15} /> Atualizar</button></div>
-      {loading ? <div className="admin-message">Carregando notas...</div> : !purchases.length ? <div className="admin-message">Nenhuma nota importada.</div> : <div className="market-purchase-list">
-        {purchases.map((purchase) => {
+      <div className="market-section-heading"><div><span className="panel-kicker">{activeTab === 'compras' ? 'EM CONFERÊNCIA' : 'HISTÓRICO'}</span><h2>{activeTab === 'compras' ? 'Notas importadas' : 'Compras concluídas'}</h2></div><button className="button button-small button-outline" onClick={() => void load()} disabled={loading}><RefreshCw size={15} /> Atualizar</button></div>
+      <div className="market-purchase-tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={activeTab === 'compras'} className={`market-purchase-tab${activeTab === 'compras' ? ' is-active' : ''}`} onClick={() => setActiveTab('compras')}>Compras</button>
+        <button type="button" role="tab" aria-selected={activeTab === 'historico'} className={`market-purchase-tab${activeTab === 'historico' ? ' is-active' : ''}`} onClick={() => setActiveTab('historico')}><History size={14} /> Histórico</button>
+      </div>
+      {(() => {
+        const visiblePurchases = purchases.filter((purchase) => (activeTab === 'historico') === (purchase.status === 'completed'))
+        return loading ? <div className="admin-message">Carregando notas...</div>
+          : !visiblePurchases.length ? <div className="admin-message">{activeTab === 'historico' ? 'Nenhuma compra concluída ainda.' : 'Nenhuma nota importada.'}</div>
+          : <div className="market-purchase-list">
+        {visiblePurchases.map((purchase) => {
           const expanded = expandedId === purchase.id
           const state = itemsState[purchase.id]
           return <article key={purchase.id} className={`market-purchase-card${expanded ? ' is-expanded' : ''}`}>
@@ -314,9 +409,9 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
               <dl className="market-purchase-card-stats">
                 <div><dt>Emissão</dt><dd>{purchase.issuedAt ? date.format(new Date(purchase.issuedAt)) : '-'}</dd></div>
                 <div><dt>Valor final</dt><dd>{purchase.totalAmount === null ? '-' : currency.format(purchase.totalAmount)}</dd></div>
-                <div><dt>Itens</dt><dd>{purchase.totalItems}</dd></div>
-                <div><dt>Conciliados</dt><dd>{purchase.reconciledItems} / {purchase.totalItems}</dd></div>
-                <div><dt>Pendentes</dt><dd>{purchase.pendingItems}</dd></div>
+                <div><dt>Itens da nota</dt><dd>{purchase.totalItems}</dd></div>
+                <div><dt>Recebidos</dt><dd>{purchase.receivedItems} / {purchase.totalItems}</dd></div>
+                <div><dt>Restantes</dt><dd>{purchase.totalItems - purchase.receivedItems}</dd></div>
                 <div><dt>Status</dt><dd><span className={`market-row-status ${purchase.status}`}>{statusLabels[purchase.status]}</span></dd></div>
               </dl>
               <span className="market-purchase-card-toggle">{expanded ? 'Ocultar itens' : 'Ver itens'} <ChevronDown size={16} /></span>
@@ -325,52 +420,86 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
               {!state || state.loading ? <p className="market-purchase-card-items-status">Carregando itens...</p>
                 : state.error ? <p className="market-purchase-card-items-status">Não foi possível carregar os itens desta nota. <button type="button" className="button button-small button-outline" onClick={() => void loadItems(purchase.id)}>Tentar de novo</button></p>
                 : !state.items.length ? <p className="market-purchase-card-items-status">Nenhum item encontrado.</p>
-                : <>
-                  {(() => {
+                : (() => {
+                    const activeStatuses = ['imported', 'reconciling', 'pending', 'ready', 'receiving']
                     const pendingCount = state.items.filter((item) => !isReconciledStatus(item.reconciliationStatus)).length
-                    return <div className="market-purchase-items-toolbar">
-                      <p>{pendingCount > 0 ? `${pendingCount} ${pendingCount === 1 ? 'item pendente' : 'itens pendentes'} de conciliação` : 'Todos os itens estão conciliados.'}</p>
-                      <button type="button" className="button button-small button-outline" disabled={!canImport || pendingCount === 0 || reprocessingId === purchase.id || !['imported','reconciling','pending','ready'].includes(purchase.status)} onClick={() => void handleReprocess(purchase.id)}>
-                        {reprocessingId === purchase.id ? 'Reprocessando...' : 'Reprocessar pendentes'}
-                      </button>
-                    </div>
-                  })()}
-                  <div className="market-purchase-items-toolbar">
-                    <p>{state.items.filter(isHumanReviewed).length} / {state.items.length} itens conferidos pelo operador. Match automático não é conferência.</p>
-                    {purchase.reviewedAt ? <strong>Conferência concluída · aguardando futuro recebimento</strong>
-                      : canImport && <button type="button" className="button" disabled={completingId===purchase.id || !state.items.every(isHumanReviewed)} onClick={() => void finishReview(purchase.id)}>Concluir conferência da compra</button>}
-                  </div>
-                  <div className="market-purchase-items-list">{state.items.map((item) => {
-                    const reconciled = isReconciledStatus(item.reconciliationStatus)
-                    const product = item.marketProductId ? state.products[item.marketProductId] : undefined
-                    const reviewed = isHumanReviewed(item)
-                    return <article key={item.id} className="market-purchase-item-row">
-                      <div className="market-purchase-item-row-summary">
-                        <span className="market-purchase-item-row-line">Linha {item.lineNumber}</span>
-                        <strong className="market-purchase-item-row-desc">{item.descriptionRaw || '-'}</strong>
-                        <span className="market-purchase-item-row-qty">{quantityFormat.format(item.quantity)} {item.unit || ''}</span>
-                        <span className={`market-row-status ${item.reconciliationStatus}`}>{reconciliationLabels[item.reconciliationStatus]}</span>
-                        <span className={`market-purchase-item-row-review${reviewed ? ' is-reviewed' : ''}`}>{reviewed ? 'Conferido pelo operador' : 'Não conferido'}</span>
+                    // Itens já recebidos saem do destaque principal (seção recolhida no
+                    // final) para que o operador enxergue primeiro o que ainda falta.
+                    const remainingItems = state.items.filter((item) => item.stockEntryStatus !== 'received')
+                    const receivedItemsList = state.items.filter((item) => item.stockEntryStatus === 'received')
+                    const readyItems = remainingItems.filter(isPurchaseItemReadyToReceive)
+                    const canDeleteNote = state.items.every(isPurchaseItemUntouched)
+                    return <>
+                      <div className="market-purchase-items-toolbar">
+                        <p>{pendingCount > 0 ? `${pendingCount} ${pendingCount === 1 ? 'item pendente' : 'itens pendentes'} de conciliação` : 'Todos os itens estão conciliados.'}</p>
+                        <button type="button" className="button button-small button-outline" disabled={!canImport || pendingCount === 0 || reprocessingId === purchase.id || !activeStatuses.includes(purchase.status)} onClick={() => void handleReprocess(purchase.id)}>
+                          {reprocessingId === purchase.id ? 'Reprocessando...' : 'Reprocessar pendentes'}
+                        </button>
                       </div>
-                      {reconciled && product && <div className="market-purchase-item-product">
-                        <strong>{product.name}</strong>
-                        <span>{product.sku ? `SKU ${product.sku}` : 'Sem SKU'}{item.reconciliationMethod ? ` · ${reconciliationMethodLabels[item.reconciliationMethod] ?? item.reconciliationMethod}` : ''}</span>
+                      <div className="market-purchase-items-toolbar">
+                        <p>{state.items.filter(isHumanReviewed).length} / {state.items.length} itens conferidos pelo operador. Match automático não é conferência.</p>
+                        {canImport && canDeleteNote && <button type="button" className="button button-small button-outline" onClick={() => confirmDelete(purchase)}><Trash2 size={14} /> Excluir nota</button>}
+                      </div>
+                      {remainingItems.length > 0 && <div className="market-purchase-items-list">{remainingItems.map((item) => {
+                        const reconciled = isReconciledStatus(item.reconciliationStatus)
+                        const product = item.marketProductId ? state.products[item.marketProductId] : undefined
+                        const reviewed = isHumanReviewed(item)
+                        return <article key={item.id} className="market-purchase-item-row">
+                          <div className="market-purchase-item-row-summary">
+                            <span className="market-purchase-item-row-line">Linha {item.lineNumber}</span>
+                            <strong className="market-purchase-item-row-desc">{item.descriptionRaw || '-'}</strong>
+                            <span className="market-purchase-item-row-qty">{quantityFormat.format(item.quantity)} {item.unit || ''}</span>
+                            <span className={`market-row-status ${item.reconciliationStatus}`}>{reconciliationLabels[item.reconciliationStatus]}</span>
+                            <span className={`market-purchase-item-row-review${reviewed ? ' is-reviewed' : ''}`}>{reviewed ? 'Conferido pelo operador' : 'Não conferido'}</span>
+                          </div>
+                          {reconciled && product && <div className="market-purchase-item-product">
+                            <strong>{product.name}</strong>
+                            <span>{product.sku ? `SKU ${product.sku}` : 'Sem SKU'}{item.reconciliationMethod ? ` · ${reconciliationMethodLabels[item.reconciliationMethod] ?? item.reconciliationMethod}` : ''}</span>
+                          </div>}
+                          <dl className="market-purchase-item-row-details">
+                            <div><dt>Código do fornecedor</dt><dd>{item.supplierProductCode || '-'}</dd></div>
+                            <div><dt>Valor unitário</dt><dd>{formatMoney(item.unitPrice)}</dd></div>
+                            <div><dt>Total da linha</dt><dd>{formatMoney(item.grossAmount)}</dd></div>
+                            <div><dt>Custo</dt><dd>Documento: {formatMoney(item.calculatedUnitCost)}/{item.unit || ''} · Estoque: {formatStockUnitCost(item)}</dd></div>
+                            {reconciled && <div><dt>Entrada prevista</dt><dd>{formatStockEntry(item)}</dd></div>}
+                          </dl>
+                          {itemActions(purchase, item)}
+                        </article>
+                      })}</div>}
+                      {canImport && readyItems.length > 0 && activeStatuses.includes(purchase.status) && <div className="market-purchase-items-toolbar">
+                        <p>{readyItems.length} de {remainingItems.length} {remainingItems.length === 1 ? 'item pronto' : 'itens prontos'} para entrada no estoque.</p>
+                        <button type="button" className="button" disabled={receivingId === purchase.id} onClick={() => confirmReceive(purchase, state.items)}>
+                          <PackageCheck size={16} /> {readyItems.length === remainingItems.length ? 'Dar entrada no estoque' : 'Dar entrada dos itens prontos'}
+                        </button>
                       </div>}
-                      <dl className="market-purchase-item-row-details">
-                        <div><dt>Código do fornecedor</dt><dd>{item.supplierProductCode || '-'}</dd></div>
-                        <div><dt>Valor unitário</dt><dd>{formatMoney(item.unitPrice)}</dd></div>
-                        <div><dt>Total da linha</dt><dd>{formatMoney(item.grossAmount)}</dd></div>
-                        <div><dt>Custo</dt><dd>Documento: {formatMoney(item.calculatedUnitCost)}/{item.unit || ''} · Estoque: {formatStockUnitCost(item)}</dd></div>
-                        {reconciled && <div><dt>Entrada prevista</dt><dd>{formatStockEntry(item)}</dd></div>}
-                      </dl>
-                      {itemActions(purchase,item)}
-                    </article>
-                  })}</div>
-                </>}
+                      {receivedItemsList.length > 0 && <details className="market-purchase-received-section">
+                        <summary>Recebidos no estoque ({receivedItemsList.length})</summary>
+                        <div className="market-purchase-items-list">{receivedItemsList.map((item) => {
+                          const product = item.marketProductId ? state.products[item.marketProductId] : undefined
+                          const totalCost = item.stockQuantity !== null && item.stockUnitCost !== null ? item.stockQuantity * item.stockUnitCost : null
+                          return <article key={item.id} className="market-purchase-item-row market-purchase-item-row-received">
+                            <div className="market-purchase-item-row-summary">
+                              <span className="market-purchase-item-row-line">Linha {item.lineNumber}</span>
+                              <strong className="market-purchase-item-row-desc">{item.descriptionRaw || '-'}</strong>
+                              <span className="market-purchase-item-row-review is-reviewed">Recebido</span>
+                            </div>
+                            {product && <div className="market-purchase-item-product"><strong>{product.name}</strong>{product.sku && <span>SKU {product.sku}</span>}</div>}
+                            <dl className="market-purchase-item-row-details">
+                              <div><dt>Quantidade recebida</dt><dd>{formatStockEntry(item)}</dd></div>
+                              <div><dt>Custo unitário</dt><dd>{item.stockUnitCost !== null ? formatMoney(item.stockUnitCost) : '-'}</dd></div>
+                              <div><dt>Custo total</dt><dd>{totalCost !== null ? formatMoney(totalCost) : '-'}</dd></div>
+                              <div><dt>Recebido em</dt><dd>{item.receivedAt ? dateTimeFormat.format(new Date(item.receivedAt)) : '-'}</dd></div>
+                            </dl>
+                          </article>
+                        })}</div>
+                      </details>}
+                    </>
+                  })()}
             </div>}
           </article>
         })}
-      </div>}
+      </div>
+      })()}
     </section>
 
     {reconcileTarget && <PurchaseItemReconciliationDialog

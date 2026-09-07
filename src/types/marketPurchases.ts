@@ -53,6 +53,8 @@ export interface MarketPurchaseItem {
   reconciliationMethod: string | null
   reconciliationNotes: string | null
   stockEntryStatus: MarketPurchaseItemStockEntryStatus
+  receivedAt: string | null
+  receivedBy: string | null
   createdAt: string
   updatedAt: string
 }
