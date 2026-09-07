@@ -21,6 +21,9 @@ export type MarketPurchaseItemReconciliationStatus =
 export type MarketPurchaseItemStockEntryStatus = 'pending' | 'ready' | 'received' | 'ignored' | 'blocked'
 
 export interface MarketPurchaseItem {
+  originalData: PurchaseReviewValues | null
+  reviewedAt: string | null
+  reviewedBy: string | null
   id: string
   marketAccountId: string
   marketPurchaseId: string
@@ -40,6 +43,10 @@ export interface MarketPurchaseItem {
   otherAmount: number
   netAmount: number | null
   calculatedUnitCost: number | null
+  conversionFactor: number | null
+  stockUnit: string | null
+  stockQuantity: number | null
+  stockUnitCost: number | null
   marketProductId: string | null
   reconciliationStatus: MarketPurchaseItemReconciliationStatus
   reconciliationConfidence: number | null
@@ -51,6 +58,8 @@ export interface MarketPurchaseItem {
 }
 
 export interface MarketPurchase {
+  reviewedAt: string | null
+  reviewedBy: string | null
   id: string
   marketAccountId: string
   destinationStoreId: string
@@ -72,6 +81,20 @@ export interface MarketPurchase {
   createdBy: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface PurchaseReviewValues {
+  supplier_product_code: string | null
+  barcode_raw: string | null
+  description_raw: string | null
+  quantity: number | null
+  unit: string | null
+  unit_price: number | null
+  gross_amount: number | null
+  net_amount: number | null
+  discount_amount: number
+  freight_amount: number
+  other_amount: number
 }
 
 export interface MarketPurchaseDetail extends MarketPurchase {
@@ -114,6 +137,6 @@ export interface MarketPurchaseImportResult {
 
 export interface MarketPurchaseImportDraft {
   purchase: Omit<MarketPurchase, 'id' | 'createdBy' | 'createdAt' | 'updatedAt'>
-  items: Array<Omit<MarketPurchaseItem, 'id' | 'marketPurchaseId' | 'createdAt' | 'updatedAt' | 'calculatedUnitCost'>>
+  items: Array<Omit<MarketPurchaseItem, 'id' | 'marketPurchaseId' | 'createdAt' | 'updatedAt' | 'calculatedUnitCost' | 'stockQuantity' | 'stockUnitCost'>>
   rawPayload?: unknown
 }

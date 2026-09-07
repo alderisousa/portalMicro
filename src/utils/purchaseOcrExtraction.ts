@@ -462,23 +462,8 @@ function findAnchorLineIndex(lines: OcrLine[], patterns: string[], fromIndex = 0
 
 type PdfColumnKey = 'code' | 'description' | 'unit' | 'quantity' | 'unitPrice' | 'lineTotal'
 
-// CORRECAO 5D.2.2.1 (2ª rodada, apos teste real com a NF AKIMERCADO.pdf): a
-// primeira tentativa desta sprint agrupava a linha de cabecalho por LACUNA
-// horizontal (gap) antes de classificar. Colunas fiscais de uma DANFE real (NCM/
-// CST/CFOP/BC ICMS/Vlr ICMS/Vlr IPI/%ICMS/%IPI) sao ESTREITAS e ficam proximas
-// umas das outras — um limiar de lacuna genérico o bastante para separar textos
-// livres (nome de fornecedor, etc.) acaba FUNDINDO varias colunas fiscais
-// vizinhas em um so cluster, undercounting fronteiras e deixando CFOP/percentual
-// vazarem para quantidade/valor unitario (o mesmo sintoma do bug original, so que
-// por uma causa diferente da hipotese inicial).
-//
-// Correcao definitiva: NAO depender de nenhuma distancia/lacuna para a linha de
-// cabecalho. Percorre palavra a palavra (ja ordenadas por X); em cada posicao
-// tenta casar 1 ou 2 palavras contra os rotulos conhecidos (uteis OU fiscais/
-// ignorados); se casar, essas 1-2 palavras viram UMA fronteira; se NAO casar,
-// a palavra sozinha ainda vira sua PROPRIA fronteira (papel desconhecido). Ou
-// seja: toda palavra do cabecalho sempre gera alguma fronteira — nunca mais fica
-// invisivel e nunca funde com a vizinha so por estarem proximas.
+// R?tulos compostos s?o uma ?nica coluna. Colunas fiscais e desconhecidas
+// mant?m fronteiras pr?prias; complementos do r?tulo n?o criam c?lulas.
 type PdfColumnRole = PdfColumnKey | 'ignored'
 
 // Rotulos ignorados DE PROPOSITO (colunas fiscais que nao usamos, mas que
@@ -492,7 +477,7 @@ const IGNORED_COLUMN_PATTERNS: RegExp[] = [
 const ROLE_COLUMN_PATTERNS: Array<{ role: PdfColumnKey; patterns: RegExp[] }> = [
   { role: 'code', patterns: [/^C[OÓ]D/] },
   { role: 'description', patterns: [/^DESCRI/, /^PRODUTO/] },
-  { role: 'unit', patterns: [/^UN\.?$/, /^UNID/] },
+  { role: 'unit', patterns: [/^UN\.?$/, /^UNID/, /^MED$/] },
   { role: 'quantity', patterns: [/^QTDE?\.?$/, /^QUANT/] },
   { role: 'unitPrice', patterns: [/^V\.?L?R?\.?\s*UNIT/, /^VALOR\s*UNIT/] },
   { role: 'lineTotal', patterns: [/^V\.?L?R?\.?\s*TOTAL/, /^VALOR\s*TOTAL/] },
@@ -507,7 +492,7 @@ function matchHeaderLabelAt(words: OcrWord[], index: number): { role: PdfColumnR
   }
   if (IGNORED_COLUMN_PATTERNS.some((pattern) => pattern.test(single))) return { role: 'ignored', span: 1 }
 
-  if (index + 1 < words.length) {
+  if (index + 1 < words.length && /^(V\.?L?R?\.?|VALOR|BC|%)$/.test(single)) {
     const pair = normalize(`${words[index].text} ${words[index + 1].text}`)
     for (const def of ROLE_COLUMN_PATTERNS) {
       if (def.patterns.some((pattern) => pattern.test(pair))) return { role: def.role, span: 2 }
@@ -519,10 +504,7 @@ function matchHeaderLabelAt(words: OcrWord[], index: number): { role: PdfColumnR
 
 interface HeaderColumn { role: PdfColumnRole | null; x0: number; x1: number }
 
-// So considera a linha um cabecalho de tabela quando reconhece pelo menos 3 dos
-// papeis que realmente usamos (code/description/unit/quantity/unitPrice/
-// lineTotal). As fronteiras cobrem TODAS as palavras da linha (mapeadas,
-// ignoradas ou desconhecidas) — nenhuma fica de fora.
+// Exige descri??o, quantidade e pre?o/total para reconhecer uma tabela.
 function detectHeaderColumns(line: OcrLine): HeaderColumn[] | null {
   const words = line.words
   const raw: Array<{ role: PdfColumnRole | null; x0: number }> = []
@@ -530,18 +512,24 @@ function detectHeaderColumns(line: OcrLine): HeaderColumn[] | null {
   while (index < words.length) {
     const match = matchHeaderLabelAt(words, index)
     if (match) { raw.push({ role: match.role, x0: words[index].bbox.x0 }); index += match.span }
-    else { raw.push({ role: null, x0: words[index].bbox.x0 }); index += 1 }
+    else {
+      // Complementos como "/ Serviço" pertencem ao rótulo anterior.
+      if (!/^(\/|SERVICO|SERVICOS|DO|DE|PRODUTO|PRODUTOS)$/.test(normalize(words[index].text))) raw.push({ role: 'ignored', x0: words[index].bbox.x0 })
+      index += 1
+    }
   }
   if (raw.length < 3) return null
 
-  const usableRoleCount = raw.filter((column) => column.role && column.role !== 'ignored').length
-  if (usableRoleCount < 3) return null
+  const roles = new Set(raw.map((column) => column.role))
+  if (!roles.has('description') || !roles.has('quantity') || (!roles.has('unitPrice') && !roles.has('lineTotal'))) return null
 
   // `raw` ja esta em ordem crescente de X (mesma ordem de line.words).
   return raw.map((column, i) => ({
     role: column.role,
-    x0: i === 0 ? -Infinity : (raw[i - 1].x0 + column.x0) / 2,
-    x1: i === raw.length - 1 ? Infinity : (column.x0 + raw[i + 1].x0) / 2,
+    // Rótulos alinhados à esquerda delimitam o começo das células. A pequena
+    // margem relativa à fonte acomoda números alinhados à direita.
+    x0: i === 0 ? -Infinity : column.x0 - Math.max(1, line.bbox.y1 - line.bbox.y0) * 0.5,
+    x1: i === raw.length - 1 ? Infinity : raw[i + 1].x0 - Math.max(1, line.bbox.y1 - line.bbox.y0) * 0.5,
   }))
 }
 
@@ -583,7 +571,7 @@ function buildItemFromColumnWords(columns: Partial<Record<PdfColumnKey, OcrWord[
 
   const item: PurchaseOcrItem = {
     id: crypto.randomUUID(),
-    supplierCode: codeText && !isEan ? ocrField(codeText, avgConfidence(codeWords)) : pendingField(),
+    supplierCode: codeText ? ocrField(codeText, avgConfidence(codeWords)) : pendingField(),
     barcode: isEan ? ocrField(codeDigitsOnly, avgConfidence(codeWords)) : pendingField(),
     description: descriptionText ? ocrField(descriptionText, avgConfidence(columns.description ?? [])) : pendingField(),
     quantity: quantityValue !== null ? ocrField(quantityValue, avgConfidence(columns.quantity ?? [])) : pendingField(),
@@ -603,18 +591,19 @@ interface ProductsRegion { itemsStart: number; end: number; columns: HeaderColum
 // ancora de CALCULO DO ISSQN/DADOS ADICIONAIS encontrada depois do inicio, ou o
 // fim do documento (pagina) se nenhuma existir.
 function findProductsRegion(lines: OcrLine[]): ProductsRegion | null {
-  const start = findAnchorLineIndex(lines, PRODUCTS_ANCHOR_PATTERNS)
+  const headerIndex = lines.findIndex((line) => detectHeaderColumns(line) !== null)
+  const start = headerIndex !== -1 ? headerIndex : findAnchorLineIndex(lines, PRODUCTS_ANCHOR_PATTERNS)
   if (start === -1) return null
 
   let end = lines.length
-  for (const patterns of [ISSQN_ANCHOR_PATTERNS, DADOS_ADICIONAIS_ANCHOR_PATTERNS]) {
+  for (const patterns of [ISSQN_ANCHOR_PATTERNS, DADOS_ADICIONAIS_ANCHOR_PATTERNS, ['RECEBIMENTO', 'ASSINATURA', 'OBSERVACOES']]) {
     const found = findAnchorLineIndex(lines, patterns, start + 1)
     if (found !== -1 && found < end) end = found
   }
 
   let itemsStart = start + 1
   let columns: HeaderColumn[] | null = null
-  for (let index = start + 1; index < Math.min(start + 6, end); index += 1) {
+  for (let index = start; index < Math.min(start + 6, end); index += 1) {
     const detected = detectHeaderColumns(lines[index])
     if (detected) { columns = detected; itemsStart = index + 1; break }
   }
@@ -625,7 +614,7 @@ function findProductsRegion(lines: OcrLine[]): ProductsRegion | null {
 // no bloco do emitente (acima de "NATUREZA DA OPERACAO"/"DESTINATARIO"), evitando
 // pegar CNPJ do destinatario/protocolo. Numero/serie/data/chave/totais continuam
 // vindo do extrator generico (padroes ja distintivos o bastante por si so).
-function extractPdfHeaderFromLines(lines: OcrLine[]): PurchaseOcrHeader {
+function extractPdfHeaderFromLines(lines: OcrLine[], pdfItems: PdfTextItemLike[]): PurchaseOcrHeader {
   const naturezaIndex = findAnchorLineIndex(lines, NATUREZA_ANCHOR_PATTERNS)
   const destinatarioIndex = findAnchorLineIndex(lines, DESTINATARIO_ANCHOR_PATTERNS)
   const emitterEnd = naturezaIndex !== -1 ? naturezaIndex : destinatarioIndex !== -1 ? destinatarioIndex : Math.min(lines.length, 15)
@@ -650,20 +639,66 @@ function extractPdfHeaderFromLines(lines: OcrLine[]): PurchaseOcrHeader {
     }
   }
 
-  return { ...fullHeader, supplierCnpj: emitterHeader.supplierCnpj, supplierName }
+  const header = { ...fullHeader, supplierCnpj: emitterHeader.supplierCnpj, supplierName }
+  // O bloco fiscal do emitente inclui sua inscrição/CNPJ após Natureza.
+  const supplierLines = lines.slice(0, destinatarioIndex >= 0 ? destinatarioIndex : 15)
+  for (const line of supplierLines) {
+    if (/^(RECEB|PEDIDO|DATA|IDENTIFICACAO)/.test(normalize(line.text))) continue
+    if (/\b(LTDA|EIRELI|S\/?A)\b/.test(normalize(line.text))) {
+      const company = leadingWordCluster(line).text.split(CNPJ_RE)[0].replace(/[\s-]+$/, '')
+      if (company) { header.supplierName = ocrField(company, 100); break }
+    }
+  }
+  const cnpj = supplierLines.map((line) => line.text.match(/(?<!\d)\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}(?!\d)/)).find(Boolean)
+  if (cnpj) header.supplierCnpj = ocrField(cnpj[0], 100)
+  for (const item of pdfItems) {
+    const digits = item.str.replace(/\D/g, '')
+    if (digits.length === 44) { header.accessKey = ocrField(digits, 100); break }
+  }
+  // Alternativa pontuada exige ao menos um grupo, evitando truncar 15915 em 159.
+  const number = findFirstDigitGroup(lines, /N[ºO°.]\s*[:\-]?\s*(\d{1,3}(?:\.\d{3}){1,3}|\d{1,9})(?!\d)/i)
+  if (number) header.documentNumber = ocrField(number.value, 100)
+
+  // TextItems preservam as caixas de rótulos do PDF. Valores podem estar abaixo
+  // e alinhados à direita; a próxima caixa define o limite horizontal.
+  type TotalField = 'productsTotal' | 'discount' | 'freight' | 'otherExpenses' | 'invoiceTotal'
+  const labels: Array<[TotalField, RegExp]> = [
+    ['productsTotal', /^(VALOR )?(TOTAL DOS PRODUTOS|TOTAL PRODUTOS|VALOR DOS PRODUTOS)$|^V\. PRODUTOS$/],
+    ['discount', /^(VALOR DO |V\. )?DESCONTO$/],
+    ['freight', /^(VALOR DO |V\. )?FRETE$/],
+    ['otherExpenses', /^OUTRAS DESPESAS( ACESSORIAS)?$|^V\. OUTROS$/],
+    ['invoiceTotal', /^(VALOR )?TOTAL DA NOTA$|^TOTAL GERAL$|^V\. TOTAL$/],
+  ]
+  for (const [field, pattern] of labels) {
+    const tableY = lines.find((line) => detectHeaderColumns(line))?.bbox.y0
+    for (const label of pdfItems.filter((item) => pattern.test(normalize(item.str.trim())) && (tableY === undefined || -item.transform[5] < tableY || !/^V\. TOTAL$/.test(normalize(item.str.trim()))))) {
+      const peers = pdfItems.filter((item) => item.str.trim() && Math.abs(item.transform[5] - label.transform[5]) < 3 && item.transform[4] > label.transform[4])
+      const right = Math.min(...peers.map((item) => item.transform[4]))
+      const values = pdfItems.filter((item) => {
+        const dy = label.transform[5] - item.transform[5]
+        const center = item.transform[4] + item.width / 2
+        return dy > 3 && dy < Math.max(24, label.height * 4) && center >= label.transform[4] - label.height && center < right
+          && /^\d+(?:\.\d{3})*,\d{2,5}$/.test(item.str.replace(/^R\$\s*/, '').trim())
+      }).sort((a, b) => b.transform[5] - a.transform[5])
+      if (values.length) { header[field] = ocrField(Number(values[0].str.replace(/^R\$\s*/, '').trim().replace(/\./g, '').replace(',', '.')), 100); break }
+    }
+  }
+  return header
 }
 
 export function extractPurchaseOcrDocumentFromPdfTextItems(pdfItems: PdfTextItemLike[]): PurchaseOcrDocument {
   const lines = linesFromPdfTextItems(pdfItems)
   if (!lines.length) return { header: emptyHeader(), items: [] }
 
-  const header = extractPdfHeaderFromLines(lines)
+  const header = extractPdfHeaderFromLines(lines, pdfItems)
   const region = findProductsRegion(lines)
 
-  // Sem ancora de PRODUTOS/SERVICOS: nao ha como delimitar a tabela com
-  // seguranca — fallback total ao comportamento generico anterior (pode gerar
-  // mais ruido, mas evita nao extrair item nenhum de um documento atipico).
-  if (!region) return { header, items: extractItemsFromLines(lines, new Set()) }
+  // Sem tabela reconhecida, aceita apenas candidatos completos e coerentes.
+  const conservativeFallback = (candidates: OcrLine[], consumed = new Set<number>()) => extractItemsFromLines(
+    candidates, consumed,
+  ).filter((item) => item.description.value && item.quantity.value !== null
+    && item.unitPrice.value !== null && item.lineTotal.value !== null && item.lineStatus === 'ok')
+  if (!region) return { header, items: conservativeFallback(lines, extractHeaderFromLines(lines).consumedLineIndexes) }
 
   const regionLines = lines.slice(region.itemsStart, region.end)
 
@@ -671,7 +706,7 @@ export function extractPurchaseOcrDocumentFromPdfTextItems(pdfItems: PdfTextItem
   // a busca generica a regiao de produtos — nunca ao documento inteiro. Isso ja
   // resolve a falha mais grave observada (cabecalho/impostos/transporte/rodape
   // virando item).
-  if (!region.columns) return { header, items: extractItemsFromLines(regionLines, new Set()) }
+  if (!region.columns) return { header, items: conservativeFallback(regionLines) }
 
   const items: PurchaseOcrItem[] = []
   for (const line of regionLines) {
@@ -701,7 +736,10 @@ export function extractPurchaseOcrDocumentFromPdfTextItems(pdfItems: PdfTextItem
       continue
     }
 
-    items.push(buildItemFromColumnWords(columns, line.text))
+    const item = buildItemFromColumnWords(columns, line.text)
+    if (!hasLetterDescription || (!hasCode && !KNOWN_UNITS.has(item.unit.value ?? ''))) continue
+    if (item.quantity.value === null || (item.unitPrice.value === null && item.lineTotal.value === null)) continue
+    items.push(item)
   }
   return { header, items }
 }

@@ -2,7 +2,9 @@ import { FileText, Loader2, ScanText, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import type { PurchaseOcrDocument } from '../types/purchaseOcr'
 import { processPdfFile, type PdfPageSource } from '../utils/pdfDocumentProcessing'
+import { sha256Hex } from '../utils/textHash'
 import { PurchaseOcrReview } from './PurchaseOcrReview'
+import { PurchasePdfReview } from './PurchasePdfReview'
 
 // Entrada de PDF (Sprint 5D.2.1/5D.2.2) para o mesmo fluxo de OCR/revisao da
 // 5D.2. Cada pagina do PDF vira um cartao independente (numero, texto, resultado
@@ -36,7 +38,9 @@ const ORIGIN_LABEL: Record<PdfPageSource, string> = {
   pdf_scanned_ocr: 'PDF escaneado — OCR local',
 }
 
-export function PurchasePdfCapture() {
+export function PurchasePdfCapture({ accountId, destinationStoreId, onImported }: {
+  accountId: string; destinationStoreId: string; onImported: (id: string) => void;
+}) {
   const [pages, setPages] = useState<PdfPage[]>([])
   const [processingFileName, setProcessingFileName] = useState<string | null>(null)
   const [globalError, setGlobalError] = useState<string | null>(null)
@@ -54,16 +58,20 @@ export function PurchasePdfCapture() {
     setGlobalError(null)
     setProcessingFileName(file.name)
     try {
+      const fileHash = await sha256Hex(await file.arrayBuffer())
       await processPdfFile(
         file,
         (result) => {
-          setPages((prev) => [...prev, {
-            id: crypto.randomUUID(), pdfFileName: file.name, pageNumber: result.pageNumber, pageCount: result.pageCount,
+          setPages((prev) => {
+            const id = `pdf:${fileHash}:${result.pageNumber}`
+            if (prev.some((page) => page.id === id)) { if (result.previewUrl) URL.revokeObjectURL(result.previewUrl); return prev }
+            return [...prev, {
+            id, pdfFileName: file.name, pageNumber: result.pageNumber, pageCount: result.pageCount,
             status: 'done', error: null, source: result.source, rawText: result.rawText, document: result.document,
             previewUrl: result.previewUrl, ocrConfidence: result.ocrConfidence, elapsedMs: result.elapsedMs,
             pageWidthPt: result.pageWidthPt, pageHeightPt: result.pageHeightPt,
             renderedWidth: result.renderedWidth, renderedHeight: result.renderedHeight,
-          }])
+          }] })
         },
         (pageNumber, message) => {
           setPages((prev) => [...prev, {
@@ -125,7 +133,14 @@ export function PurchasePdfCapture() {
             </p>
             <pre className="market-ocr-poc-text">{page.rawText || '(nenhum texto encontrado)'}</pre>
           </details>
-          {page.document && page.source && <PurchaseOcrReview
+          {page.document && page.source === 'pdf_text' && <PurchasePdfReview
+            key={`pdf-review-${page.id}`} document={page.document} accountId={accountId}
+            destinationStoreId={destinationStoreId} reference={page.id} pageCount={page.pageCount}
+            // Só ao confirmar sucesso da persistência: remove esta carga temporária
+            // (arquivo/preview/interpretação/diagnóstico) daqui, e só então avisa o
+            // pai. Em caso de erro, PurchasePdfReview nunca chama isto — nada é limpo.
+            onImported={(id) => { removePage(page.id); onImported(id) }} />}
+          {page.document && page.source === 'pdf_scanned_ocr' && <PurchaseOcrReview
             key={`pdf-review-${page.id}`}
             document={page.document}
             origin={ORIGIN_LABEL[page.source]}

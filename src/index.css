@@ -688,28 +688,29 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-purchase-card.is-expanded .market-purchase-card-toggle svg { transform: rotate(180deg); }
 .market-purchase-card-items { padding: 0 20px 22px; border-top: 1px solid var(--line); }
 .market-purchase-card-items-status { display: flex; align-items: center; gap: 10px; padding: 18px 0; color: var(--muted); font-size: 13px; }
-.market-purchase-items-table-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
-.market-purchase-items-table { width: 100%; min-width: 1000px; border-collapse: collapse; }
-.market-purchase-items-table th, .market-purchase-items-table td { padding: 11px 12px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 12.5px; text-align: left; vertical-align: top; }
-.market-purchase-items-table th { background: #edf0eb; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
-.market-purchase-items-table td.is-numeric, .market-purchase-items-table th.is-numeric { text-align: right; font-variant-numeric: tabular-nums; }
-.market-purchase-items-table td.market-purchase-item-desc { min-width: 220px; white-space: normal; }
-.market-purchase-items-table tbody tr:last-child td { border-bottom: 0; }
 .market-purchase-item-product { display: grid; gap: 2px; margin-top: 4px; }
 .market-purchase-item-product strong { font-size: 12px; }
 .market-purchase-item-product span { color: var(--muted); font-size: 11px; }
 .market-purchase-items-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; }
 .market-purchase-items-toolbar p { margin: 0; color: var(--muted); font-size: 12px; }
-.market-purchase-items-cards { display: none; gap: 10px; margin-top: 16px; }
-.market-purchase-item-card { display: grid; gap: 10px; padding: 14px 15px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
-.market-purchase-item-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.market-purchase-item-card-line { color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
-.market-purchase-item-card-desc { font-size: 13.5px; }
-.market-purchase-item-card-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 14px; margin: 0; }
-.market-purchase-item-card-grid dt { margin-bottom: 2px; color: var(--muted); font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
-.market-purchase-item-card-grid dd { margin: 0; color: var(--ink); font-size: 13px; font-weight: 700; }
-.market-purchase-item-card-action { margin-top: 2px; }
-.market-purchase-item-card-action .button { width: 100%; }
+
+/* Listagem de itens da compra: linhas/cards responsivos em vez de tabela
+   larga — elimina rolagem horizontal em qualquer largura (desktop incluído).
+   Cada linha mostra um resumo compacto (descrição, quantidade/unidade,
+   conciliação, conferência) sempre visível, com o restante organizado num
+   grid que se adapta sozinho (repeat(auto-fit,...)): várias colunas quando
+   sobra espaço, uma coluna empilhada no celular, sem media query dedicada. */
+.market-purchase-items-list { display: grid; gap: 10px; margin-top: 16px; }
+.market-purchase-item-row { display: grid; gap: 10px; padding: 14px 15px; border: 1px solid var(--line); border-radius: 10px; background: #fff; min-width: 0; }
+.market-purchase-item-row-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.market-purchase-item-row-line { flex: none; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+.market-purchase-item-row-desc { flex: 1 1 220px; min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+.market-purchase-item-row-qty { flex: none; color: var(--ink); font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.market-purchase-item-row-review { flex: none; padding: 4px 9px; border-radius: 999px; background: #edf0eb; color: var(--muted); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.market-purchase-item-row-review.is-reviewed { background: var(--mint); color: var(--green); }
+.market-purchase-item-row-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 16px; margin: 0; padding-top: 10px; border-top: 1px dashed var(--line); }
+.market-purchase-item-row-details dt { margin-bottom: 2px; color: var(--muted); font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.market-purchase-item-row-details dd { margin: 0; color: var(--ink); font-size: 12.5px; font-weight: 700; overflow-wrap: anywhere; }
 
 .market-ocr-poc { display: grid; gap: 14px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 .market-ocr-poc-privacy { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-radius: 8px; background: var(--mint); color: var(--green); font-size: 12px; font-weight: 700; }
@@ -759,13 +760,31 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-ocr-pdf-preview img { display: block; width: 100%; max-width: 320px; border: 1px solid var(--line); border-radius: 8px; }
 .market-ocr-pdf-diagnostic-meta { margin: 0 0 8px; color: var(--muted); font-size: 11.5px; }
 
+.market-ai-text { display: grid; gap: 14px; }
+.market-ai-text h3 { margin: 0; font-size: 15px; }
+.market-ai-text-prompt-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.market-ai-text-copied { color: var(--green); font-size: 12.5px; font-weight: 700; }
+.market-ai-text-response { display: grid; gap: 8px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.market-ai-text-response h4 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 13px; }
+.market-ai-text-response label { color: var(--muted); font-size: 11.5px; font-weight: 700; }
+.market-ai-text-response textarea { width: 100%; min-height: 180px; padding: 12px; border: 1px solid #b9c7bc; border-radius: 8px; background: #fff; color: var(--ink); font: inherit; font-size: 12.5px; line-height: 1.5; resize: vertical; }
+
 .market-ocr-review { display: grid; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 2px solid var(--green); }
 .market-ocr-review-origin { display: inline-flex; align-self: start; padding: 5px 11px; border-radius: 999px; background: #e4ecf7; color: #2a5a94; font-size: 11px; font-weight: 700; }
 .market-ocr-review h3 { margin: 6px 0 2px; font-size: 14px; }
-.market-ocr-review-header-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 14px; }
+.market-ocr-review-header-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 14px; }
 .market-ocr-review-field { display: grid; gap: 5px; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
 .market-ocr-review-field span { display: flex; align-items: center; gap: 6px; }
 .market-ocr-review-field input { min-height: 40px; padding: 8px 10px; border: 1px solid #b9c7bc; border-radius: 6px; background: #fff; color: var(--ink); font: inherit; font-size: 13px; text-transform: none; letter-spacing: normal; }
+/* PurchaseReviewFields/PurchasePdfReview usam <label> soltos como filhos deste
+   grid (não a classe .market-ocr-review-field acima); sem isto o span/input/
+   small ficavam grudados no fluxo inline padrão do label. */
+.market-ocr-review-header-grid > label { display: grid; gap: 5px; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+.market-ocr-review-header-grid > label input { min-height: 40px; padding: 8px 10px; border: 1px solid #b9c7bc; border-radius: 6px; background: #fff; color: var(--ink); font: inherit; font-size: 13px; text-transform: none; letter-spacing: normal; }
+.market-ocr-review-field-wide { grid-column: 1 / -1; }
+.market-ocr-review-original { display: block; margin-top: 2px; color: var(--muted); font-size: 10.5px; font-weight: 400; text-transform: none; letter-spacing: normal; }
+.market-ocr-review-original.is-changed { display: inline-block; margin-top: 4px; padding: 2px 7px; border-radius: 4px; background: #fbe9e5; color: #9f3f2f; font-weight: 700; }
+.market-ocr-review-precision-hint { display: block; margin-top: 1px; color: var(--muted); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: normal; }
 .market-ocr-review-field-tag { padding: 2px 7px; border-radius: 999px; background: #edf0eb; color: var(--muted); font-size: 9px; font-weight: 700; text-transform: none; letter-spacing: 0; }
 .market-ocr-review-field-tag.is-ocr { background: var(--mint); color: var(--green); }
 .market-ocr-review-field-tag.is-user { background: #e4ecf7; color: #2a5a94; }
@@ -821,11 +840,29 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-ocr-review-payload p { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--green); font-size: 12.5px; font-weight: 700; }
 .market-ocr-review-payload pre { max-height: 280px; margin: 0; padding: 12px; overflow: auto; border-radius: 8px; background: #0f1a14; color: #d8f0e0; font-size: 11.5px; line-height: 1.5; }
 
+.market-purchase-item-summary-line { display: block; margin: 2px 0; color: var(--muted); font-size: 11.5px; font-weight: 400; text-transform: none; }
+.market-purchase-item-card summary { display: grid; gap: 4px; cursor: pointer; }
+
+.market-conversion-fields { display: grid; gap: 12px; padding: 14px 15px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.market-conversion-hint { margin: 0; color: var(--muted); font-size: 13px; }
+.market-conversion-hint-error { color: #9f3f2f; font-weight: 700; }
+.market-conversion-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 14px; margin: 0; }
+.market-conversion-stats dt { margin-bottom: 2px; color: var(--muted); font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+.market-conversion-stats dd { margin: 0; color: var(--ink); font-size: 13px; font-weight: 700; }
+.market-conversion-factor { display: grid; gap: 5px; font-size: 12.5px; font-weight: 700; color: var(--ink); }
+.market-conversion-factor input { min-height: 40px; padding: 8px 10px; border: 1px solid #b9c7bc; border-radius: 6px; background: #fff; color: var(--ink); font: inherit; font-size: 14px; max-width: 220px; }
+.market-checkbox-inline { display: flex; align-items: flex-start; gap: 9px; font-size: 12.5px; color: var(--ink); font-weight: 500; }
+.market-checkbox-inline input { width: 17px; min-height: 17px; margin-top: 2px; accent-color: var(--green); flex: none; }
+.market-reconcile-dialog-hint { margin: 4px 0 0; color: var(--muted); font-size: 11.5px; }
+.market-reconcile-dialog h3 { margin: 18px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+.market-reconcile-dialog h3:first-of-type { margin-top: 6px; }
+
 @media (max-width: 800px) {
   .market-ocr-review-header-grid { grid-template-columns: 1fr 1fr; }
   .market-ocr-review-items-table-wrap { display: none; }
   .market-ocr-review-items-cards { display: grid; }
   .market-ocr-review-summary dl { grid-template-columns: 1fr 1fr; }
+  .market-conversion-stats { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) {
   .market-ocr-review-header-grid { grid-template-columns: 1fr; }
@@ -1117,6 +1154,10 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .story-content p { margin: 0 0 20px; white-space: pre-line; }
 .story-content ul { margin: 0 0 20px; padding-left: 22px; }
 .story-content li { margin: 8px 0; }
+@media (max-width: 1024px) {
+	.market-purchase-items-toolbar { flex-direction: column; align-items: stretch; }
+	.market-purchase-items-toolbar .button { width: 100%; }
+}
 @media (max-width: 800px) {
 	.business-model-grid { grid-template-columns: 1fr; }
 	.admin-page { padding-top: 40px; padding-bottom: 70px; }
@@ -1180,10 +1221,6 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 	.market-purchase-card-header { flex-direction: column; align-items: flex-start; }
 	.market-purchase-card-stats { width: 100%; justify-content: space-between; gap: 14px; }
 	.market-purchase-card-toggle { align-self: flex-end; }
-	.market-purchase-items-toolbar { flex-direction: column; align-items: stretch; }
-	.market-purchase-items-toolbar .button { width: 100%; }
-	.market-purchase-items-table-wrap { display: none; }
-	.market-purchase-items-cards { display: grid; }
 	.market-reconcile-dialog { padding: 20px; }
 	.market-reconcile-dialog-body { grid-template-columns: 1fr; gap: 20px; }
 	.market-reconcile-search-row { flex-direction: column; align-items: stretch; }

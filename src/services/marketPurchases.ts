@@ -1,7 +1,7 @@
 import { supabase } from '../lib/supabase'
 import type {
   MarketPurchase, MarketPurchaseDetail, MarketPurchaseImportRequest, MarketPurchaseImportResult,
-  MarketPurchaseItem, MarketPurchaseListItem, MarketPurchaseProgress, MarketPurchaseStatus,
+  MarketPurchaseItem, MarketPurchaseListItem, MarketPurchaseProgress, MarketPurchaseStatus, PurchaseReviewValues,
 } from '../types/marketPurchases'
 
 // Espelha (do lado do cliente, só para UX) a mesma regra que market_reimport_purchase_staging
@@ -17,22 +17,94 @@ const purchaseColumns = `
   id, market_account_id, destination_store_id, supplier_name, supplier_document,
   invoice_number, invoice_series, invoice_key, issued_at, received_at, total_amount,
   products_amount, freight_amount, discount_amount, other_amount, status, source_type,
-  source_reference, created_by, created_at, updated_at
+  source_reference, created_by, created_at, updated_at, reviewed_at, reviewed_by
 `
 
 const purchaseItemColumns = `
   id, market_account_id, market_purchase_id, line_number, supplier_product_code,
   barcode_raw, barcode_normalized, description_raw, ncm, cfop, unit, quantity,
   unit_price, gross_amount, discount_amount, freight_amount, other_amount, net_amount,
-  calculated_unit_cost, market_product_id, reconciliation_status,
+  calculated_unit_cost, conversion_factor, stock_unit, stock_quantity, stock_unit_cost,
+  market_product_id, reconciliation_status,
   reconciliation_confidence, reconciliation_method, reconciliation_notes,
-  stock_entry_status, created_at, updated_at
+  stock_entry_status, created_at, updated_at, original_data, reviewed_at, reviewed_by
 `
 
 function camelizeRow<T>(row: Record<string, unknown>): T {
   return Object.fromEntries(
     Object.entries(row).map(([key, value]) => [key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()), value])
   ) as T
+}
+
+function reviewError(error: { message: string; code?: string }): Error {
+  const messages: Record<string, string> = {
+    PURCHASE_REVIEW_CONFLICT: 'O item mudou desde a abertura. Feche e atualize a compra antes de editar.',
+    PURCHASE_REVIEW_MATCH_REQUIRED: 'Concilie o produto antes de confirmar a conferência. Ao corrigir código/EAN, salve e concilie novamente.',
+    PURCHASE_REVIEW_MATH: 'Confira quantidade, valor unitário, total e despesas: os valores divergem.',
+    PURCHASE_REVIEW_TOTALS: 'A soma dos itens diverge do total de produtos do documento.',
+    PURCHASE_REVIEW_INCOMPLETE: 'Concilie e confira todos os itens antes de concluir a compra.',
+    PURCHASE_REVIEW_LOCKED: 'Esta compra não está disponível para edição.',
+    PURCHASE_ITEM_PRECISION: 'Use até 4 casas na quantidade, 5 no valor unitário e 2 nos totais e despesas.',
+    RECONCILE_PERMISSION_DENIED: 'Seu perfil não permite conferir esta compra.',
+    PURCHASE_DESTINATION_NOT_ALLOWED: 'Selecione um galpão ativo ao qual você tenha acesso.',
+    PURCHASE_ITEM_CONVERSION_REQUIRED: 'Informe a conversão para a unidade de estoque antes de confirmar a conferência.',
+    PURCHASE_ITEM_CONVERSION_INVALID: 'Informe um fator de conversão maior que zero, com até 6 casas decimais.',
+    RECONCILE_PRODUCT_REQUIRED: 'Concilie o produto antes de informar a conversão de embalagem.',
+    PURCHASE_DOCUMENT_INVALID: 'O documento interpretado está incompleto ou em formato inesperado.',
+    PURCHASE_ITEMS_INVALID: 'A lista de itens é inválida ou excede o limite permitido.',
+    PURCHASE_ITEM_INVALID: 'Um dos itens tem quantidade, descrição ou valor inválido. Revise antes de salvar.',
+    PURCHASE_ACCESS_KEY_INVALID: 'A chave de acesso informada não tem 44 dígitos.',
+    PURCHASE_ACCOUNT_NOT_AVAILABLE: 'Esta conta Market não está disponível para importar compras no momento.',
+    PURCHASE_SOURCE_TYPE_INVALID: 'Origem do documento não reconhecida.',
+  }
+  return new Error(error.code === 'PGRST202' || error.code === '42703'
+    ? 'A atualização de conferência precisa ser aplicada manualmente no banco antes de usar este recurso.'
+    : messages[error.message] ?? error.message)
+}
+
+export async function savePurchaseItemReview(accountId: string, item: MarketPurchaseItem, values: PurchaseReviewValues, confirm: boolean) {
+  const { error } = await supabase.rpc('market_save_purchase_item_review', {
+    p_market_account_id: accountId, p_purchase_item_id: item.id, p_values: values,
+    p_expected_updated_at: item.updatedAt, p_confirm: confirm,
+  })
+  if (error) throw reviewError(error)
+}
+
+export async function savePurchaseItemConversion(
+  accountId: string, item: MarketPurchaseItem, conversionFactor: number, saveForReuse: boolean
+) {
+  const { error } = await supabase.rpc('market_save_purchase_item_conversion', {
+    p_market_account_id: accountId, p_purchase_item_id: item.id, p_conversion_factor: conversionFactor,
+    p_expected_updated_at: item.updatedAt, p_save_for_reuse: saveForReuse,
+  })
+  if (error) throw reviewError(error)
+}
+
+export async function completePurchaseReview(accountId: string, purchaseId: string) {
+  const { error } = await supabase.rpc('market_complete_purchase_review', { p_market_account_id: accountId, p_purchase_id: purchaseId })
+  if (error) throw reviewError(error)
+}
+
+export async function importPdfPurchase(accountId: string, destinationStoreId: string, reference: string, document: unknown, original: unknown): Promise<string> {
+  const { data, error } = await supabase.rpc('market_import_pdf_purchase_staging', {
+    p_market_account_id: accountId, p_destination_store_id: destinationStoreId,
+    p_source_reference: reference, p_document: document, p_original: original,
+  })
+  if (error) throw reviewError(error)
+  return data as string
+}
+
+// Mesmo RPC de staging do PDF (market_import_pdf_purchase_staging), só muda
+// p_source_type: mesma conciliação/conversão/conferência depois, sem fluxo
+// paralelo. p_source_type omitido continua default 'pdf' — importPdfPurchase
+// acima não precisou mudar.
+export async function importAiTextPurchase(accountId: string, destinationStoreId: string, reference: string, document: unknown, original: unknown): Promise<string> {
+  const { data, error } = await supabase.rpc('market_import_pdf_purchase_staging', {
+    p_market_account_id: accountId, p_destination_store_id: destinationStoreId,
+    p_source_reference: reference, p_document: document, p_original: original, p_source_type: 'ai_text',
+  })
+  if (error) throw reviewError(error)
+  return data as string
 }
 
 export async function listMarketPurchases(accountId: string): Promise<MarketPurchase[]> {
@@ -81,6 +153,20 @@ export async function importMarketPurchase(input: MarketPurchaseImportRequest): 
     throw new MarketPurchaseImportError(payload?.error?.message ?? 'Não foi possível importar a NF-e.', payload?.error?.code)
   }
   return data as MarketPurchaseImportResult
+}
+
+// Leitura de UM item direto do banco (usada ao abrir o diálogo de conferência):
+// nunca confia num snapshot recebido por prop, que pode estar desatualizado
+// (ex.: card ainda não reaberto após conciliação/reprocessamento/backfill).
+export async function getMarketPurchaseItem(accountId: string, itemId: string): Promise<MarketPurchaseItem | null> {
+  const { data, error } = await supabase
+    .from('market_purchase_items')
+    .select(purchaseItemColumns)
+    .eq('market_account_id', accountId)
+    .eq('id', itemId)
+    .maybeSingle()
+  if (error) throw error
+  return data ? camelizeRow<MarketPurchaseItem>(data) : null
 }
 
 // Leitura sob demanda dos itens de uma compra (usada ao expandir um card na listagem).
