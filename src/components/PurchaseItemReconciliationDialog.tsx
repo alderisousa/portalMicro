@@ -43,7 +43,10 @@ export function PurchaseItemReconciliationDialog({ accountId, item, onCancel, on
   const [searchResults, setSearchResults] = useState<CatalogSearchResult[]>([])
   const [searching, setSearching] = useState(false)
   const [selected, setSelected] = useState<SelectedProduct | null>(null)
-  const [saveMapping, setSaveMapping] = useState(false)
+  // Marcado por padrão: o caso comum é reaproveitar o de/para nas próximas
+  // notas do mesmo fornecedor; o operador pode desmarcar quando não fizer
+  // sentido (ex.: código genérico/reaproveitado por mais de um produto).
+  const [saveMapping, setSaveMapping] = useState(true)
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [scannerOpen, setScannerOpen] = useState(false)

@@ -56,3 +56,15 @@ test('sucesso ao salvar o PDF remove só a carga daquela página (arquivo/previe
   assert.match(tryBlock, /onImported\(id\)/, 'onImported só deve ser chamado no caminho de sucesso')
   assert.doesNotMatch(catchBlock, /onImported/, 'onImported não pode ser chamado no caminho de erro')
 })
+
+test('checkbox "usar esta correspondência nas próximas notas" abre marcado por padrão', () => {
+  const dialog = src('components/PurchaseItemReconciliationDialog.tsx')
+  assert.match(dialog, /const \[saveMapping, setSaveMapping\] = useState\(true\)/,
+    'saveMapping deve iniciar true — operador desmarca quando não quiser reaproveitar')
+  // O diálogo é montado/desmontado por `{reconcileTarget && <...>}` em
+  // MarketPurchases.tsx (sem key fixa), então cada nova conciliação já é uma
+  // instância nova do componente: o useState(true) acima garante reset
+  // automático a cada abertura, sem precisar de efeito adicional.
+  const page = src('pages/MarketPurchases.tsx')
+  assert.match(page, /\{reconcileTarget && <PurchaseItemReconciliationDialog/)
+})
