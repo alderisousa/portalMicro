@@ -154,3 +154,37 @@ test('save(): se a etapa de conferência falhar após a correção ter sido salv
   assert.ok(confirmCallIndex > -1 && lastRefetchIndex > -1 && lastRefetchIndex < confirmCallIndex,
     'o estado precisa ser recarregado (refetchCurrent) antes da tentativa de confirmar, para nunca exibir dado desatualizado se a confirmação falhar')
 })
+
+test('mensagem de sucesso em Compras some sozinha; mensagem de erro não é afetada', () => {
+  const page = src('pages/MarketPurchases.tsx')
+  const effect = page.match(/useEffect\(\(\) => \{\s*if \(!message \|\| message\.error\) return[\s\S]*?\n {2}\}, \[message\]\)/)?.[0] ?? ''
+  assert.ok(effect, 'efeito de auto-limpeza da mensagem de sucesso não encontrado')
+  assert.match(effect, /setTimeout\(\(\) => setMessage\(null\), 4000\)/)
+  assert.match(effect, /return \(\) => clearTimeout\(timer\)/, 'precisa cancelar o timer anterior a cada nova mensagem, sem acumular timers')
+  // A condição de saída antecipada garante que uma mensagem de erro nunca
+  // dispara o timer — comportamento de erro fica exatamente como antes.
+  assert.match(effect, /if \(!message \|\| message\.error\) return/)
+})
+
+test('"Atualizar mercadorias" reaproveita a sincronização já usada em Estoque/Admin da integração, sem endpoint novo', () => {
+  const page = src('pages/MarketPurchases.tsx')
+  assert.match(page, /import \{ findAccesysIntegrationId, synchronizeMarketProducts \} from '\.\.\/services\/marketIntegration'/,
+    'precisa importar do serviço de integração já existente, não duplicar a chamada à edge function')
+  const syncBody = page.match(/const syncProducts = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[1] ?? ''
+  assert.ok(syncBody, 'função syncProducts não encontrada')
+  assert.match(syncBody, /if \(!productIntegrationId \|\| productSyncing\) return/, 'clique duplicado precisa ser bloqueado enquanto productSyncing for true')
+  assert.match(syncBody, /setProductSyncing\(true\)/)
+  assert.match(syncBody, /synchronizeMarketProducts\(accountId, productIntegrationId, 'inventory', productSyncRun, setProductSyncRun\)/)
+  assert.match(syncBody, /finally \{ setProductSyncing\(false\) \}/)
+  // Após concluir, só reconsulta os produtos do card expandido (usados na
+  // conciliação) — não mexe em reviewTarget/reconcileTarget/itemsState de
+  // outros cards, então nota aberta e conciliação em andamento são preservadas.
+  assert.match(syncBody, /if \(expandedId\) await loadItems\(expandedId\)/)
+  assert.doesNotMatch(syncBody, /setReviewTarget|setReconcileTarget|setExpandedId/, 'não pode fechar diálogo aberto nem trocar o card expandido')
+  // Botão: visível só com integração resolvida e nas mesmas permissões já
+  // usadas no resto da tela (canImport), desabilitado durante a sincronização.
+  const button = page.match(/\{canImport && productIntegrationId && <button[\s\S]*?<\/button>\}/)?.[0] ?? ''
+  assert.match(button, /disabled=\{productSyncing\}/)
+  assert.match(button, /onClick=\{\(\) => void syncProducts\(\)\}/)
+  assert.match(button, /Atualizar mercadorias/)
+})

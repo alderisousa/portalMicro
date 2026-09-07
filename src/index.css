@@ -1047,6 +1047,7 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 .market-section-heading h2 { margin-top: 6px; }
 .market-section-heading > svg { color: var(--green); }
+.market-purchase-header-actions { display: flex; align-items: center; gap: 8px; }
 .market-store-performance { display: grid; gap: 12px; }
 .market-store-performance article { padding: 20px 22px; border: 1px solid var(--line); border-radius: 10px; background: #fffaf2; }
 .market-store-performance-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }

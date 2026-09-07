@@ -16,6 +16,11 @@ import {
   listMarketProductsByIds, reprocessPurchasePendingItems, undoPurchaseItemReconciliation,
   ReconciliationError, type ReconciledProductSummary,
 } from '../services/marketReconciliation'
+// Mesma sincronização de catálogo já usada em Estoque/Admin da integração
+// (market-integration-admin, ação sync-products) — nenhuma lógica nova de
+// integração, só reaproveitando o serviço existente nesta tela.
+import { findAccesysIntegrationId, synchronizeMarketProducts } from '../services/marketIntegration'
+import type { MarketProductSyncRun } from '../types/marketIntegration'
 import type { MarketStore } from '../types/market'
 import type {
   MarketPurchaseImportRequest, MarketPurchaseImportSourceType, MarketPurchaseItem,
@@ -79,6 +84,9 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
   const [deletePrompt, setDeletePrompt] = useState<DeletePrompt | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'compras' | 'historico'>('compras')
+  const [productIntegrationId, setProductIntegrationId] = useState<string | null>(null)
+  const [productSyncRun, setProductSyncRun] = useState<MarketProductSyncRun | null>(null)
+  const [productSyncing, setProductSyncing] = useState(false)
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerError, setScannerError] = useState<string | null>(null)
   // PoC (checkpoint 5D.1/5D.2.2): habilita so a UI de teste local de OCR (foto OU
@@ -94,6 +102,24 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
   }, [accountId])
 
   useEffect(() => { void load() }, [load])
+
+  // Resolvido uma única vez por conta: só para saber se há integração Accesys
+  // ativa (e assim exibir/habilitar "Atualizar mercadorias"). Falha aqui não é
+  // grave — o botão simplesmente não aparece.
+  useEffect(() => {
+    let cancelled = false
+    findAccesysIntegrationId(accountId).then((id) => { if (!cancelled) setProductIntegrationId(id ?? null) })
+      .catch(() => { if (!cancelled) setProductIntegrationId(null) })
+    return () => { cancelled = true }
+  }, [accountId])
+
+  // Mensagens de sucesso não devem ficar presas na tela; erro continua
+  // visível até a próxima ação (mesmo padrão de antes, sem mudança).
+  useEffect(() => {
+    if (!message || message.error) return
+    const timer = setTimeout(() => setMessage(null), 4000)
+    return () => clearTimeout(timer)
+  }, [message])
 
   const loadItems = useCallback(async (purchaseId: string) => {
     setItemsState((prev) => ({
@@ -174,6 +200,24 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
       setMessage({ error: true, text: cause instanceof Error ? cause.message : 'Não foi possível excluir esta nota.' })
       await loadItems(purchaseId); await load()
     } finally { setDeletingId(null) }
+  }
+
+  // Reaproveita 100% a sincronização já usada em Estoque/Admin da integração
+  // (mesma função de serviço, mesma RPC/edge function, mesma fonte Accesys).
+  // Não mexe em nota aberta, item em revisão nem conciliação em andamento:
+  // só busca de novo os produtos do card atualmente expandido (loadItems),
+  // sem tocar em reviewTarget/reconcileTarget/itemsState de outros cards.
+  const syncProducts = async () => {
+    if (!productIntegrationId || productSyncing) return
+    setProductSyncing(true); setMessage(null)
+    try {
+      const run = await synchronizeMarketProducts(accountId, productIntegrationId, 'inventory', productSyncRun, setProductSyncRun)
+      if (run.status !== 'completed') throw new Error(run.errorMessage || 'Sincronização não concluída.')
+      if (expandedId) await loadItems(expandedId)
+      setMessage({ error: false, text: 'Catálogo de mercadorias atualizado.' })
+    } catch (cause) {
+      setMessage({ error: true, text: cause instanceof Error ? cause.message : 'Não foi possível atualizar as mercadorias. O catálogo existente foi preservado.' })
+    } finally { setProductSyncing(false) }
   }
 
   const itemActions = (purchase: MarketPurchaseListItem, item: MarketPurchaseItem) => {
@@ -387,7 +431,15 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
     />}
 
     <section className="market-dashboard-section">
-      <div className="market-section-heading"><div><span className="panel-kicker">{activeTab === 'compras' ? 'EM CONFERÊNCIA' : 'HISTÓRICO'}</span><h2>{activeTab === 'compras' ? 'Notas importadas' : 'Compras concluídas'}</h2></div><button className="button button-small button-outline" onClick={() => void load()} disabled={loading}><RefreshCw size={15} /> Atualizar</button></div>
+      <div className="market-section-heading">
+        <div><span className="panel-kicker">{activeTab === 'compras' ? 'EM CONFERÊNCIA' : 'HISTÓRICO'}</span><h2>{activeTab === 'compras' ? 'Notas importadas' : 'Compras concluídas'}</h2></div>
+        <div className="market-purchase-header-actions">
+          {canImport && productIntegrationId && <button type="button" className="button button-small button-outline" disabled={productSyncing} onClick={() => void syncProducts()}>
+            <RefreshCw size={15} /> {productSyncing ? 'Atualizando mercadorias...' : 'Atualizar mercadorias'}
+          </button>}
+          <button className="button button-small button-outline" onClick={() => void load()} disabled={loading}><RefreshCw size={15} /> Atualizar</button>
+        </div>
+      </div>
       <div className="market-purchase-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={activeTab === 'compras'} className={`market-purchase-tab${activeTab === 'compras' ? ' is-active' : ''}`} onClick={() => setActiveTab('compras')}>Compras</button>
         <button type="button" role="tab" aria-selected={activeTab === 'historico'} className={`market-purchase-tab${activeTab === 'historico' ? ' is-active' : ''}`} onClick={() => setActiveTab('historico')}><History size={14} /> Histórico</button>
