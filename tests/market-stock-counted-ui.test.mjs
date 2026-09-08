@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 registerHooks({ resolve(s,c,n) { return n(s.startsWith('.') && !/\.[a-z]+$/.test(s) ? `${s}.ts` : s,c) } })
-const { requiresDivergenceReason, isReasonMissing } = await import('../src/utils/marketStockBalance.ts')
+const { requiresDivergenceReason, isReasonMissing, isReasonCodeAllowedForDifference, reasonNeedsReset } = await import('../src/utils/marketStockBalance.ts')
 
 const src = readFileSync(new URL('../src/pages/MarketStockDashboard.tsx', import.meta.url), 'utf8')
 
@@ -27,6 +27,48 @@ test('isReasonMissing: reasonCode sempre obrigatório quando exigido; reasonNote
   assert.equal(isReasonMissing({ reasonCode: 'OTHER', reasonNote: null }), true, 'H: OTHER sem observação bloqueia')
   assert.equal(isReasonMissing({ reasonCode: 'OTHER', reasonNote: '   ' }), true, 'H: observação só de espaços não conta')
   assert.equal(isReasonMissing({ reasonCode: 'OTHER', reasonNote: 'Achado em outra prateleira' }), false, 'I: OTHER com observação permite')
+})
+
+// Matriz aprovada (202609080004): OUT-only (EXPIRED_LOSS, DAMAGE, THEFT_LOSS,
+// INTERNAL_USE), IN-only (UNREGISTERED_PURCHASE), BOTH (PREVIOUS_COUNT_ERROR,
+// UNREGISTERED_TRANSFER, OTHER). Mesma matriz usada pela regra 5 da RPC —
+// único lugar no frontend onde ela existe (reasonSignByCode).
+test('isReasonCodeAllowedForDifference: motivo coerente com o sentido da diferença', () => {
+  assert.equal(isReasonCodeAllowedForDifference('DAMAGE', 5), false, '+5 + DAMAGE (OUT-only) => inválido')
+  assert.equal(isReasonCodeAllowedForDifference('DAMAGE', -5), true, '-5 + DAMAGE (OUT-only) => válido')
+  assert.equal(isReasonCodeAllowedForDifference('EXPIRED_LOSS', 5), false)
+  assert.equal(isReasonCodeAllowedForDifference('THEFT_LOSS', 5), false)
+  assert.equal(isReasonCodeAllowedForDifference('INTERNAL_USE', 5), false)
+  assert.equal(isReasonCodeAllowedForDifference('UNREGISTERED_PURCHASE', 5), true, '+5 + UNREGISTERED_PURCHASE (IN-only) => válido')
+  assert.equal(isReasonCodeAllowedForDifference('UNREGISTERED_PURCHASE', -5), false, '-5 + UNREGISTERED_PURCHASE (IN-only) => inválido')
+  for (const difference of [5, -5]) {
+    assert.equal(isReasonCodeAllowedForDifference('PREVIOUS_COUNT_ERROR', difference), true, `PREVIOUS_COUNT_ERROR (${difference}) => válido nos dois sentidos`)
+    assert.equal(isReasonCodeAllowedForDifference('UNREGISTERED_TRANSFER', difference), true, `UNREGISTERED_TRANSFER (${difference}) => válido nos dois sentidos`)
+    assert.equal(isReasonCodeAllowedForDifference('OTHER', difference), true, `OTHER (${difference}) => válido nos dois sentidos`)
+  }
+  // Diferença 0 nunca é avaliada por esta função (quem decide se motivo é
+  // exigido é requiresDivergenceReason/reasonNeedsReset).
+  assert.equal(isReasonCodeAllowedForDifference('DAMAGE', 0), true)
+})
+
+test('reasonNeedsReset: limpa motivo quando diferença zera, quando fica incoerente com o novo sinal, e preserva quando continua coerente', () => {
+  const known = (difference) => ({ known: true, currentQuantity: 30, countedQuantity: 30 + difference, difference })
+  // Diferença 0: motivo salvo sempre é limpo, mesmo que fosse coerente antes.
+  assert.equal(reasonNeedsReset('PREVIOUS_COUNT_ERROR', known(0), true), true, 'diferença 0 => motivo limpo, mesmo sendo BOTH')
+  assert.equal(reasonNeedsReset('DAMAGE', known(0), true), true, 'diferença 0 => motivo limpo')
+  assert.equal(reasonNeedsReset(null, known(0), true), false, 'sem motivo salvo, nada a limpar')
+  // Flip de sinal com motivo incompatível para o novo sentido.
+  assert.equal(reasonNeedsReset('DAMAGE', known(5), true), true, 'flip - para + com DAMAGE (OUT-only) => limpo')
+  assert.equal(reasonNeedsReset('UNREGISTERED_PURCHASE', known(-5), true), true, 'flip + para - com UNREGISTERED_PURCHASE (IN-only) => limpo')
+  // Flip de sinal mantendo um motivo BOTH — preserva.
+  assert.equal(reasonNeedsReset('PREVIOUS_COUNT_ERROR', known(5), true), false, 'flip com motivo BOTH => preservado')
+  assert.equal(reasonNeedsReset('PREVIOUS_COUNT_ERROR', known(-5), true), false, 'flip com motivo BOTH => preservado')
+  // Compatível com o sinal atual — preserva (nem diferença 0, nem incoerente).
+  assert.equal(reasonNeedsReset('DAMAGE', known(-5), true), false, 'motivo coerente com o sinal atual => preservado')
+  assert.equal(reasonNeedsReset('UNREGISTERED_PURCHASE', known(5), true), false, 'motivo coerente com o sinal atual => preservado')
+  // Sem contagem ou saldo desconhecido: nunca faz sentido manter motivo.
+  assert.equal(reasonNeedsReset('DAMAGE', known(-5), false), true, 'item não contado => motivo limpo')
+  assert.equal(reasonNeedsReset('DAMAGE', { known: false, currentQuantity: 0, countedQuantity: 5, difference: 5 }, true), true, 'saldo desconhecido => motivo limpo')
 })
 
 test('produto recém-incluído (selectProduct) entra "não contado", nunca com quantidade fixa — mesmo caminho para busca/EAN/SKU/scanner', () => {
@@ -53,6 +95,26 @@ test('digitar qualquer número, inclusive zero, marca isCounted=true; apagar o c
   assert.match(inputBlock, /if \(raw\.trim\(\) === ''\) clearQuantity\(item\.productId\)/)
 })
 
+test('updateQuantity reavalia o motivo contra a NOVA quantidade e limpa via reasonNeedsReset (nunca deixa motivo incoerente "em espera")', () => {
+  const updateQuantityBody = src.match(/const updateQuantity = \(productId: string, quantity: number\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(updateQuantityBody, /const comparison = compareStockCount\(balanceByProduct, productId, safeQuantity\)/)
+  assert.match(updateQuantityBody, /const resetReason = reasonNeedsReset\(item\.reasonCode, comparison, true\)/)
+  assert.match(updateQuantityBody, /reasonCode: resetReason \? null : item\.reasonCode, reasonNote: resetReason \? null : item\.reasonNote/)
+})
+
+test('clearQuantity (campo apagado) sempre limpa reasonCode/reasonNote junto — sem contagem não há divergência a justificar', () => {
+  const clearQuantityBody = src.match(/const clearQuantity = \(productId: string\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(clearQuantityBody, /quantity: 0, isCounted: false, reasonCode: null, reasonNote: null/)
+})
+
+test('resumeDraft saneia o rascunho retomado com reasonNeedsReset e persiste a correção quando necessário (autosave)', () => {
+  const resumeDraftBody = src.match(/const resumeDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(resumeDraftBody, /const comparison = compareStockCount\(balanceByProduct, item\.productId, item\.quantity\)/)
+  assert.match(resumeDraftBody, /if \(!reasonNeedsReset\(item\.reasonCode, comparison, item\.isCounted\)\) return item/)
+  assert.match(resumeDraftBody, /return \{ \.\.\.item, reasonCode: null, reasonNote: null \}/)
+  assert.match(resumeDraftBody, /if \(sanitized\) markChanged\(\); else dirtyRef\.current = false/)
+})
+
 test('+ em item não contado inicia em 1 e marca contado; − fica desabilitado (decisão documentada)', () => {
   const stepperBlock = src.match(/<div className="market-quantity-stepper">([\s\S]*?)<\/div>/)?.[0] ?? ''
   assert.ok(stepperBlock, 'stepper de quantidade não encontrado')
@@ -77,6 +139,12 @@ test('seletor de motivo aparece só quando requiresDivergenceReason é verdadeir
   assert.match(itemMapBody, /updateReasonCode\(item\.productId, \(event\.target\.value \|\| null\) as MarketInventoryReasonCode \| null\)/)
 })
 
+test('opções do seletor de motivo são filtradas pelo sentido da diferença (isReasonCodeAllowedForDifference) — nunca as 8 sem filtro', () => {
+  const itemMapBody = src.match(/const needsReason = requiresDivergenceReason\(comparison, item\.isCounted\)([\s\S]*?)<\/article>/)?.[0] ?? ''
+  assert.ok(itemMapBody, 'bloco needsReason não encontrado')
+  assert.match(itemMapBody, /\{reasonCodes\.filter\(\(code\) => isReasonCodeAllowedForDifference\(code, comparison\.difference\)\)\.map\(\(code\) => <option/)
+})
+
 test('regra 3/4 bloqueiam "Finalizar inventário" no frontend, com mensagem clara — e também são revalidadas no backend (defesa em profundidade)', () => {
   const finishButtonBlock = src.match(/<button className="button" disabled=\{[^}]*\} onClick=\{\(\) => setConfirming\(true\)\}>Finalizar inventário<\/button>/)?.[0] ?? ''
   assert.ok(finishButtonBlock, 'botão Finalizar inventário não encontrado')
@@ -88,6 +156,12 @@ test('regra 3/4 bloqueiam "Finalizar inventário" no frontend, com mensagem clar
   const finalizeDraftBody = src.match(/const finalizeDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
   assert.match(finalizeDraftBody, /INVENTORY_UNCOUNTED_ITEMS/)
   assert.match(finalizeDraftBody, /INVENTORY_REASON_REQUIRED/)
+})
+
+test('INVENTORY_REASON_SIGN_MISMATCH (202609080004) é mapeado para mensagem amigável no catch de finalizeDraft — defesa em profundidade contra payload manipulado/frontend antigo', () => {
+  const finalizeDraftBody = src.match(/const finalizeDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(finalizeDraftBody, /INVENTORY_REASON_SIGN_MISMATCH/)
+  assert.match(finalizeDraftBody, /Existem motivos de divergência incompatíveis com o sentido do ajuste/)
 })
 
 test('uncountedItems/itemsNeedingReason nunca contam item de outra origem — mesma fonte (balanceByProduct) usada por compareStockCount', () => {

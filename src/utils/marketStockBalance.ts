@@ -1,4 +1,4 @@
-import type { MarketInitialInventoryItem, MarketStockBalanceRow } from '../types/marketStock'
+import type { MarketInitialInventoryItem, MarketInventoryReasonCode, MarketStockBalanceRow } from '../types/marketStock'
 
 // Mesma normalização usada em MarketStockDashboard (findMarketStockProducts):
 // NFD + remoção dos diacríticos combinantes (faixa Unicode 0x0300-0x036f).
@@ -57,4 +57,52 @@ export function isReasonMissing(item: Pick<MarketInitialInventoryItem, 'reasonCo
   if (!item.reasonCode) return true
   if (item.reasonCode === 'OTHER') return !item.reasonNote?.trim()
   return false
+}
+
+export type ReasonSign = 'IN' | 'OUT' | 'BOTH'
+
+// Classificação única do sentido de cada motivo — mesma matriz usada pela
+// validação da RPC (market_finalize_inventory_draft, 202609080004). Único
+// lugar onde essa matriz existe no frontend; não duplicar em componentes.
+export const reasonSignByCode: Record<MarketInventoryReasonCode, ReasonSign> = {
+  EXPIRED_LOSS: 'OUT',
+  DAMAGE: 'OUT',
+  THEFT_LOSS: 'OUT',
+  INTERNAL_USE: 'OUT',
+  UNREGISTERED_PURCHASE: 'IN',
+  PREVIOUS_COUNT_ERROR: 'BOTH',
+  UNREGISTERED_TRANSFER: 'BOTH',
+  OTHER: 'BOTH',
+}
+
+// Sentido da diferença: quem sobrou (IN, vira ADJUSTMENT_IN) vs quem faltou
+// (OUT, vira ADJUSTMENT_OUT). Diferença zero não tem sentido — null.
+export function differenceSign(difference: number): 'IN' | 'OUT' | null {
+  if (difference > 0) return 'IN'
+  if (difference < 0) return 'OUT'
+  return null
+}
+
+// Diferença zero nunca é "inválida" aqui — quem decide se motivo é exigido
+// é requiresDivergenceReason; esta função só avalia coerência de sentido.
+export function isReasonCodeAllowedForDifference(reasonCode: MarketInventoryReasonCode, difference: number): boolean {
+  const sign = differenceSign(difference)
+  if (!sign) return true
+  const allowed = reasonSignByCode[reasonCode]
+  return allowed === 'BOTH' || allowed === sign
+}
+
+// Único ponto de decisão de quando um motivo já selecionado deixa de fazer
+// sentido e precisa ser limpo: sem contagem, saldo desconhecido, diferença
+// zerada, ou motivo incoerente com o sentido atual da diferença. Usado tanto
+// ao editar a quantidade (updateQuantity) quanto ao sanear um rascunho
+// retomado (resumeDraft) — mesma regra, um único lugar.
+export function reasonNeedsReset(
+  reasonCode: MarketInventoryReasonCode | null,
+  comparison: StockCountComparison,
+  isCounted: boolean,
+): boolean {
+  if (!reasonCode) return false
+  if (!isCounted || !comparison.known || comparison.difference === 0) return true
+  return !isReasonCodeAllowedForDifference(reasonCode, comparison.difference)
 }

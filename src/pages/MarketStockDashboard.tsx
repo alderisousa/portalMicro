@@ -8,7 +8,7 @@ import type { MarketInitialInventoryItem, MarketInventoryDraft, MarketInventoryR
 import { BarcodeScanner } from '../components/BarcodeScanner'
 import { findAccesysIntegrationId, getMarketProductSyncStatus, synchronizeMarketProducts } from '../services/marketIntegration'
 import type { MarketProductSyncRun } from '../types/marketIntegration'
-import { compareStockCount, findMarketStockBalance, isReasonMissing, requiresDivergenceReason } from '../utils/marketStockBalance'
+import { compareStockCount, findMarketStockBalance, isReasonCodeAllowedForDifference, isReasonMissing, reasonNeedsReset, requiresDivergenceReason } from '../utils/marketStockBalance'
 
 interface Props { accountId: string; onBack: () => void }
 type SaveState = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
@@ -246,8 +246,22 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
       // Busca e scanner continuam usando o catálogo em memória durante a contagem.
       const nextProducts = products ?? await listActiveProducts(accountId)
       if (!products) setProducts(nextProducts)
-      setItems(draft.items); itemsRef.current = draft.items; setStartedAt(toLocalDateTime(draft.startedAt))
-      startedAtRef.current = toLocalDateTime(draft.startedAt); dirtyRef.current = false; setSaveState('saved'); setCounting(true)
+      // Saneia o rascunho retomado: motivo salvo antes desta regra (ou cujo
+      // saldo mudou desde o último save) pode estar incoerente com o sentido
+      // atual da diferença — reasonNeedsReset decide com o mesmo critério
+      // usado ao editar a quantidade. Zero e compatível ficam preservados.
+      let sanitized = false
+      const nextItems = draft.items.map((item) => {
+        const comparison = compareStockCount(balanceByProduct, item.productId, item.quantity)
+        if (!reasonNeedsReset(item.reasonCode, comparison, item.isCounted)) return item
+        sanitized = true
+        return { ...item, reasonCode: null, reasonNote: null }
+      })
+      setItems(nextItems); itemsRef.current = nextItems; setStartedAt(toLocalDateTime(draft.startedAt))
+      startedAtRef.current = toLocalDateTime(draft.startedAt); setSaveState('saved'); setCounting(true)
+      // A limpeza precisa ser persistida (autosave) — não deixar reason_code
+      // incoerente sobrevivendo no rascunho salvo só porque nada mais mudou.
+      if (sanitized) markChanged(); else dirtyRef.current = false
     } catch (cause) {
       console.error('Falha ao carregar produtos para continuar o inventário:', cause)
       setError('Não foi possível carregar o catálogo para continuar o inventário.')
@@ -294,16 +308,25 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
 
   // Qualquer número válido informado, inclusive zero, marca isCounted=true —
   // zero é uma contagem real e consciente, diferente de "ainda não contado".
+  // Motivo já selecionado é reavaliado contra a NOVA quantidade: diferença
+  // zerada ou motivo incoerente com o novo sentido são limpos aqui mesmo
+  // (reasonNeedsReset), nunca deixando um motivo "em espera" inválido.
   const updateQuantity = (productId: string, quantity: number) => {
     const safeQuantity = Number.isFinite(quantity) ? Math.max(0, quantity) : 0
-    const next = itemsRef.current.map((item) => item.productId === productId ? { ...item, quantity: safeQuantity, isCounted: true } : item)
+    const next = itemsRef.current.map((item) => {
+      if (item.productId !== productId) return item
+      const comparison = compareStockCount(balanceByProduct, productId, safeQuantity)
+      const resetReason = reasonNeedsReset(item.reasonCode, comparison, true)
+      return { ...item, quantity: safeQuantity, isCounted: true, reasonCode: resetReason ? null : item.reasonCode, reasonNote: resetReason ? null : item.reasonNote }
+    })
     itemsRef.current = next; setItems(next); markChanged()
   }
 
   // Campo de quantidade apagado pelo operador: volta para "não contado" (não
-  // deixa um "0 contado" residual apenas por ter limpado o campo).
+  // deixa um "0 contado" residual apenas por ter limpado o campo). Sem
+  // contagem não há divergência a justificar — motivo sempre limpo junto.
   const clearQuantity = (productId: string) => {
-    const next = itemsRef.current.map((item) => item.productId === productId ? { ...item, quantity: 0, isCounted: false } : item)
+    const next = itemsRef.current.map((item) => item.productId === productId ? { ...item, quantity: 0, isCounted: false, reasonCode: null, reasonNote: null } : item)
     itemsRef.current = next; setItems(next); markChanged()
   }
 
@@ -348,6 +371,7 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
         isVersionConflict(cause) ? 'Este inventário foi atualizado em outro dispositivo. Recarregue para continuar.'
         : message.includes('INVENTORY_UNCOUNTED_ITEMS') ? 'Ainda existem produtos sem contagem informada.'
         : message.includes('INVENTORY_REASON_REQUIRED') ? 'Existem divergências de saldo sem motivo informado.'
+        : message.includes('INVENTORY_REASON_SIGN_MISMATCH') ? 'Existem motivos de divergência incompatíveis com o sentido do ajuste (entrada ou saída).'
         : 'Não foi possível finalizar o inventário.'
       )
       if (isVersionConflict(cause)) setSaveState('conflict')
@@ -462,7 +486,7 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
             <label>Motivo da divergência
               <select value={item.reasonCode ?? ''} onChange={(event) => updateReasonCode(item.productId, (event.target.value || null) as MarketInventoryReasonCode | null)}>
                 <option value="">Selecione o motivo</option>
-                {reasonCodes.map((code) => <option key={code} value={code}>{reasonLabels[code]}</option>)}
+                {reasonCodes.filter((code) => isReasonCodeAllowedForDifference(code, comparison.difference)).map((code) => <option key={code} value={code}>{reasonLabels[code]}</option>)}
               </select>
             </label>
             {item.reasonCode === 'OTHER' && <label>Observação

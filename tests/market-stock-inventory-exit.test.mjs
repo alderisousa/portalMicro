@@ -51,5 +51,10 @@ test('"Finalizar inventário" continua chamando setConfirming(true), sem nenhuma
 
 test('reabrir o rascunho depois de fechar sempre resincroniza items a partir do draft salvo (resumeDraft), sem depender de estado local antigo', () => {
   const body = src.match(/const resumeDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
-  assert.match(body, /setItems\(draft\.items\); itemsRef\.current = draft\.items/)
+  // 202609080004 (saneamento de motivo incoerente) insere um .map() entre a
+  // leitura do draft e o setItems, mas a fonte continua sendo estritamente
+  // draft.items — nunca items/itemsRef.current (estado local antigo).
+  assert.match(body, /const nextItems = draft\.items\.map\(\(item\) => \{/)
+  assert.doesNotMatch(body, /(?<!draft\.)items\.map\(/, 'não pode reaproveitar o estado local antigo (items) como fonte — só draft.items')
+  assert.match(body, /setItems\(nextItems\); itemsRef\.current = nextItems/)
 })
