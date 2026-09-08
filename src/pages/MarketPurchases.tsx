@@ -19,7 +19,7 @@ import {
 // Mesma sincronização de catálogo já usada em Estoque/Admin da integração
 // (market-integration-admin, ação sync-products) — nenhuma lógica nova de
 // integração, só reaproveitando o serviço existente nesta tela.
-import { findAccesysIntegrationId, synchronizeMarketProducts } from '../services/marketIntegration'
+import { findAccesysIntegrationId, getMarketProductSyncStatus, synchronizeMarketProducts } from '../services/marketIntegration'
 import type { MarketProductSyncRun } from '../types/marketIntegration'
 import type { MarketStore } from '../types/market'
 import type {
@@ -33,6 +33,10 @@ const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: '
 const quantityFormat = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 })
 const date = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' })
 const dateTimeFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+// Mesmo formato do card de sincronização de produtos da tela de Estoque
+// (MarketStockDashboard) — texto idêntico, para os dois cards lerem igual.
+const formatProductSyncDate = (value: string) => new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+  .format(new Date(value)).replace(', ', ' às ')
 const formatMoney = (value: number | null) => (value === null ? '-' : currency.format(value))
 const formatStockEntry = (item: MarketPurchaseItem) =>
   item.stockQuantity === null || item.stockUnit === null ? 'Aguardando conversão' : `${quantityFormat.format(item.stockQuantity)} ${item.stockUnit}`
@@ -87,6 +91,7 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
   const [activeTab, setActiveTab] = useState<'compras' | 'historico'>('compras')
   const [productIntegrationId, setProductIntegrationId] = useState<string | null>(null)
   const [productSyncRun, setProductSyncRun] = useState<MarketProductSyncRun | null>(null)
+  const [lastProductSync, setLastProductSync] = useState<MarketProductSyncRun | null>(null)
   const [productSyncing, setProductSyncing] = useState(false)
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerError, setScannerError] = useState<string | null>(null)
@@ -105,12 +110,20 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
   useEffect(() => { void load() }, [load])
 
   // Resolvido uma única vez por conta: só para saber se há integração Accesys
-  // ativa (e assim exibir/habilitar "Atualizar mercadorias"). Falha aqui não é
-  // grave — o botão simplesmente não aparece.
+  // ativa e mostrar o status da última sincronização no card "Última
+  // sincronização de produtos" (mesmo dado carregado em MarketStockDashboard
+  // no load()). Falha aqui não é grave — o card só mostra o estado disponível.
   useEffect(() => {
     let cancelled = false
-    findAccesysIntegrationId(accountId).then((id) => { if (!cancelled) setProductIntegrationId(id ?? null) })
-      .catch(() => { if (!cancelled) setProductIntegrationId(null) })
+    findAccesysIntegrationId(accountId).then(async (id) => {
+      if (cancelled) return
+      setProductIntegrationId(id ?? null)
+      if (!id) { setProductSyncRun(null); setLastProductSync(null); return }
+      try {
+        const status = await getMarketProductSyncStatus(accountId, id)
+        if (!cancelled) { setProductSyncRun(status.run); setLastProductSync(status.lastCompletedRun) }
+      } catch { if (!cancelled) { setProductSyncRun(null); setLastProductSync(null) } }
+    }).catch(() => { if (!cancelled) setProductIntegrationId(null) })
     return () => { cancelled = true }
   }, [accountId])
 
@@ -255,10 +268,16 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
     try {
       const run = await synchronizeMarketProducts(accountId, productIntegrationId, 'inventory', productSyncRun, setProductSyncRun)
       if (run.status !== 'completed') throw new Error(run.errorMessage || 'Sincronização não concluída.')
+      const status = await getMarketProductSyncStatus(accountId, productIntegrationId)
+      setProductSyncRun(status.run); setLastProductSync(status.lastCompletedRun)
       if (expandedId) await loadItems(expandedId)
       setMessage({ error: false, text: 'Catálogo de mercadorias atualizado.' })
     } catch (cause) {
       setMessage({ error: true, text: cause instanceof Error ? cause.message : 'Não foi possível atualizar as mercadorias. O catálogo existente foi preservado.' })
+      try {
+        const status = await getMarketProductSyncStatus(accountId, productIntegrationId)
+        setProductSyncRun(status.run); setLastProductSync(status.lastCompletedRun)
+      } catch { /* Mantém o último estado confiável carregado. */ }
     } finally { setProductSyncing(false) }
   }
 
@@ -472,13 +491,27 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
       onConfirm={() => void handleReceive()}
     />}
 
+    {/* Mesmo card/padrão visual e responsivo de MarketStockDashboard
+        (.market-product-sync-card) — reaproveita a classe existente em vez de
+        duplicar estilo. Card sempre visível (mesmo sem integração ou para
+        quem só consulta); só o botão de ação é restrito por canImport, como
+        Estoque restringe por role !== 'viewer'. */}
+    <section className="market-product-sync-card">
+      <div>
+        <span className="panel-kicker">CATÁLOGO</span>
+        <h2>Última sincronização de produtos</h2>
+        <p>{lastProductSync?.finishedAt ? formatProductSyncDate(lastProductSync.finishedAt) : 'Nenhuma sincronização de produtos concluída.'}</p>
+        {lastProductSync && <small>{quantityFormat.format(lastProductSync.receivedCount)} produtos sincronizados</small>}
+      </div>
+      {canImport && <button className="button button-small" disabled={!productIntegrationId || productSyncing} onClick={() => void syncProducts()}>
+        <RefreshCw size={15} /> {productSyncing ? 'Sincronizando...' : productSyncRun?.status === 'running' ? 'Continuar sincronização' : 'Sincronizar produtos'}
+      </button>}
+    </section>
+
     <section className="market-dashboard-section">
       <div className="market-section-heading">
         <div><span className="panel-kicker">{activeTab === 'compras' ? 'EM CONFERÊNCIA' : 'HISTÓRICO'}</span><h2>{activeTab === 'compras' ? 'Notas importadas' : 'Compras concluídas'}</h2></div>
         <div className="market-purchase-header-actions">
-          {canImport && productIntegrationId && <button type="button" className="button button-small button-outline" disabled={productSyncing} onClick={() => void syncProducts()}>
-            <RefreshCw size={15} /> {productSyncing ? 'Atualizando mercadorias...' : 'Atualizar mercadorias'}
-          </button>}
           <button className="button button-small button-outline" onClick={() => void load()} disabled={loading}><RefreshCw size={15} /> Atualizar</button>
         </div>
       </div>

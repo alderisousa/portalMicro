@@ -1096,6 +1096,11 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
   .market-stock-add-item { grid-template-columns: 1fr; }
   .market-stock-add-item .button { width: 100%; }
   .market-quick-heading { align-items: flex-start; flex-direction: column; gap: 10px; }
+  /* "Atualizar mercadorias"/"Atualizar" (Compras): mesmo padrão de quebra já
+     usado no card de sincronização do Estoque (.market-product-sync-card),
+     para não extrapolar a viewport ao lado do título "Notas importadas". */
+  .market-section-heading { flex-wrap: wrap; row-gap: 10px; }
+  .market-purchase-header-actions { flex-wrap: wrap; width: 100%; }
   .market-draft-status { justify-items: start; }
   .market-product-search { top: 4px; padding: 10px 12px; }
   .market-product-search input { font-size: 16px; }
