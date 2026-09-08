@@ -4,10 +4,11 @@ import {
   cancelMarketInventoryDraft, finalizeMarketInventoryDraft, getMarketInventoryDraft,
   getMarketStockBalance, getMarketStockContext, listActiveProducts, saveMarketInventoryDraft,
 } from '../services/marketStock'
-import type { MarketInitialInventoryItem, MarketInventoryDraft, MarketStockBalanceRow, MarketStockContext, MarketStockProduct } from '../types/marketStock'
+import type { MarketInitialInventoryItem, MarketInventoryDraft, MarketInventoryReasonCode, MarketStockBalanceRow, MarketStockContext, MarketStockProduct } from '../types/marketStock'
 import { BarcodeScanner } from '../components/BarcodeScanner'
 import { findAccesysIntegrationId, getMarketProductSyncStatus, synchronizeMarketProducts } from '../services/marketIntegration'
 import type { MarketProductSyncRun } from '../types/marketIntegration'
+import { compareStockCount, findMarketStockBalance, isReasonMissing, requiresDivergenceReason } from '../utils/marketStockBalance'
 
 interface Props { accountId: string; onBack: () => void }
 type SaveState = 'idle' | 'saving' | 'saved' | 'error' | 'conflict'
@@ -24,6 +25,23 @@ const productIdentifier = (product: MarketStockProduct) => product.ean
   : externalCodes(product)[0]
     ? `Código externo: ${externalCodes(product)[0]}`
     : product.sku ? `SKU ${product.sku}` : product.unit
+
+// Conjunto estável de motivos de divergência (market_inventory_session_items.reason_code,
+// 202609080003) — mesmos códigos aceitos pelo check constraint no banco.
+const reasonCodes: MarketInventoryReasonCode[] = [
+  'EXPIRED_LOSS', 'DAMAGE', 'THEFT_LOSS', 'PREVIOUS_COUNT_ERROR',
+  'UNREGISTERED_PURCHASE', 'UNREGISTERED_TRANSFER', 'INTERNAL_USE', 'OTHER',
+]
+const reasonLabels: Record<MarketInventoryReasonCode, string> = {
+  EXPIRED_LOSS: 'Perda / produto vencido',
+  DAMAGE: 'Quebra / avaria',
+  THEFT_LOSS: 'Furto / extravio',
+  PREVIOUS_COUNT_ERROR: 'Contagem anterior incorreta',
+  UNREGISTERED_PURCHASE: 'Compra / nota não registrada',
+  UNREGISTERED_TRANSFER: 'Transferência não registrada',
+  INTERNAL_USE: 'Consumo / uso interno',
+  OTHER: 'Outro',
+}
 
 export function findMarketStockProducts(products: MarketStockProduct[], query: string): MarketStockProduct[] {
   const term = normalizeSearch(query)
@@ -57,11 +75,15 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
   const [products, setProducts] = useState<MarketStockProduct[] | null>(null)
   const [storeId, setStoreId] = useState('')
   const [balance, setBalance] = useState<MarketStockBalanceRow[]>([])
+  const [balanceQuery, setBalanceQuery] = useState('')
   const [draft, setDraft] = useState<MarketInventoryDraft | null>(null)
   const [counting, setCounting] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [confirmCancel, setConfirmCancel] = useState(false)
-  const [exitBlocked, setExitBlocked] = useState(false)
+  // false: nenhuma saída pendente. 'back'/'close': qual ação falhou ao tentar
+  // salvar (leaveStock vs closeInventory) — o aviso reaproveita o mesmo
+  // estado para as duas saídas, então precisa saber qual retomar em "Tentar novamente".
+  const [exitBlocked, setExitBlocked] = useState<false | 'back' | 'close'>(false)
   const [query, setQuery] = useState('')
   const [scannerOpen, setScannerOpen] = useState(false)
   const [items, setItems] = useState<MarketInitialInventoryItem[]>([])
@@ -131,9 +153,20 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
   const searchResults = useMemo(() => findMarketStockProducts(products ?? [], query).slice(0, 8), [products, query])
   const positiveItems = items.filter((item) => item.quantity > 0)
   const isCycleInventory = draft?.inventoryType === 'cycle'
-  const countedItems = isCycleInventory ? items : positiveItems
+  // "Contado" nunca inclui item ainda sem quantidade informada (isCounted=false)
+  // — positiveItems/items já excluem quantity=0 de outras formas, mas um item
+  // não contado também tem quantity=0 por construção; o filtro por isCounted é
+  // quem faz a distinção correta entre "zero contado" e "ainda não contado".
+  const countedItems = (isCycleInventory ? items : positiveItems).filter((item) => item.isCounted)
+  const uncountedItems = items.filter((item) => !item.isCounted)
   const balanceByProduct = useMemo(() => new Map(balance.map((row) => [row.productId, row.quantityOnHand])), [balance])
-  const cycleSummary = useMemo(() => items.reduce((summary, item) => {
+  // Divergência com saldo conhecido exige motivo — nunca decidido por
+  // isCycleInventory/inventoryType (ver requiresDivergenceReason). Só avalia
+  // item já contado: item ainda não contado já é bloqueado por outra regra.
+  const itemsNeedingReason = items.filter((item) =>
+    item.isCounted && requiresDivergenceReason(compareStockCount(balanceByProduct, item.productId, item.quantity), item.isCounted) && isReasonMissing(item))
+  const filteredBalance = useMemo(() => findMarketStockBalance(balance, balanceQuery), [balance, balanceQuery])
+  const cycleSummary = useMemo(() => items.filter((item) => item.isCounted).reduce((summary, item) => {
     const difference = item.quantity - (balanceByProduct.get(item.productId) ?? 0)
     if (difference > 0) { summary.adjustmentInProducts += 1; summary.adjustmentInQuantity += difference }
     else if (difference < 0) { summary.adjustmentOutProducts += 1; summary.adjustmentOutQuantity += Math.abs(difference) }
@@ -183,7 +216,7 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
 
   const changeStore = async (nextStoreId: string) => {
     if (!context) return
-    setStoreId(nextStoreId); setQuery(''); setSuccess(''); setError(''); setLoading(true)
+    setStoreId(nextStoreId); setQuery(''); setBalanceQuery(''); setSuccess(''); setError(''); setLoading(true)
     try { await applyStoreData(nextStoreId, context) }
     catch (cause) { console.error('Falha ao consultar estoque:', cause); setError('Não foi possível consultar este local.') }
     finally { setLoading(false) }
@@ -231,7 +264,10 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     const existing = itemsRef.current.find((item) => item.productId === product.id)
     setQuery(''); setError('')
     if (existing) { focusExistingItem(product.id); return }
-    const next = [{ productId: product.id, quantity: 1 }, ...itemsRef.current]
+    // Produto recém-incluído entra "não contado" (não confundir com contado
+    // como zero) — o operador ainda precisa informar a quantidade física,
+    // qualquer que seja a origem (busca, EAN/GTIN, SKU/código externo, scanner).
+    const next = [{ productId: product.id, quantity: 0, isCounted: false, reasonCode: null, reasonNote: null }, ...itemsRef.current]
     itemsRef.current = next; setItems(next); markChanged(); setHighlightedProductId(product.id)
     if (focusQuantity) focusExistingItem(product.id)
     else window.setTimeout(() => { setHighlightedProductId(''); searchRef.current?.focus() }, 500)
@@ -256,9 +292,30 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     window.setTimeout(() => searchRef.current?.focus(), 0)
   }
 
+  // Qualquer número válido informado, inclusive zero, marca isCounted=true —
+  // zero é uma contagem real e consciente, diferente de "ainda não contado".
   const updateQuantity = (productId: string, quantity: number) => {
     const safeQuantity = Number.isFinite(quantity) ? Math.max(0, quantity) : 0
-    const next = itemsRef.current.map((item) => item.productId === productId ? { ...item, quantity: safeQuantity } : item)
+    const next = itemsRef.current.map((item) => item.productId === productId ? { ...item, quantity: safeQuantity, isCounted: true } : item)
+    itemsRef.current = next; setItems(next); markChanged()
+  }
+
+  // Campo de quantidade apagado pelo operador: volta para "não contado" (não
+  // deixa um "0 contado" residual apenas por ter limpado o campo).
+  const clearQuantity = (productId: string) => {
+    const next = itemsRef.current.map((item) => item.productId === productId ? { ...item, quantity: 0, isCounted: false } : item)
+    itemsRef.current = next; setItems(next); markChanged()
+  }
+
+  const updateReasonCode = (productId: string, reasonCode: MarketInventoryReasonCode | null) => {
+    const next = itemsRef.current.map((item) => item.productId === productId
+      ? { ...item, reasonCode, reasonNote: reasonCode === 'OTHER' ? item.reasonNote : null }
+      : item)
+    itemsRef.current = next; setItems(next); markChanged()
+  }
+
+  const updateReasonNote = (productId: string, reasonNote: string) => {
+    const next = itemsRef.current.map((item) => item.productId === productId ? { ...item, reasonNote } : item)
     itemsRef.current = next; setItems(next); markChanged()
   }
 
@@ -283,7 +340,16 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
       setSuccess(inventoryType === 'cycle' ? 'Inventário concluído e saldo reconciliado com sucesso.' : 'Controle de estoque iniciado com sucesso.'); await load(storeId)
     } catch (cause) {
       console.error('Falha ao finalizar inventário:', cause)
-      setError(isVersionConflict(cause) ? 'Este inventário foi atualizado em outro dispositivo. Recarregue para continuar.' : 'Não foi possível finalizar o inventário.')
+      // O frontend já bloqueia estes dois casos antes de chegar aqui (botão
+      // desabilitado); a RPC valida de novo por segurança — mensagem amigável
+      // cobre o caso raro de o estado ter mudado em outro dispositivo.
+      const message = String(cause instanceof Error ? cause.message : cause)
+      setError(
+        isVersionConflict(cause) ? 'Este inventário foi atualizado em outro dispositivo. Recarregue para continuar.'
+        : message.includes('INVENTORY_UNCOUNTED_ITEMS') ? 'Ainda existem produtos sem contagem informada.'
+        : message.includes('INVENTORY_REASON_REQUIRED') ? 'Existem divergências de saldo sem motivo informado.'
+        : 'Não foi possível finalizar o inventário.'
+      )
       if (isVersionConflict(cause)) setSaveState('conflict')
       setConfirming(false)
     } finally { setSaving(false) }
@@ -303,9 +369,22 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
 
   const leaveStock = async () => {
     if (counting && dirtyRef.current) {
-      if (!await persistDraft()) { setExitBlocked(true); return }
+      if (!await persistDraft()) { setExitBlocked('back'); return }
     }
     onBack()
+  }
+
+  // "Fechar inventário": sai da contagem sem finalizar (sem RPC, sem
+  // movimento, sem tocar no saldo) e sem apagar o rascunho — mesmo autosave
+  // de sempre garante que a última alteração já está salva antes de sair.
+  // Volta para a tela de Estoque do mesmo local (não sai do módulo, ao
+  // contrário de leaveStock): counting=false + draft preenchido já reexibe
+  // sozinho o card "Inventário em andamento" com "Continuar inventário".
+  const closeInventory = async () => {
+    if (dirtyRef.current) {
+      if (!await persistDraft()) { setExitBlocked('close'); return }
+    }
+    setCounting(false); setConfirming(false)
   }
 
   const syncProducts = async () => {
@@ -338,7 +417,7 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     <div className="market-dashboard-filter"><label htmlFor="market-stock-store">Local de estoque</label><select id="market-stock-store" value={storeId} onChange={(event) => void changeStore(event.target.value)} disabled={loading || counting}><option value="">Selecione um local</option>{context.access.stores.map((store) => <option key={store.id} value={store.id}>{store.store_type === 'warehouse' ? 'Galpão' : 'Loja'} — {store.external_code ? `${store.external_code} — ` : ''}{store.name}</option>)}</select>{selectedStore && <span>{selectedStore.name}</span>}</div>
     {error && <div className="admin-message is-error" role="alert">{error}</div>}
     {success && <div className="admin-message" role="status"><CheckCircle2 size={18} /> {success}</div>}
-    {exitBlocked && <div className="market-draft-warning" role="alert"><p>Não foi possível salvar as últimas alterações. Continue nesta tela para não perder a contagem.</p><div><button className="button button-small button-outline" onClick={() => setExitBlocked(false)}>Continuar na tela</button><button className="button button-small" onClick={() => { setExitBlocked(false); void leaveStock() }}>Tentar novamente</button></div></div>}
+    {exitBlocked && <div className="market-draft-warning" role="alert"><p>Não foi possível salvar as últimas alterações. Continue nesta tela para não perder a contagem.</p><div><button className="button button-small button-outline" onClick={() => setExitBlocked(false)}>Continuar na tela</button><button className="button button-small" onClick={() => { const pending = exitBlocked; setExitBlocked(false); void (pending === 'close' ? closeInventory() : leaveStock()) }}>Tentar novamente</button></div></div>}
     {saveState === 'conflict' && <div className="market-draft-warning" role="alert"><p>Este inventário foi atualizado em outro dispositivo. Recarregue para continuar.</p><button className="button button-small" onClick={() => void load(storeId)}>Recarregar rascunho</button></div>}
 
     {selectedStore && !selectedStore.stock_control_started_at && !counting && !draft && <section className="market-stock-start market-stock-welcome"><Boxes size={34} /><div><span className="panel-kicker">ESTOQUE</span><h2>Controle de estoque ainda não iniciado</h2><p>Faça uma contagem rápida dos produtos que estão neste local agora.</p></div>{context.canStart ? <button className="button market-stock-primary-action" disabled={saving} onClick={() => void startDraft()}>{saving ? 'Iniciando...' : 'Iniciar inventário'}</button> : <div className="admin-message">Seu perfil possui acesso somente para visualização.</div>}</section>}
@@ -352,21 +431,71 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
       <div className="market-counted-products">{items.length ? items.map((item) => {
         const product = products?.find((candidate) => candidate.id === item.productId)
         if (!product) return null
-        const currentQuantity = balanceByProduct.get(item.productId) ?? 0
-        const difference = item.quantity - currentQuantity
-        return <article ref={(element) => { itemRefs.current[item.productId] = element }} className={`${item.quantity === 0 && !isCycleInventory ? 'is-zero ' : ''}${highlightedProductId === item.productId ? 'is-highlighted' : ''}`} key={item.productId}>
-          <div className="market-counted-product-name"><strong>{product.name}</strong><small>{productIdentifier(product)}</small>{isCycleInventory && <span className="market-stock-comparison">Saldo {number.format(currentQuantity)} · Contagem {number.format(item.quantity)} · <b className={difference > 0 ? 'is-positive' : difference < 0 ? 'is-negative' : ''}>Diferença {difference > 0 ? '+' : ''}{number.format(difference)}</b></span>}</div>
-          <div className="market-quantity-stepper"><button type="button" aria-label={`Diminuir quantidade de ${product.name}`} onClick={() => updateQuantity(item.productId, item.quantity - 1)}><Minus /></button><input aria-label={`Quantidade contada de ${product.name}`} ref={(element) => { quantityRefs.current[item.productId] = element }} type="number" min="0" step="0.001" inputMode="decimal" value={item.quantity} onChange={(event) => updateQuantity(item.productId, Number(event.target.value))} onKeyDown={finishQuantity} onFocus={(event) => event.target.select()} /><button type="button" aria-label={`Aumentar quantidade de ${product.name}`} onClick={() => updateQuantity(item.productId, item.quantity + 1)}><Plus /></button></div>
-          {item.quantity === 0 && <small className="market-zero-note">{isCycleInventory ? 'Contado = 0. Este produto será reconciliado com saldo zero.' : 'Quantidade zero: não será persistida nem enviada.'}</small>}
+        // Mesma comparação para qualquer origem do item (draft já carregado,
+        // busca por nome, EAN/GTIN, código externo/SKU ou scanner): todas
+        // resolvem productId e passam por balanceByProduct, a mesma Map já
+        // usada acima. "known: false" (nunca movimentou neste local) nunca
+        // vira "Saldo 0" silenciosamente — mostra o estado explícito abaixo.
+        const comparison = compareStockCount(balanceByProduct, item.productId, item.quantity)
+        const needsReason = requiresDivergenceReason(comparison, item.isCounted)
+        const balanceLabel = comparison.known ? number.format(comparison.currentQuantity) : 'não registrado'
+        const countedLabel = item.isCounted ? number.format(comparison.countedQuantity) : '—'
+        const showDifference = item.isCounted && comparison.known
+        const differenceLabel = showDifference ? `${comparison.difference > 0 ? '+' : ''}${number.format(comparison.difference)}` : '—'
+        const differenceClass = showDifference ? (comparison.difference > 0 ? 'is-positive' : comparison.difference < 0 ? 'is-negative' : '') : ''
+        return <article ref={(element) => { itemRefs.current[item.productId] = element }} className={`${item.isCounted && item.quantity === 0 && !isCycleInventory ? 'is-zero ' : ''}${highlightedProductId === item.productId ? 'is-highlighted' : ''}`} key={item.productId}>
+          <div className="market-counted-product-name"><strong>{product.name}</strong><small>{productIdentifier(product)}</small>{(isCycleInventory || comparison.known) && <span className="market-stock-comparison">Saldo {balanceLabel} · Contagem {countedLabel} · <b className={differenceClass}>Diferença {differenceLabel}</b></span>}</div>
+          <div className="market-quantity-stepper">
+            {/* "-" em item não contado fica desabilitado: não há de onde
+                decrementar ainda, e decidir sozinho "0 contado" via minus
+                seria confuso (minus implica reduzir um número existente). */}
+            <button type="button" aria-label={`Diminuir quantidade de ${product.name}`} disabled={!item.isCounted} onClick={() => updateQuantity(item.productId, item.quantity - 1)}><Minus /></button>
+            <input aria-label={`Quantidade contada de ${product.name}`} ref={(element) => { quantityRefs.current[item.productId] = element }} type="number" min="0" step="0.001" inputMode="decimal" placeholder="—"
+              value={item.isCounted ? item.quantity : ''}
+              onChange={(event) => { const raw = event.target.value; if (raw.trim() === '') clearQuantity(item.productId); else updateQuantity(item.productId, Number(raw)) }}
+              onKeyDown={finishQuantity} onFocus={(event) => event.target.select()} />
+            {/* "+" em item não contado inicia em 1 e já marca contado. */}
+            <button type="button" aria-label={`Aumentar quantidade de ${product.name}`} onClick={() => updateQuantity(item.productId, (item.isCounted ? item.quantity : 0) + 1)}><Plus /></button>
+          </div>
+          {item.isCounted && item.quantity === 0 && <small className="market-zero-note">{isCycleInventory ? 'Contado = 0. Este produto será reconciliado com saldo zero.' : 'Quantidade zero: não será persistida nem enviada.'}</small>}
+          {needsReason && <div className="market-stock-reason">
+            <label>Motivo da divergência
+              <select value={item.reasonCode ?? ''} onChange={(event) => updateReasonCode(item.productId, (event.target.value || null) as MarketInventoryReasonCode | null)}>
+                <option value="">Selecione o motivo</option>
+                {reasonCodes.map((code) => <option key={code} value={code}>{reasonLabels[code]}</option>)}
+              </select>
+            </label>
+            {item.reasonCode === 'OTHER' && <label>Observação
+              <input value={item.reasonNote ?? ''} onChange={(event) => updateReasonNote(item.productId, event.target.value)} placeholder="Descreva o motivo" />
+            </label>}
+          </div>}
           {isCycleInventory && <button className="market-remove-counted" type="button" onClick={() => removeCountedProduct(item.productId)}><Trash2 size={15} /> Remover da contagem</button>}
         </article>
       }) : <div className="market-inventory-empty"><Search size={25} /><p>Busque o primeiro produto para começar.</p></div>}</div>
       <label className="market-stock-start-date">{isCycleInventory ? 'Data e hora da conferência' : 'Data e hora do marco inicial'}<input type="datetime-local" value={startedAt} onChange={(event) => { setStartedAt(event.target.value); startedAtRef.current = event.target.value; markChanged() }} /></label>
       {saveState === 'error' && <button className="button button-small button-outline" onClick={() => void persistDraft()}>Tentar salvar novamente</button>}
-      {!confirming ? <div className="market-inventory-finish"><span>{countedItems.length} {countedItems.length === 1 ? (isCycleInventory ? 'produto será reconciliado' : 'produto será enviado') : (isCycleInventory ? 'produtos serão reconciliados' : 'produtos serão enviados')}</span><button className="button" disabled={!countedItems.length || !startedAt || saveState === 'conflict'} onClick={() => setConfirming(true)}>Finalizar inventário</button></div> : <div className="market-inventory-confirm"><div><span className="panel-kicker">CONFIRMAR INVENTÁRIO</span><h3>{selectedStore.name}</h3>{isCycleInventory ? <div className="market-cycle-summary"><p><strong>{items.length}</strong> produtos contados</p><p><strong>{cycleSummary.adjustmentInProducts}</strong> ajustes de entrada · {number.format(cycleSummary.adjustmentInQuantity)} unidades</p><p><strong>{cycleSummary.adjustmentOutProducts}</strong> ajustes de saída · {number.format(cycleSummary.adjustmentOutQuantity)} unidades</p><p><strong>{cycleSummary.unchangedProducts}</strong> sem diferença</p></div> : <p>{positiveItems.length} {positiveItems.length === 1 ? 'produto contado' : 'produtos contados'} · marco em {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(startedAt))}</p>}</div><div><button className="button button-outline" disabled={saving} onClick={() => setConfirming(false)}>Continuar inventário</button><button className="button" disabled={saving} onClick={() => void finalizeDraft()}>{saving ? 'Finalizando...' : isCycleInventory ? 'Confirmar inventário' : 'Confirmar e iniciar estoque'}</button></div></div>}
+      {/* Bloqueio duplo (regra 3/4): também validado no backend
+          (market_finalize_inventory_draft), para não depender só da UI. */}
+      {!confirming && (uncountedItems.length > 0 || itemsNeedingReason.length > 0) && <div className="market-inventory-block-note" role="status">
+        {uncountedItems.length > 0 && <p>Ainda existem produtos sem contagem informada.</p>}
+        {itemsNeedingReason.length > 0 && <p>Existem divergências de saldo sem motivo informado.</p>}
+      </div>}
+      {!confirming ? <div className="market-inventory-finish"><span>{countedItems.length} {countedItems.length === 1 ? (isCycleInventory ? 'produto será reconciliado' : 'produto será enviado') : (isCycleInventory ? 'produtos serão reconciliados' : 'produtos serão enviados')}</span><button className="button button-outline" disabled={saveState === 'conflict'} onClick={() => void closeInventory()}>Fechar inventário</button><button className="button" disabled={!countedItems.length || !startedAt || saveState === 'conflict' || uncountedItems.length > 0 || itemsNeedingReason.length > 0} onClick={() => setConfirming(true)}>Finalizar inventário</button></div> : <div className="market-inventory-confirm"><div><span className="panel-kicker">CONFIRMAR INVENTÁRIO</span><h3>{selectedStore.name}</h3>{isCycleInventory ? <div className="market-cycle-summary"><p><strong>{items.length}</strong> produtos contados</p><p><strong>{cycleSummary.adjustmentInProducts}</strong> ajustes de entrada · {number.format(cycleSummary.adjustmentInQuantity)} unidades</p><p><strong>{cycleSummary.adjustmentOutProducts}</strong> ajustes de saída · {number.format(cycleSummary.adjustmentOutQuantity)} unidades</p><p><strong>{cycleSummary.unchangedProducts}</strong> sem diferença</p></div> : <p>{positiveItems.length} {positiveItems.length === 1 ? 'produto contado' : 'produtos contados'} · marco em {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(startedAt))}</p>}</div><div><button className="button button-outline" disabled={saving} onClick={() => setConfirming(false)}>Continuar inventário</button><button className="button" disabled={saving} onClick={() => void finalizeDraft()}>{saving ? 'Finalizando...' : isCycleInventory ? 'Confirmar inventário' : 'Confirmar e iniciar estoque'}</button></div></div>}
     </section>}
 
-    {selectedStore?.stock_control_started_at && !counting && <section className="market-stock-balance"><div><span className="panel-kicker">SALDO ATUAL</span><h2>Controle de estoque iniciado</h2><p>Marco inicial: {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(selectedStore.stock_control_started_at))}</p></div>{!draft && context.canStart && <button className="button market-stock-primary-action" disabled={saving} onClick={() => void startDraft()}>{saving ? 'Iniciando...' : 'Novo inventário'}</button>}{balance.length ? <div className="market-preview-table-wrap"><table className="market-preview-table market-stock-table"><thead><tr><th>Produto</th><th>Identificador</th><th>Quantidade atual</th></tr></thead><tbody>{balance.map((row) => { const product = products?.find((candidate) => candidate.id === row.productId); return <tr key={`${row.marketStoreId}:${row.productId}`}><td>{row.productName}</td><td>{product ? productIdentifier(product) : row.ean || row.sku || '—'}</td><td><strong>{number.format(row.quantityOnHand)} {row.unit}</strong></td></tr> })}</tbody></table></div> : <div className="admin-message">Nenhum saldo encontrado para este local.</div>}</section>}
+    {selectedStore?.stock_control_started_at && !counting && <section className="market-stock-balance">
+      <div><span className="panel-kicker">SALDO ATUAL</span><h2>Controle de estoque iniciado</h2><p>Marco inicial: {new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(selectedStore.stock_control_started_at))}</p></div>
+      {!draft && context.canStart && <button className="button market-stock-primary-action" disabled={saving} onClick={() => void startDraft()}>{saving ? 'Iniciando...' : 'Novo inventário'}</button>}
+      {balance.length > 0 && <label className="market-stock-balance-search">
+        <Search size={16} /><span className="sr-only">Buscar saldo por descrição ou EAN/GTIN</span>
+        <input type="search" inputMode="search" autoComplete="off" placeholder="Buscar por descrição ou EAN/GTIN" value={balanceQuery} onChange={(event) => setBalanceQuery(event.target.value)} />
+      </label>}
+      {!balance.length
+        ? <div className="admin-message">Ainda não há saldo registrado para este local.</div>
+        : filteredBalance.length
+          ? <div className="market-preview-table-wrap"><table className="market-preview-table market-stock-table"><thead><tr><th>Produto</th><th>Identificador</th><th>Quantidade atual</th></tr></thead><tbody>{filteredBalance.map((row) => { const product = products?.find((candidate) => candidate.id === row.productId); return <tr key={`${row.marketStoreId}:${row.productId}`}><td>{row.productName}</td><td>{product ? productIdentifier(product) : row.ean || row.sku || '—'}</td><td><strong>{number.format(row.quantityOnHand)} {row.unit}</strong></td></tr> })}</tbody></table></div>
+          : <div className="admin-message">Nenhum produto encontrado para "{balanceQuery}".</div>}
+    </section>}
     {scannerOpen && <BarcodeScanner onDetected={handleScannedCode} onClose={() => { setScannerOpen(false); window.setTimeout(() => searchRef.current?.focus(), 0) }} />}
   </div>
 }

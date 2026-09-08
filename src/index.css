@@ -937,6 +937,11 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-stock-add-item label { display: grid; gap: 7px; color: var(--ink); font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .market-stock-table { min-width: 650px; }
 .market-stock-table td:last-child, .market-stock-table th:last-child { text-align: right; }
+/* Busca leve do saldo atual (mesma linguagem visual do input de busca de
+   usuários, .admin-user-search, mas isolada aqui para não acoplar as duas telas). */
+.market-stock-balance-search { display: flex; align-items: center; gap: 10px; max-width: 420px; padding: 0 14px; border: 1px solid #b9c7bc; border-radius: 7px; background: #fff; color: var(--muted); }
+.market-stock-balance-search:focus-within { border-color: var(--coral); }
+.market-stock-balance-search input { width: 100%; min-height: 42px; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 14px; }
 .market-stock-header { margin-bottom: 22px; }
 .market-stock-welcome { justify-items: start; }
 .market-stock-welcome > svg { color: var(--green); }
@@ -993,6 +998,12 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-quantity-stepper input { width: 70px; height: 46px; padding: 6px; border: 1px solid #b9c7bc; border-radius: 9px; background: #fff; color: var(--ink); font: inherit; font-size: 18px; font-weight: 800; text-align: center; }
 .market-zero-note { grid-column: 1 / -1; color: #9f3f2f; }
 .market-remove-counted { display: inline-flex; grid-column: 1 / -1; align-items: center; justify-self: start; gap: 5px; padding: 4px 0; border: 0; background: transparent; color: #9f3f2f; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.market-stock-reason { grid-column: 1 / -1; display: grid; gap: 8px; margin-top: 2px; padding: 10px 12px; border: 1px solid #e5b4aa; border-radius: 8px; background: #fff3ef; }
+.market-stock-reason label { display: grid; gap: 5px; color: var(--ink); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.market-stock-reason select, .market-stock-reason input { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid #b9c7bc; border-radius: 6px; background: #fff; color: var(--ink); font: inherit; font-size: 13px; text-transform: none; }
+.market-inventory-block-note { margin: 14px 0 0; padding: 10px 14px; border: 1px solid #e5b4aa; border-radius: 8px; background: #fff3ef; color: #9f3f2f; font-size: 12px; }
+.market-inventory-block-note p { margin: 0; }
+.market-inventory-block-note p + p { margin-top: 4px; }
 .market-inventory-empty { display: grid; justify-items: center; gap: 8px; padding: 34px 20px; border: 1px dashed #b7ccc0; border-radius: 10px; color: var(--muted); text-align: center; }
 .market-inventory-empty p { margin: 0; }
 .market-stock-start-date { display: grid; gap: 6px; max-width: 330px; margin-top: 24px; color: var(--ink); font-size: 11px; font-weight: 700; text-transform: uppercase; }
@@ -1095,6 +1106,11 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
   .market-commercial-attention { grid-template-columns: 1fr; }
   .market-stock-add-item { grid-template-columns: 1fr; }
   .market-stock-add-item .button { width: 100%; }
+  /* Tabela de saldo atual (3 colunas) cabe na largura do celular sem rolagem
+     horizontal; min-width: 650px era pensado para tabelas maiores (ex.:
+     prévia de importação), não se aplica aqui. */
+  .market-stock-table { min-width: 0; }
+  .market-stock-balance-search { max-width: none; }
   .market-quick-heading { align-items: flex-start; flex-direction: column; gap: 10px; }
   /* "Atualizar mercadorias"/"Atualizar" (Compras): mesmo padrão de quebra já
      usado no card de sincronização do Estoque (.market-product-sync-card),

@@ -10,9 +10,28 @@ export interface MarketStockProduct {
   externalProductCodes: string[]
 }
 
+export type MarketInventoryReasonCode =
+  | 'EXPIRED_LOSS'
+  | 'DAMAGE'
+  | 'THEFT_LOSS'
+  | 'PREVIOUS_COUNT_ERROR'
+  | 'UNREGISTERED_PURCHASE'
+  | 'UNREGISTERED_TRANSFER'
+  | 'INTERNAL_USE'
+  | 'OTHER'
+
 export interface MarketInitialInventoryItem {
   productId: string
   quantity: number
+  // false = selecionado na contagem mas ainda sem quantidade física
+  // informada pelo operador. Não confundir com quantity=0 (contagem
+  // explícita de zero, isCounted=true) — quantity continua sempre um
+  // número, nunca null; isCounted é quem carrega esse significado.
+  isCounted: boolean
+  // Motivo da divergência (obrigatório na finalização quando o saldo é
+  // conhecido e diverge da contagem). reasonNote só é obrigatório para 'OTHER'.
+  reasonCode: MarketInventoryReasonCode | null
+  reasonNote: string | null
 }
 
 export interface MarketStockBalanceRow {
