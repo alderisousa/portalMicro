@@ -38,9 +38,10 @@ const formatStockEntry = (item: MarketPurchaseItem) =>
   item.stockQuantity === null || item.stockUnit === null ? 'Aguardando conversão' : `${quantityFormat.format(item.stockQuantity)} ${item.stockUnit}`
 // stock_unit_cost pode ser null por dois motivos bem diferentes: conversão
 // ainda não resolvida (conversion_factor/stock_unit ausentes) ou conversão já
-// resolvida mas net_amount ausente no documento (comum no Texto IA, que não
-// promove gross_amount a net_amount automaticamente). Rótulos distintos para
-// não sugerir "conversão pendente" quando na verdade falta é o custo.
+// resolvida mas nem net_amount nem gross_amount existem no documento (a
+// coluna gerada já cai para gross_amount sozinha quando só net_amount falta
+// — caso comum no Texto IA). Rótulos distintos para não sugerir "conversão
+// pendente" quando na verdade é a linha que não trouxe nenhum valor usável.
 const formatStockUnitCost = (item: MarketPurchaseItem) => {
   if (item.conversionFactor === null || item.stockUnit === null) return 'Aguardando conversão'
   if (item.stockUnitCost === null) return 'Custo não informado'
@@ -121,7 +122,10 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
     return () => clearTimeout(timer)
   }, [message])
 
-  const loadItems = useCallback(async (purchaseId: string) => {
+  // Retorna os itens recém-carregados (além de já atualizar itemsState) para
+  // que quem chamou possa decidir o próximo passo (avanço automático) sem
+  // depender de um closure de estado que ainda não recommitou.
+  const loadItems = useCallback(async (purchaseId: string): Promise<MarketPurchaseItem[] | undefined> => {
     setItemsState((prev) => ({
       ...prev,
       [purchaseId]: { loading: true, error: false, items: prev[purchaseId]?.items ?? [], products: prev[purchaseId]?.products ?? {} },
@@ -132,21 +136,59 @@ export function MarketPurchases({ accountId, warehouses, canImport, onBack }: Pr
       const products = await listMarketProductsByIds(accountId, productIds)
       const productsById = Object.fromEntries(products.map((product) => [product.id, product]))
       setItemsState((prev) => ({ ...prev, [purchaseId]: { loading: false, error: false, items, products: productsById } }))
+      return items
     } catch {
       setItemsState((prev) => ({ ...prev, [purchaseId]: { loading: false, error: true, items: [], products: {} } }))
+      return undefined
     }
   }, [accountId])
 
-  const handleReconciled = () => {
-    if (!reconcileTarget) return
-    void loadItems(reconcileTarget.purchaseId)
-    void load()
-    setReconcileTarget(null)
+  // Avanço automático entre itens: abre sozinho o próximo item ainda pendente
+  // de conferência (stockEntryStatus pending + não conferido) da mesma nota,
+  // na mesma ordem visual da lista (listMarketPurchaseItems já ordena por
+  // line_number). Se ele já tem produto vinculado (conciliado manualmente ou
+  // resolvido pelo reprocessamento em cascata), pula direto para a
+  // conferência; senão abre o vínculo primeiro. Não abre nada quando não há
+  // mais item pendente — quem chama decide parar o fluxo (Cancelar) sem
+  // passar por aqui.
+  const openNextPendingItem = (purchaseId: string, items: MarketPurchaseItem[]) => {
+    const next = items.find((item) => canReviewPurchaseItem(item) && !isHumanReviewed(item))
+    if (!next) return
+    if (next.marketProductId) setReviewTarget({ purchaseId, item: next })
+    else setReconcileTarget({ purchaseId, item: next })
   }
 
-  const handleReviewSaved = () => {
+  // itemsAutoResolved > 0 só acontece quando "usar esta correspondência" foi
+  // marcado e o mapping recém-persistido resolveu produto de outras linhas
+  // pendentes da MESMA compra (RPC de conciliação já reprocessa isso na
+  // mesma transação). Resolver produto não é conferir: essas linhas ainda
+  // precisam da conferência humana normal antes de poderem ser recebidas.
+  const handleReconciled = async (itemsAutoResolved: number) => {
+    if (!reconcileTarget) return
+    const { purchaseId, item } = reconcileTarget
+    const items = await loadItems(purchaseId)
+    void load()
+    setReconcileTarget(null)
+    if (itemsAutoResolved > 0) setMessage({
+      error: false,
+      text: `Correspondência salva. ${itemsAutoResolved} ${itemsAutoResolved === 1 ? 'outro item foi reconhecido' : 'outros itens foram reconhecidos'} automaticamente.`,
+    })
+    // Vínculo acabado de salvar: avança direto para a conferência do MESMO
+    // item, sem exigir outro clique — nunca confere sozinho, só abre a tela.
+    const justConfirmed = items?.find((current) => current.id === item.id)
+    if (justConfirmed) setReviewTarget({ purchaseId, item: justConfirmed })
+  }
+
+  // onSaved só dispara quando a conferência foi de fato confirmada (ver
+  // PurchaseItemReviewDialog.save: uma falha na confirmação cai no catch e
+  // nunca chama onSaved) — por isso é o ponto certo para avançar sozinho.
+  const handleReviewSaved = async () => {
     if (!reviewTarget) return
-    void loadItems(reviewTarget.purchaseId); void load(); setReviewTarget(null)
+    const { purchaseId } = reviewTarget
+    const items = await loadItems(purchaseId)
+    void load()
+    setReviewTarget(null)
+    if (items) openNextPendingItem(purchaseId, items)
   }
   // "Dar entrada": único botão, sempre automático sobre todos os itens ainda
   // não recebidos que já estejam conciliados + conversão resolvida +

@@ -30,7 +30,7 @@ export function PurchaseUnitConversionFields({
   const factor = parseLooseNumber(factorInput)
   const stockUnit = item.stockUnit
   const stockQuantity = factor === null || factor <= 0 ? null : purchaseStockQuantity(item.quantity, factor)
-  const stockUnitCost = factor === null || factor <= 0 ? null : purchaseStockUnitCost(item.netAmount, item.quantity, factor)
+  const stockUnitCost = factor === null || factor <= 0 ? null : purchaseStockUnitCost(item.netAmount, item.quantity, factor, item.grossAmount)
   return <div className="market-conversion-fields">
     <dl className="market-conversion-stats">
       <div><dt>Documento</dt><dd>{item.quantity} {item.unit ?? ''}</dd></div>

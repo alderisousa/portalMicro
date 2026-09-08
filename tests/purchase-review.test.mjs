@@ -39,6 +39,11 @@ test('conversão de embalagem: exigência, cálculo e nunca "?" como unidade', (
   assert.equal(purchaseConversionRequired({marketProductId:'p',conversionFactor:6,stockUnit:'UN'}),false)
   assert.equal(purchaseStockQuantity(1,6),6); assert.equal(purchaseStockQuantity(1,null),null)
   assert.equal(purchaseStockUnitCost(167.4,1,6),27.9); assert.equal(purchaseStockUnitCost(167.4,1,null),null)
+  // net_amount ausente cai para grossAmount (mesmo fallback da coluna gerada
+  // stock_unit_cost no banco); sem nenhum dos dois, continua null — nunca inventa valor.
+  assert.equal(purchaseStockUnitCost(null,1,6,167.4),27.9)
+  assert.equal(purchaseStockUnitCost(null,1,6,null),null)
+  assert.equal(purchaseStockUnitCost(null,1,null,167.4),null)
   // O componente de conversão não deve mais usar "?" como unidade de fallback
   // (bug corrigido em 202609070003): valida por código, sem framework de DOM.
   const source = readFileSync(new URL('../src/components/PurchaseUnitConversionFields.tsx',import.meta.url),'utf8')
@@ -53,7 +58,7 @@ test('destaque de "Original" só aparece quando o valor mudou', () => {
   assert.equal(reviewValueChanged(null,null),false)
   assert.equal(reviewValueChanged(null,'UN'),true)
 })
-test('sugestão "usar total da linha" só aparece com net_amount ausente e gross_amount preenchido; nunca sobrescreve net_amount existente', () => {
+test('aviso "valor total usado como custo" só aparece com net_amount ausente e gross_amount preenchido; nunca sobrescreve net_amount existente', () => {
   assert.equal(shouldSuggestNetAmountFromGross({net_amount:null,gross_amount:167.4}),true) // caso real Norac
   assert.equal(shouldSuggestNetAmountFromGross({net_amount:null,gross_amount:null}),false) // nada para sugerir
   assert.equal(shouldSuggestNetAmountFromGross({net_amount:167.4,gross_amount:167.4}),false) // já informado, não mostra

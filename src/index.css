@@ -796,8 +796,7 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-ocr-review-original { display: block; margin-top: 2px; color: var(--muted); font-size: 10.5px; font-weight: 400; text-transform: none; letter-spacing: normal; }
 .market-ocr-review-original.is-changed { display: inline-block; margin-top: 4px; padding: 2px 7px; border-radius: 4px; background: #fbe9e5; color: #9f3f2f; font-weight: 700; }
 .market-ocr-review-precision-hint { display: block; margin-top: 1px; color: var(--muted); font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: normal; }
-.market-ocr-review-field-suggestion { display: inline-block; margin-top: 4px; padding: 0; border: 0; background: none; color: #2a5a94; font-size: 10.5px; font-weight: 700; text-transform: none; letter-spacing: normal; text-decoration: underline; cursor: pointer; }
-.market-ocr-review-field-suggestion:disabled { color: var(--muted); cursor: not-allowed; text-decoration: none; }
+.market-ocr-review-field-note { display: block; margin-top: 4px; color: #2a5a94; font-size: 10.5px; font-weight: 600; text-transform: none; letter-spacing: normal; }
 .market-ocr-review-field-tag { padding: 2px 7px; border-radius: 999px; background: #edf0eb; color: var(--muted); font-size: 9px; font-weight: 700; text-transform: none; letter-spacing: 0; }
 .market-ocr-review-field-tag.is-ocr { background: var(--mint); color: var(--green); }
 .market-ocr-review-field-tag.is-user { background: #e4ecf7; color: #2a5a94; }

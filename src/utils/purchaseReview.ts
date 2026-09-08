@@ -20,11 +20,11 @@ export const isPurchaseItemReconciled = (item: Pick<MarketPurchaseItem, 'reconci
 // Espelha o critério de prontidão para recebimento já validado no banco
 // (market_receive_purchase_items): conciliado + conversão resolvida + custo
 // unitário de estoque resolvido + conferido + ainda não recebido. Não geramos
-// entrada de estoque sem custo de aquisição — stock_unit_cost pode ficar null
-// mesmo com a conversão resolvida quando o documento não trouxe net_amount
-// (comum no Texto IA, que não promove gross_amount a net_amount sozinho). Só
-// UX (rótulo do botão, números da confirmação) — a RPC sempre revalida tudo
-// de novo, inclusive se o produto continua ativo/vigente no Accesys.
+// entrada de estoque sem custo de aquisição — stock_unit_cost já cai para
+// gross_amount sozinho quando só net_amount falta (coluna gerada no banco),
+// então só fica null quando a linha também não trouxe total válido. Só UX
+// (rótulo do botão, números da confirmação) — a RPC sempre revalida tudo de
+// novo, inclusive se o produto continua ativo/vigente no Accesys.
 export function isPurchaseItemReadyToReceive(item: MarketPurchaseItem): boolean {
   return item.stockEntryStatus === 'pending'
     && item.marketProductId !== null
@@ -42,11 +42,12 @@ export function isPurchaseItemUntouched(item: MarketPurchaseItem): boolean {
   return item.reconciliationStatus === 'pending' && !isHumanReviewed(item) && item.stockEntryStatus === 'pending'
 }
 
-// "Usar total da linha como valor líquido" (PurchaseReviewFields): sugestão
-// discreta e explícita, nunca fallback automático — só aparece quando
-// net_amount ainda não foi informado e há um total bruto para sugerir. Nunca
-// sobrescreve um net_amount já existente. Preencher não confere nem salva
-// sozinho: o operador ainda revisa, salva e reconfirma a conferência.
+// Mesma condição usada pela nota informativa em PurchaseReviewFields ("Valor
+// líquido não informado... foi utilizado o total da linha para calcular o
+// custo"): só é verdadeira quando net_amount ainda não foi informado e há um
+// total bruto para usar como base. O fallback em si acontece no banco
+// (calculated_unit_cost/stock_unit_cost) sem escrever em net_amount — esta
+// função só decide quando avisar o operador, nunca preenche nada sozinha.
 export function shouldSuggestNetAmountFromGross(values: Pick<PurchaseReviewValues, 'net_amount' | 'gross_amount'>): boolean {
   return values.net_amount === null && values.gross_amount !== null
 }
@@ -61,9 +62,13 @@ export function purchaseConversionRequired(item: Pick<MarketPurchaseItem, 'marke
 export function purchaseStockQuantity(quantity: number, conversionFactor: number | null): number | null {
   return conversionFactor === null ? null : Math.round(quantity * conversionFactor * 1e4) / 1e4
 }
-export function purchaseStockUnitCost(netAmount: number | null, quantity: number, conversionFactor: number | null): number | null {
-  if (netAmount === null || conversionFactor === null || quantity * conversionFactor === 0) return null
-  return Math.round((netAmount / (quantity * conversionFactor)) * 1e6) / 1e6
+// Espelha (só para prévia client-side) o fallback da coluna gerada stock_unit_cost:
+// usa net_amount quando informado; cai para grossAmount (total da linha) quando o
+// documento não trouxe valor líquido. Nunca inventa valor quando nenhum dos dois existe.
+export function purchaseStockUnitCost(netAmount: number | null, quantity: number, conversionFactor: number | null, grossAmount: number | null = null): number | null {
+  const effectiveAmount = netAmount ?? grossAmount
+  if (effectiveAmount === null || conversionFactor === null || quantity * conversionFactor === 0) return null
+  return Math.round((effectiveAmount / (quantity * conversionFactor)) * 1e6) / 1e6
 }
 export const isHumanReviewed = (item: MarketPurchaseItem) => Boolean(item.reviewedAt && item.reviewedBy)
 

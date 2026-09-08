@@ -60,7 +60,7 @@ await db.exec(`
 const core=sqlFile('202608310001_create_market_multitenant_core.sql')
 await db.exec(core.slice(core.indexOf('create table if not exists public.market_purchases ('),core.indexOf('-- 6. IMPORTAÇÃO DE VENDAS')))
 await db.exec('alter table market_purchases enable row level security; alter table market_purchase_items enable row level security;')
-for (const name of ['202609040001_create_market_purchase_staging_foundation.sql','202609040002_import_market_purchase_staging.sql','202609040003_reimport_purchase_staging.sql','202609040004_purchase_reconciliation.sql','202609040005_purchase_reconciliation_accesys_scope.sql','202609070001_purchase_human_review.sql','202609070002_purchase_unit_conversion.sql','202609070003_fix_purchase_unit_conversion_resolution.sql','202609070004_purchase_ai_text_staging.sql','202609070005_purchase_receiving.sql','202609070006_purchase_receiving_require_unit_cost.sql']) await db.exec(sqlFile(name))
+for (const name of ['202609040001_create_market_purchase_staging_foundation.sql','202609040002_import_market_purchase_staging.sql','202609040003_reimport_purchase_staging.sql','202609040004_purchase_reconciliation.sql','202609040005_purchase_reconciliation_accesys_scope.sql','202609070001_purchase_human_review.sql','202609070002_purchase_unit_conversion.sql','202609070003_fix_purchase_unit_conversion_resolution.sql','202609070004_purchase_ai_text_staging.sql','202609070005_purchase_receiving.sql','202609070006_purchase_receiving_require_unit_cost.sql','202609080001_purchase_review_automation.sql']) await db.exec(sqlFile(name))
 
 const query = async (sql,params=[]) => (await db.query(sql,params)).rows
 const values={supplier_product_code:'7892840825133',barcode_raw:'7892840825133',description_raw:'Produto',quantity:15,unit:'UN',unit_price:7.69,gross_amount:115.35,net_amount:115.35,discount_amount:0,freight_amount:0,other_amount:0}
@@ -444,7 +444,7 @@ test('16./17./18. custo unitário, custo total e referências à compra/item pre
   const balance=(await query('select * from market_stock_balance where market_account_id=$1 and market_store_id=$2 and product_id=$3',[account,store,product]))[0]
   assert.equal(Number(balance.quantity_on_hand),Number(item.stock_quantity))
 })
-test('caso real Norac: net_amount ausente bloqueia o recebimento mesmo com conversão resolvida e item conferido',async()=>{
+test('caso real Norac: net_amount ausente usa automaticamente o total da linha para o custo, sem exigir edição manual (item 1/2/3 do pedido)',async()=>{
   const noracValues={...values,supplier_product_code:'norac-1',barcode_raw:null,net_amount:null}
   const id=await importDoc('pdf:norac-cost:1',noracValues)
   let row=await getItem(id)
@@ -453,17 +453,149 @@ test('caso real Norac: net_amount ausente bloqueia o recebimento mesmo com conve
   await save(row,noracValues,true)
   row=await getItem(id)
   assert.ok(row.reviewed_at) // conferido normalmente: net_amount não é exigido para conferir
+  assert.equal(row.net_amount,null) // fallback NUNCA escreve em net_amount — o documento continua fiel ao original
+  assert.equal(row.original_data.net_amount,null)
   assert.equal(Number(row.conversion_factor),1); assert.equal(row.stock_unit,'UN') // PT/UN→UN: conversão 1:1 resolvida
   assert.equal(Number(row.stock_quantity),15) // não depende de net_amount
-  assert.equal(row.stock_unit_cost,null) // só falta o custo
-  await assert.rejects(receive(id),/PURCHASE_RECEIVE_NO_READY_ITEMS/)
-  // menor caminho já existente: operador informa o valor líquido em "Revisar dados" (mesmo campo de sempre) e reconfirma
-  row=await getItem(id)
-  await save(row,{...noracValues,net_amount:noracValues.gross_amount},true)
-  row=await getItem(id)
-  assert.ok(row.stock_unit_cost)
-  const result=await receive(id)
+  const expectedCost=Number(row.gross_amount)/15
+  assert.ok(Math.abs(Number(row.calculated_unit_cost)-expectedCost)<1e-6) // custo "documento" usa o total da linha
+  assert.ok(Math.abs(Number(row.stock_unit_cost)-expectedCost)<1e-6) // custo "estoque" idem (fator 1)
+  const result=await receive(id) // pronto de primeira: nenhuma edição manual de net_amount foi necessária
   assert.equal(result.itemsReceivedNow,1)
+  const movement=(await query('select unit_cost from market_stock_movements where reference_item_id=$1',[row.id]))[0]
+  assert.ok(Math.abs(Number(movement.unit_cost)-expectedCost)<1e-6)
+})
+test('item 3: sem valor líquido e sem total válido, custo continua null mesmo já conciliado e convertido — nunca inventa valor',async()=>{
+  const noTotalValues={...values,supplier_product_code:'no-total-1',barcode_raw:null,net_amount:null,gross_amount:null,unit_price:null}
+  const id=await importDoc('pdf:no-total:1',noTotalValues)
+  let row=await getItem(id)
+  assert.equal(row.gross_amount,null); assert.equal(row.net_amount,null)
+  assert.equal(row.calculated_unit_cost,null); assert.equal(row.stock_unit_cost,null)
+  // Mesmo com produto conciliado e conversão 1:1 resolvida (UN=UN), sem
+  // nenhum valor monetário na linha o custo continua null — não é só a
+  // conversão pendente que produzia null antes.
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,false)',[account,row.id,product])
+  row=await getItem(id)
+  assert.equal(Number(row.conversion_factor),1); assert.equal(row.stock_unit,'UN')
+  assert.equal(row.calculated_unit_cost,null); assert.equal(row.stock_unit_cost,null)
+})
+let cascadeId, cascadeRows
+test('itens 4/7: nova correspondência é aplicada imediatamente a outra ocorrência idêntica da MESMA compra',async()=>{
+  const supplierDoc='66777888000122'
+  const itemA={...values,supplier_product_code:'cascade-1',barcode_raw:null,description_raw:'Produto cascata A'}
+  const itemB={...values,supplier_product_code:'cascade-1',barcode_raw:null,description_raw:'Produto cascata B (mesma identidade de mapping)'}
+  const itemC={...values,supplier_product_code:'cascade-other',barcode_raw:null,description_raw:'Produto não relacionado'}
+  const doc=document(itemA); doc.header.supplierCnpj=supplierDoc; doc.items=[itemA,itemB,itemC]
+  cascadeId=(await query('select market_import_pdf_purchase_staging($1,$2,$3,$4,$4) as id',[account,store,'pdf:cascade:1',doc]))[0].id
+  cascadeRows=await itemsOf(cascadeId)
+  assert.equal(cascadeRows[0].reconciliation_status,'pending'); assert.equal(cascadeRows[1].reconciliation_status,'pending')
+  const result=(await query(
+    'select market_confirm_purchase_item_reconciliation($1,$2,$3,true) as result',
+    [account,cascadeRows[0].id,product],
+  ))[0].result
+  assert.equal(result.itemsAutoResolved,1) // só a linha B compartilha a identidade do mapping; C fica de fora
+  cascadeRows=await itemsOf(cascadeId)
+  assert.equal(cascadeRows[0].market_product_id,product); assert.equal(cascadeRows[0].reconciliation_status,'matched_manual')
+  assert.equal(cascadeRows[1].market_product_id,product); assert.equal(cascadeRows[1].reconciliation_status,'mapped')
+  assert.equal(cascadeRows[2].market_product_id,null); assert.equal(cascadeRows[2].reconciliation_status,'pending') // identidade diferente, não tocado
+})
+test('item 8: produto conciliado automaticamente pela cascata NÃO fica conferido sozinho',async()=>{
+  assert.equal(cascadeRows[1].reviewed_at,null); assert.equal(cascadeRows[1].reviewed_by,null)
+  assert.equal(cascadeRows[1].stock_entry_status,'pending')
+})
+test('item 10: conciliar sem marcar "usar esta correspondência" não persiste mapping nem reprocessa nada',async()=>{
+  const supplierDoc='77888999000133'
+  const itemA={...values,supplier_product_code:'no-mapping-1',barcode_raw:null,description_raw:'Sem persistir mapping A'}
+  const itemB={...values,supplier_product_code:'no-mapping-1',barcode_raw:null,description_raw:'Sem persistir mapping B'}
+  const doc=document(itemA); doc.header.supplierCnpj=supplierDoc; doc.items=[itemA,itemB]
+  const id=(await query('select market_import_pdf_purchase_staging($1,$2,$3,$4,$4) as id',[account,store,'pdf:no-cascade:1',doc]))[0].id
+  const rows=await itemsOf(id)
+  const result=(await query(
+    'select market_confirm_purchase_item_reconciliation($1,$2,$3,false) as result',
+    [account,rows[0].id,product],
+  ))[0].result
+  assert.equal(result.itemsAutoResolved,0)
+  const stillPending=await itemsOf(id)
+  assert.equal(stillPending[1].reconciliation_status,'pending')
+  assert.equal((await query('select count(*)::int as n from market_purchase_product_mappings where supplier_product_code=$1',['no-mapping-1']))[0].n,0)
+})
+test('itens 2/4: mapping persistido é reaproveitado automaticamente em compra futura (QR/chave de acesso, sem clique manual)',async()=>{
+  const supplierDoc='88999000111144'
+  const qrDoc=(item)=>({accessKey:null,supplier:{name:'Fornecedor QR',document:supplierDoc},invoiceNumber:'QR-1',series:'1',
+    totals:{totalAmount:item.gross_amount,productsAmount:item.gross_amount},
+    items:[{lineNumber:1,supplierProductCode:item.supplier_product_code,barcode:item.barcode_raw,description:item.description_raw,
+      unit:item.unit,quantity:item.quantity,unitPrice:item.unit_price,grossAmount:item.gross_amount,netAmount:item.net_amount}]})
+  const first={...values,supplier_product_code:'qr-cascade-1',barcode_raw:null,description_raw:'Item QR primeira compra'}
+  const firstDoc=qrDoc(first); firstDoc.accessKey='1'.repeat(44)
+  const firstId=(await query('select market_import_purchase_staging($1,$2,$3,$4) as result',[account,store,'qrcode',firstDoc]))[0].result.purchaseId
+  const firstRow=(await itemsOf(firstId))[0]
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,true)',[account,firstRow.id,product])
+  const second={...values,supplier_product_code:'qr-cascade-1',barcode_raw:null,description_raw:'Item QR segunda compra'}
+  const secondDoc=qrDoc(second); secondDoc.accessKey='2'.repeat(44)
+  const secondId=(await query('select market_import_purchase_staging($1,$2,$3,$4) as result',[account,store,'qrcode',secondDoc]))[0].result.purchaseId
+  const secondRow=(await itemsOf(secondId))[0]
+  assert.equal(secondRow.market_product_id,product); assert.equal(secondRow.reconciliation_status,'mapped')
+  assert.equal(secondRow.reviewed_at,null) // resolvido automaticamente, mas não conferido sozinho
+})
+test('item 5: mapping de outro tenant não é reaproveitado, mesmo com fornecedor/código idênticos',async()=>{
+  const supplierDoc='99000111222155'
+  const itemA={...values,supplier_product_code:'tenant-scope-1',barcode_raw:null}
+  const doc=document(itemA); doc.header.supplierCnpj=supplierDoc
+  const id=(await query('select market_import_pdf_purchase_staging($1,$2,$3,$4,$4) as id',[account,store,'pdf:tenant-scope:1',doc]))[0].id
+  const row=(await itemsOf(id))[0]
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,true)',[account,row.id,product])
+  await db.exec(`select set_config('test.account','${other}',false)`)
+  const otherDoc=document({...itemA}); otherDoc.header.supplierCnpj=supplierDoc
+  const otherId=(await query('select market_import_pdf_purchase_staging($1,$2,$3,$4,$4) as id',[other,otherStore,'pdf:tenant-scope:other',otherDoc]))[0].id
+  const otherRow=(await itemsOf(otherId))[0]
+  assert.equal(otherRow.market_product_id,null); assert.equal(otherRow.reconciliation_status,'pending')
+  await db.exec(`select set_config('test.account','${account}',false)`)
+})
+test('item 6: mapping salvo para outro fornecedor não é aplicado indevidamente ao mesmo código',async()=>{
+  const itemA={...values,supplier_product_code:'supplier-scope-1',barcode_raw:null}
+  const docA=document(itemA); docA.header.supplierCnpj='10101010101010'
+  const idA=(await query('select market_import_pdf_purchase_staging($1,$2,$3,$4,$4) as id',[account,store,'pdf:supplier-scope:a',docA]))[0].id
+  const rowA=(await itemsOf(idA))[0]
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,true)',[account,rowA.id,product])
+  const itemB={...values,supplier_product_code:'supplier-scope-1',barcode_raw:null}
+  const docB=document(itemB); docB.header.supplierCnpj='20202020202020'
+  const idB=(await query('select market_import_pdf_purchase_staging($1,$2,$3,$4,$4) as id',[account,store,'pdf:supplier-scope:b',docB]))[0].id
+  const rowB=(await itemsOf(idB))[0]
+  assert.equal(rowB.market_product_id,null); assert.equal(rowB.reconciliation_status,'pending')
+})
+test('item 11: botão manual de reprocessar continua funcionando de forma independente',async()=>{
+  const supplierDoc='30303030303030'
+  // Grava o mapping por uma compra que NÃO participa do reprocessamento
+  // automático (saveMapping=false), simulando um mapping que passou a
+  // existir por outro caminho depois que a nota já estava em staging.
+  const mapped={...values,supplier_product_code:'manual-reprocess-1',barcode_raw:null}
+  const doc1=document(mapped); doc1.header.supplierCnpj=supplierDoc
+  const id1=(await query('select market_import_pdf_purchase_staging($1,$2,$3,$4,$4) as id',[account,store,'pdf:manual-reprocess:1',doc1]))[0].id
+  const row1=(await itemsOf(id1))[0]
+  await query('select market_confirm_purchase_item_reconciliation($1,$2,$3,false)',[account,row1.id,product]) // saveMapping=false: não persiste, não reprocessa nada
+  await query(
+    `insert into market_purchase_product_mappings(market_account_id,supplier_document,supplier_product_code,barcode_normalized,description_normalized,market_product_id,created_by)
+     values ($1,$2,$3,null,null,$4,$5)`,
+    [account,supplierDoc,'manual-reprocess-2',product,actor],
+  )
+  const doc2=document({...values,supplier_product_code:'manual-reprocess-2',barcode_raw:null}); doc2.header.supplierCnpj=supplierDoc
+  const id2=(await query('select market_import_pdf_purchase_staging($1,$2,$3,$4,$4) as id',[account,store,'pdf:manual-reprocess:2',doc2]))[0].id
+  let row2=(await itemsOf(id2))[0]
+  // O import de PDF já reprocessa sozinho ao final (202609070004); zera esse
+  // resultado de volta a 'pending' para isolar o que este teste quer provar:
+  // que a MESMA RPC, chamada isoladamente (o botão "Reprocessar pendentes"),
+  // resolve o item de forma independente do fluxo automático.
+  await query('select market_undo_purchase_item_reconciliation($1,$2)',[account,row2.id])
+  row2=(await itemsOf(id2))[0]
+  assert.equal(row2.reconciliation_status,'pending')
+  const reprocessResult=(await query('select market_reprocess_purchase_pending_items($1,$2) as result',[account,id2]))[0].result
+  assert.equal(reprocessResult.itemsMatched,1)
+  row2=(await itemsOf(id2))[0]
+  assert.equal(row2.market_product_id,product); assert.equal(row2.reconciliation_status,'mapped')
+})
+test('migration 202609080001 nunca movimenta estoque nem confere item sozinha',async()=>{
+  assert.doesNotMatch(sqlFile('202609080001_purchase_review_automation.sql'),/\b(insert\s+into|update|delete\s+from)\s+(public\.)?market_stock_(movements|balance)\b/i)
+  assert.doesNotMatch(sqlFile('202609080001_purchase_review_automation.sql'),/reviewed_at\s*=\s*now\(\)/i)
 })
 test('7./11. resolvendo os itens restantes, a próxima entrada recebe o resto e conclui automaticamente',async()=>{
   let rows=await itemsOf(recvId)

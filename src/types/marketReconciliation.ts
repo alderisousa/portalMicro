@@ -22,6 +22,11 @@ export interface ReconciliationConfirmResult {
   purchaseItemId: string
   marketProductId: string
   reconciliationStatus: 'matched_manual'
+  // Quantos outros itens da MESMA compra foram reconhecidos automaticamente
+  // (mapping/EAN) porque este item acabou de persistir um de/para. 0 quando
+  // "usar esta correspondência" não foi marcado ou não havia código do
+  // fornecedor para ancorar o mapping.
+  itemsAutoResolved: number
 }
 
 export interface ReconciliationUndoResult {

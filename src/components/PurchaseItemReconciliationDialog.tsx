@@ -27,7 +27,7 @@ interface Props {
   accountId: string
   item: MarketPurchaseItem
   onCancel: () => void
-  onConfirmed: () => void
+  onConfirmed: (itemsAutoResolved: number) => void
 }
 
 export function PurchaseItemReconciliationDialog({ accountId, item, onCancel, onConfirmed }: Props) {
@@ -99,8 +99,8 @@ export function PurchaseItemReconciliationDialog({ accountId, item, onCancel, on
     if (!selected) return
     setConfirming(true); setError(null)
     try {
-      await confirmPurchaseItemReconciliation(accountId, item.id, selected.productId, saveMapping)
-      onConfirmed()
+      const result = await confirmPurchaseItemReconciliation(accountId, item.id, selected.productId, saveMapping)
+      onConfirmed(result.itemsAutoResolved)
     } catch (cause) {
       setError(cause instanceof ReconciliationError ? cause.message : 'Não foi possível concluir a conciliação.')
     } finally { setConfirming(false) }

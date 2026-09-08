@@ -82,21 +82,16 @@ test('prontidão para receber exige stock_unit_cost resolvido (não só a conver
   assert.match(body, /item\.stockUnitCost !== null/, 'sem custo unitário resolvido, o item não pode ser considerado pronto para receber')
 })
 
-test('"Usar total da linha": ação só some/aparece pela mesma condição pura, restrita ao campo net_amount', () => {
+test('aviso de custo pelo total: aparece pela mesma condição pura, restrita ao campo net_amount, sem clique nem escrita em net_amount', () => {
   const fields = src('components/PurchaseReviewFields.tsx')
   assert.match(fields, /import \{ reviewValueChanged, shouldSuggestNetAmountFromGross \} from '\.\.\/utils\/purchaseReview'/,
     'a condição de exibição precisa vir da função pura testada em purchase-review.test.mjs, não de lógica duplicada aqui')
-  assert.match(fields, /showUseGrossAsNet = key === 'net_amount' && shouldSuggestNetAmountFromGross\(values\)/)
-})
-
-test('"Usar total da linha": clique só atualiza o rascunho local (onChange) — nunca salva, confere ou recebe', () => {
-  const fields = src('components/PurchaseReviewFields.tsx')
-  const button = fields.match(/showUseGrossAsNet && <button[\s\S]*?<\/button>\}/)?.[0] ?? ''
-  assert.ok(button, 'botão de sugestão não encontrado')
-  const onClickBody = button.match(/onClick=\{\(\) => \{([\s\S]*?)\}\}/)?.[1] ?? ''
-  assert.match(onClickBody, /onChange\(\{ \.\.\.values, net_amount: values\.gross_amount \}\)/, 'só preenche net_amount a partir do valor atual de gross_amount, sem alterar mais nada')
-  assert.doesNotMatch(onClickBody, /save|confirm|receive|rpc|Purchase(ItemReview|StagingReview)/i,
-    'o clique não pode chamar nada de salvar/conferir/receber — só atualiza o estado local do formulário')
+  assert.match(fields, /usedGrossAsNetFallback = key === 'net_amount' && shouldSuggestNetAmountFromGross\(values\)/)
+  const note = fields.match(/usedGrossAsNetFallback && <small[\s\S]*?<\/small>\}/)?.[0] ?? ''
+  assert.ok(note, 'nota informativa não encontrada')
+  assert.doesNotMatch(fields, /<button[^>]*market-ocr-review-field-suggestion/, 'o botão clicável antigo não pode mais existir — o fallback agora é automático (banco)')
+  assert.doesNotMatch(note, /onClick|onChange\(/, 'a nota é só leitura: nunca chama onChange nem preenche net_amount no rascunho')
+  assert.match(note, /Valor líquido não informado no documento/)
 })
 
 test('checkbox "lembrar esta conversão" abre marcado por padrão, sem persistir nada sozinho', () => {
@@ -187,4 +182,105 @@ test('"Atualizar mercadorias" reaproveita a sincronização já usada em Estoque
   assert.match(button, /disabled=\{productSyncing\}/)
   assert.match(button, /onClick=\{\(\) => void syncProducts\(\)\}/)
   assert.match(button, /Atualizar mercadorias/)
+})
+
+test('conciliar item repassa itemsAutoResolved da RPC ao invés de descartar o resultado', () => {
+  const dialog = src('components/PurchaseItemReconciliationDialog.tsx')
+  assert.match(dialog, /onConfirmed: \(itemsAutoResolved: number\) => void/)
+  const confirmBody = dialog.match(/const confirm = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[1] ?? ''
+  assert.match(confirmBody, /const result = await confirmPurchaseItemReconciliation\(/)
+  assert.match(confirmBody, /onConfirmed\(result\.itemsAutoResolved\)/)
+})
+
+test('reconhecimento automático de outros itens mostra feedback discreto; sem itens extras, nenhuma mensagem nova', () => {
+  const page = src('pages/MarketPurchases.tsx')
+  const body = page.match(/const handleReconciled = async \(itemsAutoResolved: number\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.ok(body, 'handleReconciled não encontrada ou não recebe itemsAutoResolved')
+  assert.match(body, /if \(itemsAutoResolved > 0\) setMessage\(/, 'só mostra mensagem quando algo foi de fato reconhecido automaticamente')
+  assert.match(body, /reconhecid[oa]s?/i)
+  assert.match(body, /automaticamente/i)
+  const page2 = src('pages/MarketPurchases.tsx')
+  assert.match(page2, /\{reconcileTarget && <PurchaseItemReconciliationDialog[\s\S]*?onConfirmed=\{handleReconciled\}/)
+})
+
+// Avanço automático entre itens na conferência da nota: ao concluir um item,
+// abre sozinho o próximo pendente, sem o operador voltar ao topo da lista.
+// loadItems agora devolve os itens recém-carregados (em vez de só atualizar
+// itemsState) exatamente para que estes handlers decidam o próximo passo sem
+// depender de estado React que ainda não recommitou.
+test('loadItems devolve os itens recém-carregados, para o avanço automático decidir sem depender de closure de estado obsoleto', () => {
+  const page = src('pages/MarketPurchases.tsx')
+  const body = page.match(/const loadItems = useCallback\(async \(purchaseId: string\)[\s\S]*?\n {2}\}, \[accountId\]\)/)?.[0] ?? ''
+  assert.ok(body, 'loadItems não encontrada')
+  assert.match(body, /Promise<MarketPurchaseItem\[\] \| undefined>/)
+  assert.match(body, /return items/)
+})
+
+test('item 1/2: próximo pendente com de/para válido abre a conferência; sem de/para abre o vínculo', () => {
+  const page = src('pages/MarketPurchases.tsx')
+  const body = page.match(/const openNextPendingItem = \(purchaseId: string, items: MarketPurchaseItem\[\]\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.ok(body, 'openNextPendingItem não encontrada')
+  // "Pendente" = ainda pode ser conferido e ainda não foi conferido — nunca
+  // usa reconciliationStatus para decidir isso (isso decidiria só a etapa
+  // de vínculo, não a elegibilidade para o avanço).
+  assert.match(body, /items\.find\(\(item\) => canReviewPurchaseItem\(item\) && !isHumanReviewed\(item\)\)/)
+  assert.match(body, /if \(next\.marketProductId\) setReviewTarget\(\{ purchaseId, item: next \}\)/)
+  assert.match(body, /else setReconcileTarget\(\{ purchaseId, item: next \}\)/)
+})
+
+test('item 3: salvar o vínculo abre automaticamente a conferência do mesmo item, nunca confere sozinho', () => {
+  const page = src('pages/MarketPurchases.tsx')
+  const body = page.match(/const handleReconciled = async \(itemsAutoResolved: number\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.ok(body, 'handleReconciled não encontrada')
+  assert.match(body, /const justConfirmed = items\?\.find\(\(current\) => current\.id === item\.id\)/,
+    'precisa reabrir o MESMO item que acabou de ser conciliado, não outro')
+  assert.match(body, /if \(justConfirmed\) setReviewTarget\(\{ purchaseId, item: justConfirmed \}\)/)
+  // Nada nesta função confirma a conferência sozinha — só reabre a tela;
+  // savePurchaseItemReview/RPC de conferência não podem ser chamados aqui.
+  assert.doesNotMatch(body, /savePurchaseItemReview|market_save_purchase_item_review/)
+})
+
+test('item 4: concluir a conferência avança para o próximo pendente da nota', () => {
+  const page = src('pages/MarketPurchases.tsx')
+  const body = page.match(/const handleReviewSaved = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.ok(body, 'handleReviewSaved não encontrada')
+  assert.match(body, /const items = await loadItems\(purchaseId\)/)
+  assert.match(body, /if \(items\) openNextPendingItem\(purchaseId, items\)/)
+  // Só dispara depois que a conferência realmente terminou: PurchaseItemReviewDialog
+  // só chama onSaved no caminho de sucesso do confirm (ver save() do diálogo).
+  const dialogSaveBody = src('components/PurchaseItemReviewDialog.tsx').match(/const save = async \(confirm: boolean\) => \{([\s\S]*?)\n {2}\}/)?.[1] ?? ''
+  const tryBlock = dialogSaveBody.match(/try \{([\s\S]*?)\}\s*catch/)?.[1] ?? ''
+  assert.match(tryBlock, /onSaved\(\)/)
+})
+
+test('item 5: item já resolvido pelo reprocessamento pula a etapa de vínculo e vai direto para a conferência', () => {
+  // Mesma asserção de origem que prova o item 1/2: a decisão é feita só por
+  // marketProductId (presente quando o reprocessamento em cascata já
+  // resolveu o produto), nunca reabrindo PurchaseItemReconciliationDialog
+  // para um item que já tem produto vinculado.
+  const page = src('pages/MarketPurchases.tsx')
+  const body = page.match(/const openNextPendingItem = \(purchaseId: string, items: MarketPurchaseItem\[\]\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(body, /if \(next\.marketProductId\) setReviewTarget/, 'item com produto já resolvido (auto ou por reprocessamento) não deve reabrir o vínculo')
+})
+
+test('item 6: cancelar em qualquer diálogo interrompe o avanço, sem chamar loadItems/openNextPendingItem', () => {
+  const page = src('pages/MarketPurchases.tsx')
+  const reconcileCancel = page.match(/\{reconcileTarget && <PurchaseItemReconciliationDialog[\s\S]*?onCancel=\{([^}]*)\}/)?.[1] ?? ''
+  const reviewCancel = page.match(/\{reviewTarget && <PurchaseItemReviewDialog[\s\S]*?onCancel=\{([^}]*)\}/)?.[1] ?? ''
+  assert.match(reconcileCancel.trim(), /^\(\) => setReconcileTarget\(null\)$/)
+  assert.match(reviewCancel.trim(), /^\(\) => setReviewTarget\(null\)$/)
+})
+
+test('item 7: sem próximo pendente, openNextPendingItem não abre diálogo nenhum', () => {
+  const page = src('pages/MarketPurchases.tsx')
+  const body = page.match(/const openNextPendingItem = \(purchaseId: string, items: MarketPurchaseItem\[\]\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(body, /if \(!next\) return/, 'precisa retornar cedo, sem setReviewTarget/setReconcileTarget, quando não há mais item pendente')
+})
+
+test('botão manual "Reprocessar pendentes" continua disponível como fallback, sem depender do novo fluxo automático', () => {
+  const page = src('pages/MarketPurchases.tsx')
+  assert.match(page, /Reprocessar pendentes/)
+  assert.match(page, /onClick=\{\(\) => void handleReprocess\(purchase\.id\)\}/)
+  const handleReprocessBody = page.match(/const handleReprocess = async \(purchaseId: string\) => \{([\s\S]*?)\n {2}\}/)?.[1] ?? ''
+  assert.match(handleReprocessBody, /reprocessPurchasePendingItems\(accountId, purchaseId\)/, 'continua chamando a mesma função de serviço/RPC de sempre')
 })

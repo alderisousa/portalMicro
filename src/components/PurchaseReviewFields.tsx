@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { PurchaseReviewValues } from '../types/marketPurchases'
 import { parseLooseNumber } from '../utils/purchaseOcrMath'
 import { reviewValueChanged, shouldSuggestNetAmountFromGross } from '../utils/purchaseReview'
@@ -17,29 +16,27 @@ export function PurchaseReviewFields({ values, original, onChange, disabled = fa
   values: PurchaseReviewValues; original: PurchaseReviewValues | null;
   onChange: (values: PurchaseReviewValues) => void; disabled?: boolean;
 }) {
-  // O input de net_amount é não controlado (defaultValue) para não atrapalhar
-  // a digitação nos outros campos. "Usar total da linha" preenche values via
-  // onChange (igual a qualquer outra edição — não salva, não confere, não
-  // recebe) mas precisa forçar esse input específico a remontar para mostrar
-  // o novo valor; os demais campos continuam remontando só quando `disabled` muda.
-  const [netAmountFillToken, setNetAmountFillToken] = useState(0)
   return <div className="market-ocr-review-header-grid">
     {(Object.keys(labels) as Array<keyof PurchaseReviewValues>).map((key) => {
       const originalValue = original?.[key] ?? null
       const changed = reviewValueChanged(values[key], originalValue)
-      const showUseGrossAsNet = key === 'net_amount' && shouldSuggestNetAmountFromGross(values)
+      // net_amount ausente + total da linha válido: o custo já usa o total
+      // automaticamente (calculated_unit_cost/stock_unit_cost, no banco) sem
+      // exigir clique do operador. Este aviso é só informativo — nunca
+      // preenche net_amount nem sobrescreve o dado original do documento; o
+      // operador ainda pode digitar um valor líquido diferente se quiser.
+      const usedGrossAsNetFallback = key === 'net_amount' && shouldSuggestNetAmountFromGross(values)
       return <label key={key} className={wideFields.has(key) ? 'market-ocr-review-field-wide' : undefined}>
         <span>{labels[key]}</span>
-        <input key={`${key}-${disabled}${key === 'net_amount' ? `-${netAmountFillToken}` : ''}`} disabled={disabled}
+        <input key={`${key}-${disabled}`} disabled={disabled}
           defaultValue={values[key] === null ? '' : String(values[key]).replace(textFields.has(key) ? /$^/ : /\./, ',')}
           inputMode={textFields.has(key) ? 'text' : 'decimal'} onChange={(event) => {
             const raw = event.target.value
             onChange({ ...values, [key]: textFields.has(key) ? raw || null : parseLooseNumber(raw) })
           }} />
-        {showUseGrossAsNet && <button type="button" className="market-ocr-review-field-suggestion" disabled={disabled}
-          onClick={() => { onChange({ ...values, net_amount: values.gross_amount }); setNetAmountFillToken((token) => token + 1) }}>
-          Usar total da linha ({currency.format(values.gross_amount as number)})
-        </button>}
+        {usedGrossAsNetFallback && <small className="market-ocr-review-field-note" role="status">
+          Valor líquido não informado no documento. Foi utilizado o valor total do item ({currency.format(values.gross_amount as number)}) para calcular o custo.
+        </small>}
         {changed
           ? <small className="market-ocr-review-original is-changed">Original: {originalValue ?? 'não informado'}</small>
           : <small className="market-ocr-review-original">Sem alteração em relação ao original</small>}
