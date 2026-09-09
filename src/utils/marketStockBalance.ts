@@ -106,3 +106,136 @@ export function reasonNeedsReset(
   if (!isCounted || !comparison.known || comparison.difference === 0) return true
   return !isReasonCodeAllowedForDifference(reasonCode, comparison.difference)
 }
+
+// Merge seguro entre o estado local (o que este operador está editando/já
+// editou) e o estado do servidor (o que qualquer usuário já persistiu),
+// usado nos pontos de sincronização sem realtime (202609080005): ao
+// retomar, após salvar um item, após resolver um conflito. Nunca sobrescreve
+// um item que este operador ainda não salvou (dirtyProductIds) — é
+// exatamente isso que evita apagar contagem local só porque outro usuário
+// mudou outro produto. Item local que o servidor ainda não conhece (novo,
+// ainda não persistido) sempre sobrevive, esteja ou não em dirtyProductIds.
+export function mergeDraftItems(
+  localItems: MarketInitialInventoryItem[],
+  serverItems: MarketInitialInventoryItem[],
+  dirtyProductIds: ReadonlySet<string>,
+): MarketInitialInventoryItem[] {
+  const localByProduct = new Map(localItems.map((item) => [item.productId, item]))
+  const merged = serverItems.map((serverItem) => {
+    const local = localByProduct.get(serverItem.productId)
+    return local && dirtyProductIds.has(serverItem.productId) ? local : serverItem
+  })
+  const serverProductIds = new Set(serverItems.map((item) => item.productId))
+  for (const local of localItems) {
+    if (!serverProductIds.has(local.productId)) merged.push(local)
+  }
+  return merged
+}
+
+// Ordenação da lista compartilhada (bloco "Inventário multiusuário" —
+// lançamento/alteração mais recente primeiro). Sem updated_at por item na
+// resposta das RPCs (202609080005 não expõe isso e migrations aplicadas são
+// imutáveis — não há como acrescentar sem alterar aquela migration), a ordem
+// é mantida no cliente: um valor por productId, tanto maior quanto mais
+// recente a última persistência efetiva conhecida por este operador (própria
+// ou sincronizada de outro usuário). Item sem valor (ainda não persistido)
+// sempre fica no topo — é exatamente o item que o operador está editando agora.
+export function sortItemsByRecency<T extends { productId: string }>(items: T[], order: Record<string, number>): T[] {
+  return [...items].sort((a, b) => (order[b.productId] ?? Number.POSITIVE_INFINITY) - (order[a.productId] ?? Number.POSITIVE_INFINITY))
+}
+
+// Ordem inicial ao carregar/retomar um rascunho: draft.items já vem ordenado
+// por created_at ascendente (mesma query em market_get_inventory_draft), então
+// o índice no array serve como valor de ordenação — o último item (criado por
+// último) recebe o maior índice e aparece no topo, sem inventar um timestamp.
+export function seedItemOrder(items: { productId: string }[]): Record<string, number> {
+  return Object.fromEntries(items.map((item, index) => [item.productId, index]))
+}
+
+// Detecta, a cada sincronização best-effort pós-gravação (sem realtime/polling
+// — só roda depois de UM save do operador atual), quais produtos foram
+// alterados no servidor por OUTRO usuário desde a última leitura conhecida
+// deste cliente: version mudou e o produto não está dirty aqui (dirty = edição
+// local deste operador ainda não persistida, que mergeDraftItems já preserva
+// e não deve "furar fila" na ordenação por causa de um servidor que ainda não
+// reflete essa edição). Usado só para decidir quem sobe para o topo da lista.
+export function detectServerUpdatedProductIds(
+  previousItems: MarketInitialInventoryItem[],
+  serverItems: MarketInitialInventoryItem[],
+  dirtyProductIds: ReadonlySet<string>,
+): string[] {
+  const previousByProduct = new Map(previousItems.map((item) => [item.productId, item]))
+  return serverItems
+    .filter((serverItem) => !dirtyProductIds.has(serverItem.productId))
+    .filter((serverItem) => previousByProduct.get(serverItem.productId)?.version !== serverItem.version)
+    .map((serverItem) => serverItem.productId)
+}
+
+export interface ItemSaveApplication {
+  item: MarketInitialInventoryItem
+  clearDirty: boolean
+}
+
+// Decide o que fazer com a resposta de um save de item quando ela volta,
+// isolado do componente React para poder testar exatamente a corrida sem
+// simular a tela inteira: correção do lost update em que uma edição local
+// mais nova (feita enquanto o request anterior ainda estava em voo) era
+// apagada pela resposta do request antigo.
+//
+// `supersededBySelf` = o PRÓPRIO operador editou este item de novo depois
+// de enviar este request e antes da resposta voltar (nunca é sobre outro
+// usuário — conflito real de outro usuário já é decidido antes disso, pelo
+// campo `conflict` da resposta da RPC, e nunca chega até aqui).
+//
+// Sempre parte do item ATUAL (currentItem, que pode já refletir uma edição
+// mais nova do que a enviada) — nunca do snapshot que foi efetivamente
+// enviado ao servidor. Só a version muda; quantity/isCounted/reasonCode/
+// reasonNote preservam qualquer edição mais nova, tenha ela acontecido ou
+// não. clearDirty só é true quando esta resposta corresponde à edição mais
+// recente — superada, o item continua pendente para o próximo commit, que
+// já parte da version correta (evita um conflito falso contra este mesmo
+// save).
+export function applyItemSaveResponse(
+  currentItem: MarketInitialInventoryItem,
+  // number | null só para casar com o tipo geral de MarketInitialInventoryItem.version
+  // (null = nunca persistido) — na prática, a version devolvida por um save
+  // bem-sucedido nunca é null, mas a assinatura reflete o tipo real do campo.
+  serverVersion: number | null,
+  supersededBySelf: boolean,
+): ItemSaveApplication {
+  return { item: { ...currentItem, version: serverVersion }, clearDirty: !supersededBySelf }
+}
+
+// Serializa chamadas assíncronas por chave: no máximo UMA em voo por chave
+// ao mesmo tempo — uma segunda chamada para a MESMA chave encadeia atrás da
+// que já está em andamento (só roda `task` depois que a anterior terminar,
+// com sucesso ou erro) em vez de disparar um request paralelo. Chaves
+// diferentes nunca se bloqueiam entre si.
+//
+// Usado por commitItem em MarketStockDashboard.tsx para nunca disparar dois
+// saves do MESMO produto ao mesmo tempo — o que faria a segunda chamada
+// enviar a mesma version da primeira e receber um "conflito" que na
+// verdade é o próprio operador/navegador disputando consigo mesmo, não
+// concorrência real com outro usuário.
+//
+// `inFlight` é o registro compartilhado entre chamadas (tipicamente um
+// useRef.current) — mutado diretamente, sem estado interno próprio, para
+// caber no ciclo de vida de quem chama. Extraída como função pura (sem
+// nada de React) para poder testar a serialização em si, isolada da tela.
+export function runSerializedByKey<T>(
+  inFlight: Record<string, Promise<T>>,
+  key: string,
+  task: () => Promise<T>,
+): Promise<T> {
+  const ongoing = inFlight[key]
+  const chained: Promise<T> = ongoing ? ongoing.then(task, task) : task()
+  inFlight[key] = chained
+  // Limpeza via .then(onFulfilled, onRejected) — nunca .finally() — porque
+  // .finally() relança o erro na promise derivada; como ninguém consome essa
+  // derivada (só o efeito colateral de limpar o registro importa aqui), isso
+  // geraria um unhandledRejection mesmo quando quem chamou já trata o erro
+  // na promise `chained` retornada. Os dois ramos fazem a mesma limpeza.
+  const cleanup = () => { if (inFlight[key] === chained) delete inFlight[key] }
+  chained.then(cleanup, cleanup)
+  return chained
+}

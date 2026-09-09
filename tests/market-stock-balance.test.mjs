@@ -48,38 +48,64 @@ test('sem correspondência devolve lista vazia, nunca inventa resultado', () => 
 })
 
 // Sanidade sobre o código-fonte da página (sem executar React): confirma que
-// a tela usa a mesma função pura testada acima, distingue "sem saldo no
-// local" de "sem resultado para a busca" sem tratar nenhum dos dois como
-// erro, reseta a busca ao trocar de local e não tocou no fluxo de inventário.
-test('tela de Estoque usa findMarketStockBalance importado do util, sem duplicar a lógica', () => {
+// a tela ainda usa compareStockCount (comparação de saldo continua exigida
+// durante a contagem — não alterada por esta etapa) e não tocou no fluxo de
+// inventário.
+test('tela de Estoque continua usando compareStockCount importado do util, sem duplicar a lógica', () => {
   const source = readFileSync(new URL('../src/pages/MarketStockDashboard.tsx', import.meta.url), 'utf8')
   // Import de ../utils/marketStockBalance cresceu (isReasonMissing, requiresDivergenceReason,
   // 202609080003) — checa por nome, não pela lista/ordem exata dos outros imports.
   const balanceUtilImport = source.match(/import \{[^}]*\} from '\.\.\/utils\/marketStockBalance'/)?.[0] ?? ''
   assert.ok(balanceUtilImport, "import de '../utils/marketStockBalance' não encontrado")
   assert.match(balanceUtilImport, /\bcompareStockCount\b/)
-  assert.match(balanceUtilImport, /\bfindMarketStockBalance\b/)
-  assert.match(source, /const filteredBalance = useMemo\(\(\) => findMarketStockBalance\(balance, balanceQuery\), \[balance, balanceQuery\]\)/)
 })
 
-test('estado vazio distingue "sem saldo no local" de "sem resultado da busca", nenhum tratado como erro', () => {
+// Fechamento da Sprint — item 3: a listagem de todos os produtos com
+// "quantidade atual" deixou de ser o conteúdo principal da tela inicial de
+// Estoque (findMarketStockBalance/balanceQuery/filteredBalance saíram do
+// componente junto com ela — substituídos por "Últimos inventários", ver
+// testes dedicados em market-stock-history.test.mjs). findMarketStockBalance
+// continua disponível em utils/marketStockBalance.ts (testada acima), só não
+// é mais chamada por este componente.
+test('findMarketStockBalance/balanceQuery/filteredBalance (busca da antiga listagem de saldo) saíram do componente — substituídas por "Últimos inventários"', () => {
   const source = readFileSync(new URL('../src/pages/MarketStockDashboard.tsx', import.meta.url), 'utf8')
-  assert.match(source, /Ainda não há saldo registrado para este local\./)
-  assert.match(source, /Nenhum produto encontrado para "\{balanceQuery\}"\./)
+  assert.doesNotMatch(source, /\bfindMarketStockBalance\b/, 'a tela inicial não lista mais produtos por saldo — findMarketStockBalance não é mais usada aqui')
+  assert.doesNotMatch(source, /\bbalanceQuery\b/)
+  assert.doesNotMatch(source, /\bfilteredBalance\b/)
+})
+
+// Fechamento da Sprint — item 2: aviso sobre quando o saldo é atualizado,
+// integrado ao layout existente da tela inicial (mesma classe de parágrafo
+// mudo já usada para "Marco inicial:", sem componente/destaque novo).
+test('tela inicial de Estoque explica que o saldo só é atualizado após a finalização do inventário', () => {
+  const source = readFileSync(new URL('../src/pages/MarketStockDashboard.tsx', import.meta.url), 'utf8')
+  assert.match(source, /As contagens são salvas durante o inventário, mas o saldo do estoque só é atualizado após a finalização\./)
+  const balanceHeader = source.match(/<section className="market-stock-balance">\s*\n\s*<div>([\s\S]*?)<\/div>/)?.[0] ?? ''
+  assert.match(balanceHeader, /As contagens são salvas durante o inventário/, 'precisa estar no cabeçalho da tela inicial de Estoque, não em um bloco separado')
+})
+
+test('"Últimos inventários": estado vazio distingue "carregando" de "nenhum inventário ainda", nenhum tratado como erro', () => {
+  const source = readFileSync(new URL('../src/pages/MarketStockDashboard.tsx', import.meta.url), 'utf8')
+  assert.match(source, /Carregando histórico\.\.\./)
+  assert.match(source, /Nenhum inventário concluído neste local ainda\./)
   const section = source.match(/<section className="market-stock-balance">[\s\S]*?\n {4}<\/section>\}/)?.[0] ?? ''
   assert.ok(section, 'seção market-stock-balance não encontrada')
   assert.doesNotMatch(section, /is-error/, 'estado vazio não pode ser tratado como erro')
 })
 
-test('busca do saldo é resetada ao trocar de local, junto com a busca de contagem', () => {
+test('histórico é recarregado ao trocar de local (via applyStoreData), e resetado junto com o detalhe aberto', () => {
   const source = readFileSync(new URL('../src/pages/MarketStockDashboard.tsx', import.meta.url), 'utf8')
-  const changeStoreBody = source.match(/const changeStore = async \(nextStoreId: string\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
-  assert.match(changeStoreBody, /setBalanceQuery\(''\)/)
+  const applyStoreDataBody = source.match(/const applyStoreData = async \(nextStoreId: string, nextContext: MarketStockContext\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(applyStoreDataBody, /listMarketInventorySessions\(accountId, nextStoreId\)/)
+  assert.match(applyStoreDataBody, /setHistorySessions\(nextHistory\); setHistoryOpenSessionId\(''\); setHistoryDetail\(null\)/)
 })
 
-test('inventário (rascunho/autosave/finalização) não foi tocado por esta mudança', () => {
+test('inventário (rascunho/finalização) não foi tocado por esta mudança', () => {
   const source = readFileSync(new URL('../src/pages/MarketStockDashboard.tsx', import.meta.url), 'utf8')
-  assert.match(source, /const persistDraft = useCallback/)
+  // persistDraft (array completo) foi substituído por commitDirtyItems/commitItem
+  // na 202609080005 (persistência por item, multiusuário) — mudança sancionada,
+  // posterior à busca de saldo que este teste originalmente protegia.
+  assert.match(source, /const commitDirtyItems = useCallback/)
   assert.match(source, /const finalizeDraft = async/)
   assert.match(source, /const startDraft = async/)
   assert.match(source, /const resumeDraft = async/)
@@ -117,10 +143,14 @@ test('produto sem saldo conhecido é exibido como "Saldo não registrado", não 
 
 test('a comparação de saldo é calculada uma única vez por item e reaproveitada — mesmo tratamento independente da origem do produto (draft/busca/EAN/SKU/scanner)', () => {
   const source = readFileSync(new URL('../src/pages/MarketStockDashboard.tsx', import.meta.url), 'utf8')
-  const itemsMapBody = source.match(/\{items\.length \? items\.map\(\(item\) => \{([\s\S]*?)\}\) : /)?.[0] ?? ''
-  assert.ok(itemsMapBody, 'items.map não encontrado')
-  // items.map itera sobre `items` (não uma lista separada por origem) — todo
-  // item selecionado por selectProduct (busca, EAN/SKU exato, scanner) ou
+  // 202609XXXXX (bloco "Inventário multiusuário", ordenação por recência):
+  // a renderização passou a iterar sobre orderedItems (items ordenado por
+  // itemOrder via sortItemsByRecency, só para exibição) em vez de items
+  // diretamente — mesma lista, mesma função de comparação por item.
+  const itemsMapBody = source.match(/\{orderedItems\.length \? orderedItems\.map\(\(item\) => \{([\s\S]*?)\}\) : /)?.[0] ?? ''
+  assert.ok(itemsMapBody, 'orderedItems.map não encontrado')
+  // orderedItems.map itera sobre a lista (não uma lista separada por origem) —
+  // todo item selecionado por selectProduct (busca, EAN/SKU exato, scanner) ou
   // já presente em draft.items cai na MESMA função de comparação abaixo.
   const compareCalls = itemsMapBody.match(/compareStockCount\(/g) ?? []
   assert.equal(compareCalls.length, 1, 'compareStockCount deve ser chamada uma única vez por item, sem caminho alternativo para itens novos')
@@ -150,8 +180,14 @@ test('condição do bloco de comparação: (isCycleInventory || comparison.known
   // de zero, botão "Remover da contagem") continuam exatamente como antes —
   // a correção é estritamente local ao bloco de Saldo/Contagem/Diferença.
   assert.match(itemBody, /item\.quantity === 0 && !isCycleInventory \? 'is-zero '/)
-  assert.match(itemBody, /\{isCycleInventory \? 'Contado = 0\. Este produto será reconciliado com saldo zero\.' : 'Quantidade zero: não será persistida nem enviada\.'\}/)
-  assert.match(itemBody, /\{isCycleInventory && <button className="market-remove-counted"/)
+  // Contado como zero agora é sempre persistido, também em 'initial'
+  // (revisão desta mesma etapa) — a copy deixou de dizer "não será
+  // persistida", já que passou a ser exatamente o contrário.
+  assert.match(itemBody, /\{isCycleInventory \? 'Contado = 0\. Este produto será reconciliado com saldo zero\.' : 'Contado = 0\. Este produto fica registrado, mas não gera movimento de estoque\.'\}/)
+  // 202609080005 acrescentou "&& !conflict" (não permite remover enquanto um
+  // conflito de outro usuário está pendente) — isCycleInventory continua
+  // sendo a condição principal, só ganhou um segundo termo.
+  assert.match(itemBody, /\{isCycleInventory && !conflict && <button className="market-remove-counted"/)
 })
 
 // Os 4 cenários pedidos: initial/cycle × known/unknown.

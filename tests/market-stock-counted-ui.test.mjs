@@ -74,7 +74,7 @@ test('reasonNeedsReset: limpa motivo quando diferença zera, quando fica incoere
 test('produto recém-incluído (selectProduct) entra "não contado", nunca com quantidade fixa — mesmo caminho para busca/EAN/SKU/scanner', () => {
   const body = src.match(/const selectProduct = \(product: MarketStockProduct, focusQuantity = false\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
   assert.ok(body, 'selectProduct não encontrada')
-  assert.match(body, /\{ productId: product\.id, quantity: 0, isCounted: false, reasonCode: null, reasonNote: null \}/)
+  assert.match(body, /\{ productId: product\.id, quantity: 0, isCounted: false, reasonCode: null, reasonNote: null, version: null \}/)
   assert.doesNotMatch(body, /quantity: 1\b/, 'não pode mais entrar com quantidade fixa 1')
   // Único ponto de entrada: busca (changeSearch), EAN/SKU exato e scanner
   // (handleScannedCode) chamam todos selectProduct — nenhum caminho paralelo.
@@ -107,19 +107,26 @@ test('clearQuantity (campo apagado) sempre limpa reasonCode/reasonNote junto —
   assert.match(clearQuantityBody, /quantity: 0, isCounted: false, reasonCode: null, reasonNote: null/)
 })
 
-test('resumeDraft saneia o rascunho retomado com reasonNeedsReset e persiste a correção quando necessário (autosave)', () => {
+test('resumeDraft saneia o rascunho retomado com reasonNeedsReset e persiste a correção item a item (202609080005)', () => {
   const resumeDraftBody = src.match(/const resumeDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
   assert.match(resumeDraftBody, /const comparison = compareStockCount\(balanceByProduct, item\.productId, item\.quantity\)/)
   assert.match(resumeDraftBody, /if \(!reasonNeedsReset\(item\.reasonCode, comparison, item\.isCounted\)\) return item/)
   assert.match(resumeDraftBody, /return \{ \.\.\.item, reasonCode: null, reasonNote: null \}/)
-  assert.match(resumeDraftBody, /if \(sanitized\) markChanged\(\); else dirtyRef\.current = false/)
+  // A limpeza precisa ser persistida — não fica só local: cada produto
+  // saneado é marcado dirty e commitado individualmente (sem autosave global,
+  // que não existe mais depois da persistência por item).
+  assert.match(resumeDraftBody, /sanitizedProductIds\.forEach\(markItemDirty\)/)
+  assert.match(resumeDraftBody, /void Promise\.all\(sanitizedProductIds\.map\(\(id\) => commitItem\(id\)\)\)/)
 })
 
 test('+ em item não contado inicia em 1 e marca contado; − fica desabilitado (decisão documentada)', () => {
   const stepperBlock = src.match(/<div className="market-quantity-stepper">([\s\S]*?)<\/div>/)?.[0] ?? ''
   assert.ok(stepperBlock, 'stepper de quantidade não encontrado')
   assert.match(stepperBlock, /onClick=\{\(\) => updateQuantity\(item\.productId, \(item\.isCounted \? item\.quantity : 0\) \+ 1\)\}/, '+ precisa iniciar em 1 quando ainda não contado (0 + 1)')
-  assert.match(stepperBlock, /disabled=\{!item\.isCounted\}/, '− precisa ficar desabilitado quando ainda não contado')
+  // 202609080005 acrescentou "|| Boolean(conflict)" (desabilita durante um
+  // conflito de outro usuário pendente de resolução) — !item.isCounted
+  // continua sendo a condição original.
+  assert.match(stepperBlock, /disabled=\{!item\.isCounted \|\| Boolean\(conflict\)\}/, '− precisa ficar desabilitado quando ainda não contado (ou em conflito)')
 })
 
 test('linha de comparação mostra "Contagem —"/"Diferença —" quando não contado, incluindo saldo desconhecido + contado (cenário G)', () => {
@@ -134,7 +141,9 @@ test('linha de comparação mostra "Contagem —"/"Diferença —" quando não c
 test('seletor de motivo aparece só quando requiresDivergenceReason é verdadeiro; campo de observação só para OTHER', () => {
   const itemMapBody = src.match(/const needsReason = requiresDivergenceReason\(comparison, item\.isCounted\)([\s\S]*?)<\/article>/)?.[0] ?? ''
   assert.ok(itemMapBody, 'bloco needsReason não encontrado')
-  assert.match(itemMapBody, /\{needsReason && <div className="market-stock-reason">/)
+  // 202609080005 acrescentou "&& !conflict" (esconde o seletor enquanto um
+  // conflito de outro usuário está pendente de resolução).
+  assert.match(itemMapBody, /\{needsReason && !conflict && <div className="market-stock-reason">/)
   assert.match(itemMapBody, /\{item\.reasonCode === 'OTHER' && <label>Observação/)
   assert.match(itemMapBody, /updateReasonCode\(item\.productId, \(event\.target\.value \|\| null\) as MarketInventoryReasonCode \| null\)/)
 })
@@ -145,13 +154,16 @@ test('opções do seletor de motivo são filtradas pelo sentido da diferença (i
   assert.match(itemMapBody, /\{reasonCodes\.filter\(\(code\) => isReasonCodeAllowedForDifference\(code, comparison\.difference\)\)\.map\(\(code\) => <option/)
 })
 
-test('regra 3/4 bloqueiam "Finalizar inventário" no frontend, com mensagem clara — e também são revalidadas no backend (defesa em profundidade)', () => {
-  const finishButtonBlock = src.match(/<button className="button" disabled=\{[^}]*\} onClick=\{\(\) => setConfirming\(true\)\}>Finalizar inventário<\/button>/)?.[0] ?? ''
+test('regra 3/4/5 e conflitos pendentes bloqueiam "Finalizar inventário" no frontend, com mensagem clara — e também são revalidadas no backend (defesa em profundidade)', () => {
+  // 202609080005: onClick passou a sincronizar antes de confirmar (syncDraftItems).
+  const finishButtonBlock = src.match(/<button className="button" disabled=\{[^}]*\} onClick=\{\(\) => \{ void syncDraftItems\(\); setConfirming\(true\) \}\}>Finalizar inventário<\/button>/)?.[0] ?? ''
   assert.ok(finishButtonBlock, 'botão Finalizar inventário não encontrado')
   assert.match(finishButtonBlock, /uncountedItems\.length > 0/)
   assert.match(finishButtonBlock, /itemsNeedingReason\.length > 0/)
+  assert.match(finishButtonBlock, /unresolvedConflictCount > 0/, '202609080005: conflito de item pendente também bloqueia a finalização')
   assert.match(src, /Ainda existem produtos sem contagem informada\./)
   assert.match(src, /Existem divergências de saldo sem motivo informado\./)
+  assert.match(src, /Existem divergências de contagem com outro usuário ainda não resolvidas\./)
   // Defesa em profundidade: catch de finalizeDraft mapeia os códigos da RPC.
   const finalizeDraftBody = src.match(/const finalizeDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
   assert.match(finalizeDraftBody, /INVENTORY_UNCOUNTED_ITEMS/)
@@ -184,12 +196,49 @@ test('gate de saldo (isCycleInventory || comparison.known) não foi alterado por
   assert.match(src, /\{\(isCycleInventory \|\| comparison\.known\) && <span className="market-stock-comparison">/)
 })
 
-test('autosave/persistDraft continuam enviando o array completo de items (is_counted/reasonCode/reasonNote propagam via o mesmo payload, sem lógica nova de serialização)', () => {
-  const persistDraftBody = src.match(/const persistDraft = useCallback\(async \(\): Promise<boolean> => \{([\s\S]*?)\n {2}\}, \[saveState\]\)/)?.[0] ?? ''
-  assert.match(persistDraftBody, /saveMarketInventoryDraft\(\s*\n\s*currentDraft\.marketStoreId, currentDraft\.id, currentDraft\.version,\s*\n\s*new Date\(startedAtRef\.current\)\.toISOString\(\), itemsRef\.current,\s*\n\s*\)/)
+// 202609080005: substitui o teste anterior (que verificava o array completo
+// via persistDraft) — essa era exatamente a substituição total que o
+// inventário multiusuário eliminou de propósito. Agora cada item é
+// persistido individualmente (saveMarketInventoryItem), e
+// saveMarketInventoryDraft só é chamada com array vazio (escopo de sessão).
+test('itens são persistidos individualmente (saveMarketInventoryItem), nunca mais como array completo', () => {
+  assert.doesNotMatch(src, /saveMarketInventoryDraft\([^)]*itemsRef\.current/, 'não pode voltar a enviar o array completo de itens')
+  // A lógica de envio em si é performItemCommit — commitItem (nome mantido
+  // para quem chama) virou um wrapper que serializa por productId antes de
+  // delegar a ela (correção do "conflito artificial contra si mesmo").
+  const commitItemBody = src.match(/const performItemCommit = useCallback\(async \(productId: string, expectedVersionOverride\?: number \| null\): Promise<ItemCommitOutcome> => \{([\s\S]*?)\n {2}\}, \[syncDraftItems\]\)/)?.[0] ?? ''
+  assert.ok(commitItemBody, 'performItemCommit não encontrada')
+  assert.match(commitItemBody, /saveMarketInventoryItem\(\s*\n\s*draftRef\.current\.id, productId, localItem\.quantity, localItem\.isCounted,\s*\n\s*localItem\.reasonCode, localItem\.reasonNote, expectedVersion,\s*\n\s*\)/)
+  const startDraftBody = src.match(/const startDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(startDraftBody, /saveMarketInventoryDraft\(selectedStore\.id, null, null, new Date\(nextStartedAt\)\.toISOString\(\), \[\]\)/, 'criação de sessão continua sem itens')
 })
 
 test('inventário/finalização de Compras e Transferências não foram tocados (arquivos fora do escopo desta tarefa)', () => {
   const purchasesSrc = readFileSync(new URL('../src/pages/MarketPurchases.tsx', import.meta.url), 'utf8')
   assert.doesNotMatch(purchasesSrc, /isCounted|reasonCode|reasonNote/)
+})
+
+// Fechamento da Sprint — item 1: "Novo inventário" quando já existe draft
+// (outra tela/dispositivo criou o rascunho enquanto esta ainda não sabia).
+// A proteção backend (unique_violation -> INVENTORY_DRAFT_CONFLICT) não é
+// alterada — só o que a UI faz quando ela dispara.
+test('startDraft: conflito de rascunho já ativo (INVENTORY_DRAFT_CONFLICT) carrega e entra automaticamente no draft existente, sem pedir reload nem exigir outro clique', () => {
+  assert.match(src, /const isDraftAlreadyActive = \(cause: unknown\) => typeof cause === 'object' && cause && 'message' in cause\s*\n\s*&& String\(cause\.message\)\.includes\('INVENTORY_DRAFT_CONFLICT'\)/)
+  const startDraftBody = src.match(/const startDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(startDraftBody, /if \(isDraftAlreadyActive\(cause\)\) \{/)
+  assert.match(startDraftBody, /const existing = await getMarketInventoryDraft\(accountId, selectedStore\.id\)/)
+  assert.match(startDraftBody, /setCurrentDraft\(existing\); itemsRef\.current = nextItems; setItems\(nextItems\)/)
+  assert.match(startDraftBody, /setSaveState\('saved'\); setCounting\(true\)/, 'precisa entrar na contagem automaticamente, sem exigir outro clique')
+  // Nunca mais pede para recarregar manualmente — mensagem antiga removida.
+  assert.doesNotMatch(src, /Já existe um inventário em andamento neste local\. Recarregue para continuar\./)
+})
+
+test('startDraft limpa mensagens antigas de sucesso/erro ao começar, para não deixar aviso de um estado que já não é mais o atual', () => {
+  const startDraftBody = src.match(/const startDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(startDraftBody, /setSaving\(true\); setError\(''\); setSuccess\(''\)/)
+})
+
+test('startDraft (fallback real, sem draft ativo) continua mostrando erro genérico — a proteção contra dois rascunhos ativos não foi enfraquecida', () => {
+  const startDraftBody = src.match(/const startDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
+  assert.match(startDraftBody, /setError\('Não foi possível iniciar o inventário\.'\)/)
 })
