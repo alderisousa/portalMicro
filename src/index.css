@@ -145,6 +145,12 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .final-cta { display: flex; align-items: center; justify-content: space-between; gap: 38px; margin-top: 82px; margin-bottom: 82px; padding: 52px 58px; border: 1px solid rgba(45,107,85,.1); border-radius: 14px; background: var(--mint); }.final-cta .eyebrow { margin-bottom: 14px; }.final-cta h2 { font-size: clamp(36px, 4.5vw, 54px); }.final-cta .button { flex: 0 0 auto; }.footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 24px 0 34px; border-top: 1px solid var(--line); color: #84938a; font-size: 12px; }.footer .brand { color: var(--ink); font-size: 15px; }
 .footer .brand-logo { width: 160px; height: 50px; }
 .footer-meta { display: grid; gap: 4px; }
+/* Ação de instalação da PWA (Sprint PWA, Bloco 2) — discreta, junto da
+   versão no rodapé. Sem banner fixo: só um link textual, e para iOS um
+   bloco pequeno de instruções que abre/fecha no lugar. */
+.footer-pwa-action { width: fit-content; max-width: 100%; padding: 0; border: 0; background: none; color: var(--green); font: inherit; font-size: 12px; font-weight: 600; text-align: left; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.footer-pwa-action:hover, .footer-pwa-action:focus-visible { color: var(--coral); }
+.footer-pwa-hint { width: fit-content; max-width: 100%; margin: 6px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fffaf2; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .footer-links { display: flex; align-items: center; gap: 16px; }
 .footer-links a { color: var(--green); text-decoration: underline; text-underline-offset: 2px; }
 .legal-page { min-height: 100vh; background: #f7f8f2; }
