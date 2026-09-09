@@ -586,6 +586,10 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .admin-store-list p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 .template-market-note { margin: 18px 0 0; padding: 14px 16px; border-left: 3px solid var(--green); background: var(--mint); color: var(--green); font-size: 13px; line-height: 1.5; }
 .dashboard-market-section { margin-top: 26px; padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: #fffaf2; }
+/* Conta de gestão agora pode vir ANTES do site institucional (prioridade de
+   serviços operacionais) — mantém o mesmo respiro visual de 26px que antes
+   existia no sentido oposto (dashboard-grid seguido do card de gestão). */
+.dashboard-market-section + .dashboard-grid { margin-top: 26px; }
 .dashboard-market-section h2 { margin: 7px 0; }
 .dashboard-market-section > div > p { margin: 0 0 20px; color: var(--muted); }
 .dashboard-market-accounts { display: grid; gap: 10px; }

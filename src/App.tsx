@@ -2009,6 +2009,12 @@ function App() {
             </button>
           </div>
 
+          {/* Contas de gestão (hoje só GiroMicro Market, mas tratado como
+              conceito genérico "serviços/contas de gestão") vêm antes da
+              presença institucional quando o usuário tiver pelo menos uma —
+              só ordem/apresentação, conteúdo e regras dos cards inalterados. */}
+          {marketAccounts.length > 0 && <section className="dashboard-market-section"><div><span className="panel-kicker">CONTA DE GESTÃO</span><h2>Gestão do Mercado</h2><p>Este acesso é independente da sua página pública e do template escolhido.</p></div><div className="dashboard-market-accounts">{marketAccounts.map((account) => { const operational = account.status === 'pilot' || account.status === 'active'; const statusLabel = account.status === 'pilot' ? 'Piloto' : account.status === 'active' ? 'Ativo' : account.status === 'suspended' ? 'Suspenso' : 'Cancelado'; return <article className={operational ? '' : 'is-blocked'} key={account.id}><div><strong>{account.name}</strong><span>{account.role === 'owner' ? 'Proprietário' : account.role === 'admin' ? 'Administrador' : account.role === 'manager' ? 'Gerente' : account.role === 'operator' ? 'Operador' : 'Visualização'} · {statusLabel}{operational ? ` · ${account.stores.length} ${account.stores.length === 1 ? 'loja' : 'lojas'}` : ''}</span></div><button className={`button button-small${operational ? '' : ' button-outline'}`} onClick={() => { setSelectedMarketAccountId(account.id); setView('market') }}>{operational ? 'Acessar gestão' : 'Ver situação'} <ArrowRight size={16} /></button></article> })}</div></section>}
+
           <div className={`dashboard-grid${business.published ? ' is-complete' : ''}`}>
             <article className="status-panel">
               <div className="panel-heading">
@@ -2200,8 +2206,6 @@ function App() {
               </button>
             </aside>}
           </div>
-
-          {marketAccounts.length > 0 && <section className="dashboard-market-section"><div><span className="panel-kicker">CONTA DE GESTÃO</span><h2>Gestão do Mercado</h2><p>Este acesso é independente da sua página pública e do template escolhido.</p></div><div className="dashboard-market-accounts">{marketAccounts.map((account) => { const operational = account.status === 'pilot' || account.status === 'active'; const statusLabel = account.status === 'pilot' ? 'Piloto' : account.status === 'active' ? 'Ativo' : account.status === 'suspended' ? 'Suspenso' : 'Cancelado'; return <article className={operational ? '' : 'is-blocked'} key={account.id}><div><strong>{account.name}</strong><span>{account.role === 'owner' ? 'Proprietário' : account.role === 'admin' ? 'Administrador' : account.role === 'manager' ? 'Gerente' : account.role === 'operator' ? 'Operador' : 'Visualização'} · {statusLabel}{operational ? ` · ${account.stores.length} ${account.stores.length === 1 ? 'loja' : 'lojas'}` : ''}</span></div><button className={`button button-small${operational ? '' : ' button-outline'}`} onClick={() => { setSelectedMarketAccountId(account.id); setView('market') }}>{operational ? 'Acessar gestão' : 'Ver situação'} <ArrowRight size={16} /></button></article> })}</div></section>}
 
           <div className="privacy-note">
             <Save size={16} />
