@@ -2,8 +2,9 @@ import { ArrowLeft, Boxes, CheckCircle2, Minus, Plus, RefreshCw, ScanBarcode, Se
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import {
   cancelMarketInventoryDraft, finalizeMarketInventoryDraft, getMarketInventoryDraft, getMarketInventorySession,
-  getMarketStockBalance, getMarketStockContext, listActiveProducts, listMarketInventorySessions, removeMarketInventoryItem,
-  saveMarketInventoryDraft, saveMarketInventoryItem,
+  getMarketStockBalance, getMarketStockContext, listActiveProducts, listMarketInventorySessions,
+  listMarketStoreProductSettings, removeMarketInventoryItem, saveMarketInventoryDraft, saveMarketInventoryItem,
+  saveMarketStoreProductMinimumStock,
 } from '../services/marketStock'
 import type {
   MarketInitialInventoryItem, MarketInventoryDraft, MarketInventoryReasonCode, MarketInventorySessionDetail,
@@ -109,6 +110,18 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
   const [products, setProducts] = useState<MarketStockProduct[] | null>(null)
   const [storeId, setStoreId] = useState('')
   const [balance, setBalance] = useState<MarketStockBalanceRow[]>([])
+  // Estoque mínimo (opcional) por produto/loja (market_store_products) —
+  // independente da sessão de inventário: chave = productId, valor = último
+  // minimum_stock conhecido do servidor (null = não configurado). Nunca
+  // participa de dirtyItemIdsRef/itemConflicts (aquilo é só da contagem).
+  const [minimumStock, setMinimumStock] = useState<Record<string, number | null>>({})
+  // Texto em edição de um campo "Estoque mínimo": só existe uma entrada aqui
+  // enquanto o operador está digitando (chave presente = houve onChange
+  // desde o último commit). Ausência da chave é o que faz commitMinimumStock
+  // não reenviar nada quando o campo é só aberto/fechado sem alteração.
+  const [minimumStockInput, setMinimumStockInput] = useState<Record<string, string>>({})
+  const [minimumStockSaveState, setMinimumStockSaveState] = useState<Record<string, 'saving' | 'error'>>({})
+  const minimumStockRef = useRef<Record<string, number | null>>({})
   // "Últimos inventários" (fechamento da Sprint, item 3): resumo por loja,
   // mais recente primeiro (já vem ordenado da RPC). null = ainda carregando;
   // [] = loja sem nenhum inventário concluído/cancelado ainda.
@@ -175,6 +188,7 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
 
   const setCurrentDraft = (next: MarketInventoryDraft | null) => { draftRef.current = next; setDraft(next) }
   useEffect(() => { itemsRef.current = items }, [items])
+  useEffect(() => { minimumStockRef.current = minimumStock }, [minimumStock])
   useEffect(() => { itemConflictsRef.current = itemConflicts }, [itemConflicts])
   useEffect(() => { startedAtRef.current = startedAt }, [startedAt])
 
@@ -183,16 +197,21 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
   }
 
   const applyStoreData = async (nextStoreId: string, nextContext: MarketStockContext) => {
-    const [nextBalance, nextDraft, nextHistory] = await Promise.all([
+    const [nextBalance, nextDraft, nextHistory, nextMinimumStock] = await Promise.all([
       nextStoreId ? getMarketStockBalance(accountId, nextStoreId) : Promise.resolve([]),
       nextStoreId ? getMarketInventoryDraft(accountId, nextStoreId) : Promise.resolve(null),
       // "Últimos inventários" (fechamento da Sprint, item 3) — best-effort:
       // falha aqui não pode impedir o resto da tela de carregar (mesmo
       // espírito do status de sincronização de produtos, ver load()).
       nextStoreId ? listMarketInventorySessions(accountId, nextStoreId).catch((cause) => { console.error('Falha ao carregar historico de inventarios:', cause); return [] }) : Promise.resolve([]),
+      // Estoque mínimo (opcional): mesmo tratamento best-effort — sem isso o
+      // campo só fica temporariamente indisponível, nunca bloqueia a contagem.
+      nextStoreId ? listMarketStoreProductSettings(accountId, nextStoreId).catch((cause) => { console.error('Falha ao carregar estoque minimo configurado:', cause); return [] }) : Promise.resolve([]),
     ])
     setBalance(nextBalance); setCurrentDraft(nextDraft)
     setHistorySessions(nextHistory); setHistoryOpenSessionId(''); setHistoryDetail(null)
+    setMinimumStock(Object.fromEntries(nextMinimumStock.map((row) => [row.productId, row.minimumStock])))
+    setMinimumStockInput({}); setMinimumStockSaveState({})
     setItems([]); itemsRef.current = []; setCounting(false); setConfirming(false); setConfirmCancel(false)
     resetItemConcurrencyState(); setSaveState(nextDraft ? 'saved' : 'idle')
   }
@@ -589,6 +608,86 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     itemsRef.current = next; setItems(next); markItemDirty(productId)
   }
 
+  // Config independente da contagem (market_store_products.minimum_stock):
+  // nunca passa por markItemDirty/dirtyItemIdsRef, nunca bloqueia fechar ou
+  // finalizar o inventário, nunca gera movimento de estoque. Vazio no campo
+  // = a chave em minimumStockInput existe com string vazia (não confundir
+  // com "campo nunca editado", onde a chave está ausente).
+  const minimumStockInputValue = (productId: string) => {
+    if (productId in minimumStockInput) return minimumStockInput[productId]
+    const stored = minimumStockRef.current[productId]
+    return stored === null || stored === undefined ? '' : String(stored)
+  }
+
+  const changeMinimumStockInput = (productId: string, raw: string) => {
+    setMinimumStockInput((prev) => ({ ...prev, [productId]: raw }))
+  }
+
+  // Núcleo do salvamento (extraído de commitMinimumStock só para ser
+  // reaproveitado por stepMinimumStock — mesmíssima regra de antes: só
+  // chama o servidor quando o valor final realmente difere do último
+  // conhecido, nunca sobrescreve sale_price/status/is_essential (upsert só
+  // envia minimum_stock, ver saveMarketStoreProductMinimumStock).
+  const persistMinimumStock = async (productId: string, next: number | null) => {
+    const previous = minimumStockRef.current[productId] ?? null
+    if (next === previous) {
+      setMinimumStockInput((prev) => { const clone = { ...prev }; delete clone[productId]; return clone })
+      return
+    }
+    setMinimumStockSaveState((prev) => ({ ...prev, [productId]: 'saving' }))
+    try {
+      await saveMarketStoreProductMinimumStock(accountId, storeId, productId, next)
+      setMinimumStock((prev) => ({ ...prev, [productId]: next }))
+      setMinimumStockInput((prev) => { const clone = { ...prev }; delete clone[productId]; return clone })
+      setMinimumStockSaveState((prev) => { const clone = { ...prev }; delete clone[productId]; return clone })
+    } catch (cause) {
+      console.error('Falha ao salvar estoque minimo:', cause)
+      setMinimumStockSaveState((prev) => ({ ...prev, [productId]: 'error' }))
+    }
+  }
+
+  // Digitação livre no campo: só chama o servidor quando o campo foi de fato
+  // editado (chave presente em minimumStockInput) — abrir/fechar sem
+  // alteração nunca sobrescreve o que já estava salvo. Em erro, mantém
+  // minimumStockInput[productId] intacto (não reverte o texto do operador)
+  // para "Tentar novamente" reenviar o mesmo valor sem precisar digitar de novo.
+  const commitMinimumStock = async (productId: string) => {
+    const raw = minimumStockInput[productId]
+    if (raw === undefined) return
+    const trimmed = raw.trim()
+    let next: number | null
+    if (trimmed === '') { next = null }
+    else {
+      const parsed = Number(trimmed.replace(',', '.'))
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        // Valor inválido: descarta a edição e volta a exibir o último valor
+        // conhecido, sem chamar o servidor.
+        setMinimumStockInput((prev) => { const clone = { ...prev }; delete clone[productId]; return clone })
+        return
+      }
+      next = parsed
+    }
+    await persistMinimumStock(productId, next)
+  }
+
+  // Botões +/- do mínimo: escolha discreta (clique), não digitação tecla a
+  // tecla — commit imediato, mesmo padrão já usado por updateReasonCode (que
+  // também não espera blur). Nunca toca em item.quantity/isCounted — lê e
+  // grava exclusivamente o estado do mínimo.
+  const minimumStockNumericValue = (productId: string): number | null => {
+    const raw = minimumStockInputValue(productId).trim()
+    if (raw === '') return null
+    const parsed = Number(raw.replace(',', '.'))
+    return Number.isFinite(parsed) ? parsed : null
+  }
+
+  const stepMinimumStock = (productId: string, delta: number) => {
+    const current = minimumStockNumericValue(productId) ?? 0
+    const next = Math.max(0, current + delta)
+    changeMinimumStockInput(productId, String(next))
+    void persistMinimumStock(productId, next)
+  }
+
   // Escolha discreta num <select> (não é digitação tecla a tecla) — commit
   // imediato, sem esperar blur.
   const updateReasonCode = (productId: string, reasonCode: MarketInventoryReasonCode | null) => {
@@ -880,20 +979,40 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
         const itemState = itemSaveState[item.productId]
         return <article ref={(element) => { itemRefs.current[item.productId] = element }} className={`${item.isCounted && item.quantity === 0 && !isCycleInventory ? 'is-zero ' : ''}${highlightedProductId === item.productId ? 'is-highlighted' : ''}`} key={item.productId}>
           <div className="market-counted-product-name"><strong>{product.name}</strong><small>{productIdentifier(product)}</small>{(isCycleInventory || comparison.known) && <span className="market-stock-comparison">Saldo {balanceLabel} · Contagem {countedLabel} · <b className={differenceClass}>Diferença {differenceLabel}</b></span>}</div>
-          <div className="market-quantity-stepper">
-            {/* "-" em item não contado fica desabilitado: não há de onde
-                decrementar ainda, e decidir sozinho "0 contado" via minus
-                seria confuso (minus implica reduzir um número existente). */}
-            <button type="button" aria-label={`Diminuir quantidade de ${product.name}`} disabled={!item.isCounted || Boolean(conflict)} onClick={() => updateQuantity(item.productId, item.quantity - 1)}><Minus /></button>
-            <input aria-label={`Quantidade contada de ${product.name}`} ref={(element) => { quantityRefs.current[item.productId] = element }} type="number" min="0" step="0.001" inputMode="decimal" placeholder="—" disabled={Boolean(conflict)}
-              value={item.isCounted ? item.quantity : ''}
-              onChange={(event) => { const raw = event.target.value; if (raw.trim() === '') clearQuantity(item.productId); else updateQuantity(item.productId, Number(raw)) }}
-              onKeyDown={finishQuantity} onFocus={(event) => event.target.select()} onBlur={() => void finishItemEditing(item.productId)} />
-            {/* "+" em item não contado inicia em 1 e já marca contado. */}
-            <button type="button" aria-label={`Aumentar quantidade de ${product.name}`} disabled={Boolean(conflict)} onClick={() => updateQuantity(item.productId, (item.isCounted ? item.quantity : 0) + 1)}><Plus /></button>
+          <div className="market-count-controls">
+            <div className="market-quantity-stepper">
+              {/* "-" em item não contado fica desabilitado: não há de onde
+                  decrementar ainda, e decidir sozinho "0 contado" via minus
+                  seria confuso (minus implica reduzir um número existente). */}
+              <button type="button" aria-label={`Diminuir quantidade de ${product.name}`} disabled={!item.isCounted || Boolean(conflict)} onClick={() => updateQuantity(item.productId, item.quantity - 1)}><Minus /></button>
+              <input aria-label={`Quantidade contada de ${product.name}`} ref={(element) => { quantityRefs.current[item.productId] = element }} type="number" min="0" step="0.001" inputMode="decimal" placeholder="—" disabled={Boolean(conflict)}
+                value={item.isCounted ? item.quantity : ''}
+                onChange={(event) => { const raw = event.target.value; if (raw.trim() === '') clearQuantity(item.productId); else updateQuantity(item.productId, Number(raw)) }}
+                onKeyDown={finishQuantity} onFocus={(event) => event.target.select()} onBlur={() => void finishItemEditing(item.productId)} />
+              {/* "+" em item não contado inicia em 1 e já marca contado. */}
+              <button type="button" aria-label={`Aumentar quantidade de ${product.name}`} disabled={Boolean(conflict)} onClick={() => updateQuantity(item.productId, (item.isCounted ? item.quantity : 0) + 1)}><Plus /></button>
+            </div>
+            {/* Estoque mínimo (opcional, market_store_products.minimum_stock):
+                mesmo padrão visual do stepper de quantidade (botão/valor/botão),
+                mas totalmente independente — os botões e o campo aqui nunca
+                tocam item.quantity/isCounted, só o mínimo configurado para a
+                loja. Vazio = não configurado (NULL); "0" = mínimo explícito. */}
+            <div className="market-minimum-control">
+              <span className="market-minimum-label">Mínimo</span>
+              <div className="market-quantity-stepper market-minimum-stepper">
+                <button type="button" aria-label={`Diminuir estoque mínimo de ${product.name}`} disabled={(minimumStockNumericValue(item.productId) ?? 0) <= 0} onClick={() => stepMinimumStock(item.productId, -1)}><Minus /></button>
+                <input aria-label={`Estoque mínimo de ${product.name}`} type="number" min="0" step="0.001" inputMode="decimal" placeholder="—"
+                  value={minimumStockInputValue(item.productId)}
+                  onChange={(event) => changeMinimumStockInput(item.productId, event.target.value)}
+                  onKeyDown={finishQuantity} onFocus={(event) => event.target.select()} onBlur={() => void commitMinimumStock(item.productId)} />
+                <button type="button" aria-label={`Aumentar estoque mínimo de ${product.name}`} onClick={() => stepMinimumStock(item.productId, 1)}><Plus /></button>
+              </div>
+            </div>
           </div>
           {itemState === 'saving' && <small className="market-item-save-state">Salvando...</small>}
           {itemState === 'error' && <small className="market-item-save-state is-error">Não foi possível salvar. <button type="button" className="market-item-retry" onClick={() => { markItemDirty(item.productId); void finishItemEditing(item.productId) }}>Tentar novamente</button></small>}
+          {minimumStockSaveState[item.productId] === 'saving' && <small className="market-item-save-state">Salvando mínimo...</small>}
+          {minimumStockSaveState[item.productId] === 'error' && <small className="market-item-save-state is-error">Não foi possível salvar o estoque mínimo. <button type="button" className="market-item-retry" onClick={() => void commitMinimumStock(item.productId)}>Tentar novamente</button></small>}
           {/* Contado como zero é sempre persistido (202609080005) — em
               'initial' sem saldo anterior, o produto fica registrado no
               rascunho (visível para outro usuário), mas não gera movimento

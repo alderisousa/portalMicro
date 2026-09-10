@@ -664,6 +664,12 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-row-status.product_pending, .market-row-status.store_pending { background: #fff1c9; color: #795b12; }
 .market-row-status.store_not_allowed, .market-row-status.error, .market-row-status.not_found { background: #fbe9e5; color: #9f3f2f; }
 .market-row-status.pending, .market-row-status.needs_review { background: #fff1c9; color: #795b12; }
+/* Reposição Inteligente (Abastecimento): mesma pill de status, cores por
+   priority_level. medium/low ficam neutros de propósito (evita aparência
+   exagerada de alerta em algo que não é crítico). */
+.market-row-status.critical { background: #fbe9e5; color: #9f3f2f; }
+.market-row-status.high { background: #fff1c9; color: #795b12; }
+.market-row-status.low { background: #eef1ee; color: var(--muted); }
 .market-import-confirm { display: grid; justify-items: end; margin-top: 30px; }
 .market-import-confirm p { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
 .market-confirm-summary { margin: 16px 0 0; padding-left: 22px; color: var(--ink); line-height: 1.7; }
@@ -699,6 +705,19 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
 .market-purchase-card-items { padding: 0 20px 22px; border-top: 1px solid var(--line); }
 .market-purchase-card-items-status { display: flex; align-items: center; gap: 10px; padding: 18px 0; color: var(--muted); font-size: 13px; }
 .market-purchase-item-product { display: grid; gap: 2px; margin-top: 4px; }
+/* Abastecimento / Reposição Inteligente: um produto candidato dentro do card
+   expandido da loja (mesmo market-purchase-card-items ao redor). */
+.market-replenishment-candidate { padding: 14px 0; border-top: 1px solid var(--line); }
+.market-replenishment-candidate:first-child { border-top: 0; }
+.market-replenishment-candidate-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.market-replenishment-candidate-heading strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.market-replenishment-candidate dl { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0; }
+.market-replenishment-candidate dt { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.market-replenishment-candidate dd { margin: 0; font-size: 13px; font-weight: 700; }
+/* Destaque leve só no valor de Sugestão (mesma dd, sem card novo) — cor de
+   marca, não de alerta; "A definir" recebe o mesmo tratamento tipográfico. */
+.market-replenishment-suggested { color: var(--green); font-size: 15px; }
+.market-replenishment-reasons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .market-purchase-item-product strong { font-size: 12px; }
 .market-purchase-item-product span { color: var(--muted); font-size: 11px; }
 .market-purchase-items-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; }
@@ -1009,6 +1028,12 @@ li.is-open > .market-history-item { border-color: var(--green); background: var(
 .market-stock-comparison b { color: var(--ink); }
 .market-stock-comparison b.is-positive { color: #2f7045; }
 .market-stock-comparison b.is-negative { color: #9f3f2f; }
+/* Contagem + Mínimo na mesma linha visual: lado a lado quando há espaço,
+   wrap natural (sem overflow) quando não há — ver .market-quantity-stepper
+   mobile abaixo, reaproveitada tal qual para o stepper do mínimo. */
+.market-count-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 18px; }
+.market-minimum-control { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.market-minimum-label { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; white-space: nowrap; }
 .market-quantity-stepper { display: grid; grid-template-columns: 46px 70px 46px; align-items: center; gap: 6px; }
 .market-quantity-stepper button { display: grid; place-items: center; width: 46px; height: 46px; padding: 0; border: 1px solid #b9c7bc; border-radius: 9px; background: #fff; color: var(--green); cursor: pointer; touch-action: manipulation; }
 .market-quantity-stepper button:active { background: var(--mint); transform: scale(.97); }
@@ -1130,6 +1155,7 @@ li.is-open > .market-history-item { border-color: var(--green); background: var(
   .market-commercial-cards { grid-template-columns: 1fr; }
   .market-store-performance-heading { align-items: flex-start; flex-direction: column; }
   .market-store-performance dl { grid-template-columns: repeat(2, 1fr); }
+  .market-replenishment-candidate dl { grid-template-columns: repeat(2, 1fr); }
   .market-commercial-attention { grid-template-columns: 1fr; }
   .market-stock-add-item { grid-template-columns: 1fr; }
   .market-stock-add-item .button { width: 100%; }

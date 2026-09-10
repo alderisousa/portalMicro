@@ -13,6 +13,7 @@ import type {
   MarketStockContext,
   MarketStockProduct,
   MarketStockStartResult,
+  MarketStoreProductSettings,
 } from '../types/marketStock'
 
 export async function listActiveProducts(accountId: string): Promise<MarketStockProduct[]> {
@@ -149,6 +150,47 @@ export async function getMarketInventorySession(sessionId: string): Promise<Mark
   })
   if (error) throw error
   return data as MarketInventorySessionDetail
+}
+
+// Estoque mínimo (opcional) por produto/loja — configuração independente da
+// sessão de inventário: não é item de contagem, não versiona, nunca gera
+// movimento de estoque. RLS de market_store_products (mesma do resto do
+// catálogo por loja, ver market_store_products_select na migration 001) já
+// exige acesso à loja; nenhuma RPC nova foi necessária para leitura.
+export async function listMarketStoreProductSettings(accountId: string, storeId: string): Promise<MarketStoreProductSettings[]> {
+  const { data, error } = await supabase
+    .from('market_store_products')
+    .select('product_id, minimum_stock')
+    .eq('market_account_id', accountId)
+    .eq('market_store_id', storeId)
+  if (error) throw error
+  return (data ?? []).map((row) => ({
+    productId: row.product_id as string,
+    minimumStock: row.minimum_stock === null ? null : Number(row.minimum_stock),
+  }))
+}
+
+// Upsert mínimo por (market_store_id, product_id) — mesma unique constraint
+// da tabela (migration 001). Cria a row só se ainda não existir (produto
+// nunca configurado nesta loja); numa row já existente, o ON CONFLICT DO
+// UPDATE do PostgREST só toca nas colunas presentes no payload, então
+// sale_price/status/is_essential nunca são sobrescritos. RLS de
+// market_store_products_write (mesma migration) já exige acesso à loja e
+// papel owner/admin/manager/operator — a mesma alçada que já controla o
+// resto da tela de Estoque.
+export async function saveMarketStoreProductMinimumStock(
+  accountId: string,
+  storeId: string,
+  productId: string,
+  minimumStock: number | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('market_store_products')
+    .upsert(
+      { market_account_id: accountId, market_store_id: storeId, product_id: productId, minimum_stock: minimumStock },
+      { onConflict: 'market_store_id,product_id' },
+    )
+  if (error) throw error
 }
 
 export async function removeMarketInventoryItem(

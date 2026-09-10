@@ -58,6 +58,16 @@ export type MarketInventoryItemSaveResult = MarketInventoryItemSaveSuccess | Mar
 export interface MarketInventoryItemRemoveSuccess { conflict: false; removed: true }
 export type MarketInventoryItemRemoveResult = MarketInventoryItemRemoveSuccess | MarketInventoryItemSaveConflict
 
+// Configuração opcional por produto/loja em market_store_products — não é
+// item de sessão de inventário (não versiona, não gera movimento de estoque).
+// minimumStock null = não configurado; 0 = mínimo explicitamente zero. Usado
+// pelo campo "Estoque mínimo (opcional)" da tela de Estoque e pela regra
+// BELOW_MINIMUM da Reposição Inteligente.
+export interface MarketStoreProductSettings {
+  productId: string
+  minimumStock: number | null
+}
+
 export interface MarketStockBalanceRow {
   marketAccountId: string
   marketStoreId: string

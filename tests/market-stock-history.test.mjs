@@ -24,7 +24,7 @@ test('serviço: listMarketInventorySessions/getMarketInventorySession chamam as 
 
 test('applyStoreData busca o histórico em paralelo com saldo/rascunho, e uma falha nele não pode impedir o resto da tela de carregar', () => {
   const body = src.match(/const applyStoreData = async \(nextStoreId: string, nextContext: MarketStockContext\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
-  assert.match(body, /const \[nextBalance, nextDraft, nextHistory\] = await Promise\.all\(\[/)
+  assert.match(body, /const \[nextBalance, nextDraft, nextHistory, nextMinimumStock\] = await Promise\.all\(\[/)
   assert.match(body, /listMarketInventorySessions\(accountId, nextStoreId\)\.catch\(/, 'falha ao buscar histórico precisa ser best-effort (catch), não pode derrubar o Promise.all inteiro')
 })
 
