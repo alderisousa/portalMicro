@@ -72,3 +72,92 @@ export interface MarketReplenishmentOverview {
   run: MarketReplenishmentRunSummary | null
   stores: MarketReplenishmentStoreGroup[]
 }
+
+export type MarketReplenishmentOrderStatus =
+  | 'draft'
+  | 'approved'
+  | 'purchasing'
+  | 'separating'
+  | 'dispatched'
+  | 'completed'
+  | 'cancelled'
+
+export type MarketReplenishmentOrderItemStatus = 'pending' | 'partial' | 'fulfilled' | 'cancelled'
+export type MarketReplenishmentOrderItemSource = 'batch' | 'manual_review' | 'manual_purchase'
+export type MarketReplenishmentAllocationStatus = 'pending' | 'allocated' | 'dispatched' | 'received' | 'cancelled'
+
+export interface MarketReplenishmentOrderSummary {
+  id: string
+  marketAccountId: string
+  runId: string
+  status: MarketReplenishmentOrderStatus
+  createdAt: string
+  updatedAt: string
+  approvedAt: string | null
+  completedAt: string | null
+  cancelledAt: string | null
+}
+
+export interface MarketReplenishmentOrderPrioritySummary {
+  criticalCount: number
+  highCount: number
+  mediumCount: number
+  lowCount: number
+  prioritySort: number
+  bestRankPosition: number | null
+}
+
+export interface MarketReplenishmentOrderLastSupplier {
+  supplierName: string | null
+  supplierDocument: string | null
+  invoiceNumber: string | null
+  invoiceSeries: string | null
+  issuedAt: string | null
+  receivedAt: string | null
+  operationalAt: string | null
+  unitCost: number | null
+  purchaseId: string
+  purchaseItemId: string
+}
+
+export interface MarketReplenishmentOrderAllocation {
+  id: string
+  storeId: string
+  storeName: string
+  candidateId: string | null
+  status: MarketReplenishmentAllocationStatus
+  suggestedQuantity: number | null
+  warehouseAllocatedQuantity: number | null
+  purchaseNeededQuantity: number | null
+  priorityLevel: MarketReplenishmentPriorityLevel | null
+  rankPosition: number | null
+}
+
+export interface MarketReplenishmentOrderItem {
+  id: string
+  productId: string
+  productName: string
+  sku: string | null
+  ean: string | null
+  unit: string
+  status: MarketReplenishmentOrderItemStatus
+  source: MarketReplenishmentOrderItemSource
+  totalSuggestedQuantity: number
+  warehouseStockSnapshot: number | null
+  suggestedPurchaseQuantity: number
+  adjustedPurchaseQuantity: number | null
+  effectivePurchaseQuantity: number
+  purchasedQuantity: number
+  warehouseSurplusQuantity: number
+  reviewCancelledAt: string | null
+  reviewCancelledBy: string | null
+  reviewCancellationReason: string | null
+  priority: MarketReplenishmentOrderPrioritySummary
+  lastSupplier: MarketReplenishmentOrderLastSupplier | null
+  allocations: MarketReplenishmentOrderAllocation[]
+}
+
+export interface MarketReplenishmentOrderDetail {
+  order: MarketReplenishmentOrderSummary
+  items: MarketReplenishmentOrderItem[]
+}

@@ -3,7 +3,7 @@ import { listMarketProductsByIds } from './marketReconciliation'
 import { groupReplenishmentCandidatesByStore } from '../utils/marketReplenishment'
 import type { MarketStore } from '../types/market'
 import type {
-  MarketReplenishmentCandidate, MarketReplenishmentOverview, MarketReplenishmentRunSummary,
+  MarketReplenishmentCandidate, MarketReplenishmentOrderDetail, MarketReplenishmentOverview, MarketReplenishmentRunSummary,
   MarketReplenishmentTriggerReason,
 } from '../types/marketReplenishment'
 
@@ -122,4 +122,82 @@ export async function getMarketReplenishmentOverview(
   }))
 
   return { run, stores: groupReplenishmentCandidatesByStore(namedCandidates, stores) }
+}
+
+export async function generateMarketReplenishmentOrderDraft(accountId: string): Promise<string> {
+  const { data, error } = await supabase.rpc('market_generate_replenishment_order_draft', {
+    p_market_account_id: accountId,
+  })
+  if (error) throw error
+  if (typeof data !== 'string') throw new Error('A lista de compras retornou um identificador inválido.')
+  return data
+}
+
+export async function getMarketReplenishmentOrder(
+  accountId: string,
+  orderId: string | null = null,
+): Promise<MarketReplenishmentOrderDetail | null> {
+  const { data, error } = await supabase.rpc('market_get_replenishment_order', {
+    p_market_account_id: accountId,
+    p_order_id: orderId,
+  })
+  if (error) throw error
+  return data as MarketReplenishmentOrderDetail | null
+}
+
+export async function updateMarketReplenishmentOrderItemQuantity(
+  accountId: string,
+  orderId: string,
+  orderItemId: string,
+  adjustedPurchaseQuantity: number,
+): Promise<string> {
+  const { data, error } = await supabase.rpc('market_update_replenishment_order_item_quantity', {
+    p_market_account_id: accountId,
+    p_order_id: orderId,
+    p_order_item_id: orderItemId,
+    p_adjusted_purchase_quantity: adjustedPurchaseQuantity,
+  })
+  if (error) throw error
+  return data as string
+}
+
+export async function addMarketReplenishmentOrderManualItem(
+  accountId: string,
+  orderId: string,
+  productId: string,
+  purchaseQuantity: number,
+): Promise<string> {
+  const { data, error } = await supabase.rpc('market_add_replenishment_order_manual_item', {
+    p_market_account_id: accountId,
+    p_order_id: orderId,
+    p_product_id: productId,
+    p_purchase_quantity: purchaseQuantity,
+  })
+  if (error) throw error
+  return data as string
+}
+
+export async function cancelMarketReplenishmentOrderItemReview(
+  accountId: string,
+  orderId: string,
+  orderItemId: string,
+  cancellationReason = 'Retirado durante a revisão pré-compra',
+): Promise<string> {
+  const { data, error } = await supabase.rpc('market_cancel_replenishment_order_item_review', {
+    p_market_account_id: accountId,
+    p_order_id: orderId,
+    p_order_item_id: orderItemId,
+    p_cancellation_reason: cancellationReason,
+  })
+  if (error) throw error
+  return data as string
+}
+
+export async function approveMarketReplenishmentOrder(accountId: string, orderId: string): Promise<string> {
+  const { data, error } = await supabase.rpc('market_approve_replenishment_order', {
+    p_market_account_id: accountId,
+    p_order_id: orderId,
+  })
+  if (error) throw error
+  return data as string
 }
