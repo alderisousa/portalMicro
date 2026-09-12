@@ -76,9 +76,7 @@ export interface MarketReplenishmentOverview {
 export type MarketReplenishmentOrderStatus =
   | 'draft'
   | 'approved'
-  | 'purchasing'
-  | 'separating'
-  | 'dispatched'
+  | 'in_progress'
   | 'completed'
   | 'cancelled'
 
@@ -127,6 +125,7 @@ export interface MarketReplenishmentOrderAllocation {
   candidateId: string | null
   status: MarketReplenishmentAllocationStatus
   suggestedQuantity: number | null
+  adjustedQuantity: number | null
   warehouseAllocatedQuantity: number | null
   purchaseNeededQuantity: number | null
   priorityLevel: MarketReplenishmentPriorityLevel | null
@@ -142,11 +141,11 @@ export interface MarketReplenishmentOrderItem {
   unit: string
   status: MarketReplenishmentOrderItemStatus
   source: MarketReplenishmentOrderItemSource
-  totalSuggestedQuantity: number
+  totalSuggestedQuantity: number | null
   warehouseStockSnapshot: number | null
-  suggestedPurchaseQuantity: number
+  suggestedPurchaseQuantity: number | null
   adjustedPurchaseQuantity: number | null
-  effectivePurchaseQuantity: number
+  effectivePurchaseQuantity: number | null
   purchasedQuantity: number
   warehouseSurplusQuantity: number
   reviewCancelledAt: string | null

@@ -1,6 +1,6 @@
 # GiroMicro Market — Contexto técnico atual
 
-> Documento vivo do estado observado no repositório em 2026-09-11. Descreve o código, as migrations aplicadas/homologadas e a integração frontend existente; não é um contrato de funcionalidades futuras.
+> Documento vivo do estado observado no repositório em 2026-09-12. Descreve o código, as migrations aplicadas/homologadas e a integração frontend existente; não é um contrato de funcionalidades futuras.
 
 ## 1. Visão geral da arquitetura
 
@@ -97,8 +97,8 @@ A lista abaixo resume somente tabelas relevantes e seus vínculos principais.
 ### Lista de Compras
 
 - `market_replenishment_orders`: cabeçalho de lista por run; FK tenant/run; status, aprovação, conclusão e cancelamento.
-- `market_replenishment_order_items`: um produto consolidado por lista; FK lista/produto; totais sugeridos, saldo do galpão, compra sugerida, ajuste, comprado, excedente, origem e cancelamento de revisão. `total_suggested_quantity` e `suggested_purchase_quantity` podem ser `NULL` quando a necessidade consolidada ainda é desconhecida.
-- `market_replenishment_order_allocations`: rateio item-loja; FK item/loja/candidato; sugestões, divisão galpão-compra, ajustes e quantidades alocadas, despachadas e recebidas. Quantidades operacionais conhecidas são inteiras por arredondamento para cima; `NULL` permanece `NULL`.
+- `market_replenishment_order_items`: um produto consolidado por lista; FK lista/produto; totais sugeridos, saldo do galpão, compra sugerida, ajuste, comprado, excedente, origem e cancelamento de revisão. A lista operacional só materializa candidatos com necessidade conhecida.
+- `market_replenishment_order_allocations`: allocation item-loja; FK item/loja/candidato; sugestão, divisão galpão-compra, ajustes e quantidades alocadas, despachadas e recebidas. Quantidades operacionais conhecidas são inteiras por arredondamento para cima; `NULL` permanece no batch/análise e não entra na operação.
 
 ## 4. Estoque
 
@@ -155,7 +155,7 @@ As regras persistidas em `trigger_reasons` são `STOCKOUT`, `BELOW_MINIMUM`, `LO
 - O limite persistido é **TOP 200 por loja**; `products_triggered` e `triggered_over_limit_count` preservam o que ficou fora do teto.
 - Prioridade é `critical`, `high`, `medium`, `low`, com `priority_score` e `rank_position`.
 - `current_stock = NULL` significa ausência de histórico, não zero. Zero é saldo conhecido e pode gerar `STOCKOUT`.
-- `suggested_quantity = NULL` permanece desconhecida quando o cálculo não consegue determinar uma quantidade; não deve ser convertida em zero. Na Lista de Compras, se qualquer allocation de um produto tiver `suggested_quantity NULL`, o `total_suggested_quantity` consolidado permanece `NULL` e `suggested_purchase_quantity` também permanece `NULL`.
+- `suggested_quantity = NULL` permanece desconhecida quando o cálculo não consegue determinar uma quantidade; não deve ser convertida em zero. Esses candidatos continuam no batch, mas não são materializados na Lista de Compras operacional.
 - `warehouse_stock` é snapshot agregado do saldo dos warehouses e pode ser `NULL` quando não há galpão aplicável.
 
 ### Último run efetivo
@@ -168,7 +168,11 @@ A tela `MarketReplenishment` não dispara o batch. `marketReplenishment.ts` lê 
 
 As três tabelas existem: `market_replenishment_orders`, `market_replenishment_order_items` e `market_replenishment_order_allocations`. A geração de draft é feita por `market_generate_replenishment_order_draft(account_id)`, que exige vínculo com `owner/admin` ou `manager` com `all_stores`, usa o último run efetivo e é idempotente por run não cancelado.
 
-A consolidação é por `product_id`: quando todas as necessidades são conhecidas, soma `candidate.suggested_quantity` de todas as lojas, captura `warehouse_stock_snapshot` e calcula `suggested_purchase_quantity = max(total_suggested - warehouse_stock, 0)`. Quando qualquer loja participante tem `suggested_quantity NULL`, `total_suggested_quantity` e `suggested_purchase_quantity` permanecem `NULL`; necessidade desconhecida/não calculável nunca vira zero. As allocations mantêm uma linha por loja/candidato e separam `warehouse_allocated_quantity` de `purchase_needed_quantity`, priorizando candidatos críticos/altos/médios/baixos e ranking.
+A migration `202609120003` define o ciclo `draft -> approved -> in_progress -> completed`, além de `cancelled`, com `started_at`, `started_by` e `approval_revision`. `market_replenishment_operation_lines` guarda metas aprovadas por allocation e frente; `market_replenishment_order_events` registra eventos append-only. A aprovação cria as linhas operacionais, encerra a revisão e não inicia a operação. Compra externa e Galpão são frentes independentes.
+
+A consolidação é somente uma visão/soma das allocations. A revisão operacional é por allocation/loja, com `Necessidade = Do Galpão + Comprar`; a RPC aceita a decomposição Galpão/Comprar da allocation. Não há rateio automático a partir da Consolidada. Reopen e supersede só são permitidos antes do início operacional; supersede materializa a nova order antes de cancelar a anterior. `stale` compara a order com o batch mais novo elegível.
+
+As migrations `202609120004` e `202609120005` aplicam o mesmo critério operacional na geração pública e no helper interno usado por supersede: `priority_level IN ('critical','high','medium') AND suggested_quantity IS NOT NULL`. Candidatos desconhecidos continuam no batch/análise, `NULL` não vira zero e `LOW` continua fora da lista operacional.
 
 A migration aplicada/homologada `202609110002_round_replenishment_operational_quantities.sql` mantém o cálculo analítico do batch decimal, mas arredonda para cima (`CEIL`) as quantidades materializadas/operacionais da lista em itens e allocations. Ex.: necessidade analítica `2,4833` vira necessidade operacional `3`; `NULL` permanece `NULL`.
 
@@ -176,19 +180,19 @@ A migration aplicada/homologada `202609110002_round_replenishment_operational_qu
 
 ### Revisão pré-compra implementada no backend
 
-A migration aplicada/homologada `202609100018_replenishment_order_review_backend.sql` adiciona e usa:
+A migration aplicada/homologada `202609100018_replenishment_order_review_backend.sql`, complementada pela `202609120003`, adiciona e usa:
 
 - `market_replenishment_order_items.source`: `batch`, `manual_review`, `manual_purchase`; no estágio atual da revisão, batch e inclusão manual em revisão são gerados.
 - `review_cancelled_at`, `review_cancelled_by` e `review_cancellation_reason`: cancelamento lógico do item durante a revisão.
-- `adjusted_purchase_quantity`: quantidade revisada; `NULL` preserva a sugestão original.
-- RPCs `market_update_replenishment_order_item_quantity`, `market_add_replenishment_order_manual_item`, `market_cancel_replenishment_order_item_review` e `market_approve_replenishment_order`.
-- Aprovação muda o cabeçalho de `draft` para `approved`, preenchendo `approved_at` e `approved_by`.
+- `adjusted_purchase_quantity`: compatibilidade do item consolidado; a revisão operacional nova é feita na allocation.
+- RPCs `market_update_replenishment_allocation_review`, `market_add_replenishment_order_manual_item`, `market_cancel_replenishment_order_item_review` e `market_approve_replenishment_order`.
+- Aprovação muda o cabeçalho de `draft` para `approved`, cria operation lines por frente e preenche `approved_at`, `approved_by` e `approval_revision`, sem preencher `started_at`.
 
-Isso é **IMPLEMENTADO no banco e homologado no Supabase**. O frontend de Abastecimento já executa as mutações de revisão enquanto a lista está `draft`: ajustar quantidade consolidada, incluir produto ativo do catálogo como `manual_review`, retirar item por cancelamento lógico e aprovar a lista.
+Isso é **IMPLEMENTADO no banco e homologado no Supabase**. O frontend executa a revisão por loja enquanto a lista está `draft`, inclui produto ativo do catálogo somente na loja selecionada, permite retirada lógica e aprova a order inteira.
 
 ### Frontend de leitura e revisão pré-compra
 
-`src/services/marketReplenishment.ts` consome `market_generate_replenishment_order_draft`, `market_get_replenishment_order` e as RPCs de revisão `market_update_replenishment_order_item_quantity`, `market_add_replenishment_order_manual_item`, `market_cancel_replenishment_order_item_review` e `market_approve_replenishment_order`. `src/pages/MarketReplenishment.tsx` preserva a visão atual do último batch por loja e adiciona a ação "Abrir lista", que gera/reutiliza o draft e renderiza os itens consolidados em cards responsivos. O topo do card mostra `Necessidade total`, `Compra efetiva`, `Quantidade revisada` e `Galpão`; as allocations por loja mostram `Necessidade`, `Do Galpão` e `Comprar`. A quantidade revisada usa autosave no `blur`/Enter. `NULL` não é exibido como zero. Quando o status é `draft`, habilita ajuste de quantidade, inclusão manual por busca no catálogo, retirada lógica e aprovação; depois de `approved`, a lista fica somente leitura. Itens `status='cancelled'` não entram na lista normal exibida.
+`src/services/marketReplenishment.ts` consome `market_generate_replenishment_order_draft`, `market_get_replenishment_order`, `market_update_replenishment_allocation_review`, `market_add_replenishment_order_manual_item`, `market_cancel_replenishment_order_item_review` e `market_approve_replenishment_order`. `src/pages/MarketReplenishment.tsx` oferece o seletor `Consolidada`/loja individual. A Consolidada é read-only e soma as allocations; a loja individual permite revisar `Do Galpão` e `Comprar` por allocation, com autosave no `blur`/Enter. O botão `Aprovar lista` aparece somente na Consolidada porque a aprovação é da order inteira. A inclusão manual só existe em contexto de loja. Após `approved`, a lista fica somente leitura. Itens `status='cancelled'` não entram na lista normal exibida.
 
 ### Homologação operacional de 2026-09-11
 
@@ -203,21 +207,32 @@ Cenário homologado no Supabase para `Chiclete Bubbaloo Uva 5g` / `SAL DA TERRA 
 - prioridade `HIGH`;
 - motivos `LOW_COVERAGE` + `SALES_ACCELERATION`.
 
+### Smoke homologado de 2026-09-12
+
+- **Conta:** `f825aa1c-fa92-4740-b126-c117c6ad1b94`
+- **Batch:** `2f3fab2b-5860-43bc-9d37-b7707d53b661`
+- **Order:** `e00f7b35-868e-441f-9307-a091ab7b78a7`
+- **Caso desconhecido:** `COCA COLA ORIGINAL 2 5` (EAN `7894900027020`); permanece no batch com `current_stock = NULL` e `suggested_quantity = NULL`, mas não entra na nova order após `202609120004` + `202609120005`.
+- **Itens operacionais:** `ANTARCTICA GUARANA LATA 350ML` (3 / Galpão 0 / Comprar 3), `Chiclete Bubbaloo Uva 5g` (3 / Galpão 3 / Comprar 0) e `3 CORACAO CAFE TRADICIONAL 500G` (1 / Galpão 0 / Comprar 1).
+- **Aprovação:** `status = approved`, `approval_revision = 1`, `started_at = NULL`; eventos `ORDER_CREATED` e `ORDER_APPROVED`, sem operação iniciada.
+- **Operation lines:** purchase 3, purchase 1 e warehouse 3; todas com `confirmed_quantity = 0`, `started_at = NULL` e `completed_at = NULL`.
+- **UX:** Aprovar lista oculto em loja individual e visível somente na Consolidada; após aprovação, a lista fica somente leitura.
+
 ### Estados da lista e da execução
 
-Cabeçalho: `draft`, `approved`, `purchasing`, `separating`, `dispatched`, `completed`, `cancelled`. Item consolidado: `pending`, `partial`, `fulfilled`, `cancelled`. Allocation: `pending`, `allocated`, `dispatched`, `received`, `cancelled`. Constraints existem, mas as transições operacionais além da revisão não estão implementadas por uma máquina de estados/triggers.
+Cabeçalho: `draft`, `approved`, `in_progress`, `completed`, `cancelled`; aprovação não inicia operação. Item consolidado: `pending`, `partial`, `fulfilled`, `cancelled`. Allocation: `pending`, `allocated`, `dispatched`, `received`, `cancelled`.
 
 ## 8. Fluxo funcional da Lista de Compras
 
 ### FASE 1 — revisão pré-compra
 
-**IMPLEMENTADO:** geração de draft no backend; consolidação por produto; rateio por loja; consideração do saldo do warehouse; preservação de necessidade desconhecida como `NULL`; arredondamento operacional para cima das quantidades conhecidas; leitura de último fornecedor; ajuste de quantidade; inclusão manual de produto na revisão; lixeira/cancelamento lógico com motivo; aprovação via RPC; estados e constraints correspondentes. No frontend, a tela de Abastecimento já abre a Lista de Compras consolidada, gera/reutiliza o draft, apresenta os itens consolidados em cards e executa as ações de revisão pré-compra enquanto a lista está `draft`.
+**IMPLEMENTADO:** geração de draft no backend; consolidação por produto; exclusão operacional de necessidades desconhecidas; rateio por loja; consideração do saldo do warehouse; preservação de `NULL` no batch; arredondamento operacional para cima; leitura de último fornecedor; revisão por allocation; inclusão manual por loja; retirada lógica com motivo; aprovação da order inteira via RPC; estados, eventos e constraints correspondentes. A tela abre a Consolidada, permite revisar cada loja e exibe aprovação somente na Consolidada.
 
-**DEFINIDO / PENDENTE:** visão individual por loja baseada na order; edição de allocations; retomada de contexto da revisão; validação da operação no backend ao restaurar. A lista não deve depender de cache/localStorage como fonte operacional.
+**DEFINIDO / PENDENTE:** stale na interface, canReopen, canSupersede, botões Reabrir/Substituir, lista Galpão -> Loja, separação física, despacho, recebimento, compra externa, fornecedor, scanner de compra, movimentos OUT/IN operacionais, vínculo com purchase items e conciliação com NF. A lista não deve depender de cache/localStorage como fonte operacional.
 
 ### FASE 2 — purchasing/operação no Market
 
-**IMPLEMENTADO:** o backend já modela status `purchasing`, `separating`, `dispatched`, `completed`, quantities compradas/alocadas/despachadas/recebidas e saldo excedente do galpão.
+**IMPLEMENTADO:** o backend já modela operation lines, eventos e metas por frente para a evolução operacional posterior; a UI de execução física ainda não faz parte deste pacote.
 
 **DEFINIDO / PENDENTE:** tela de operação; inclusão manual durante compra (`source = manual_purchase` ainda não é gerada pelo fluxo atual); scanner EAN nessa operação; “marcar peguei” e remoção temporária; persistência/retomada do estado operacional; priorização por fornecedor; ligação completa com compra, separação, despacho e recebimento. Esses itens não devem ser tratados como implementados só porque existem colunas/status.
 
@@ -259,6 +274,11 @@ Migrations estruturais relevantes:
 - `202609100018` — backend da revisão pré-compra; **aplicada/homologada**.
 - `202609110001` — correção de consolidação com quantidade desconhecida: qualquer allocation com `suggested_quantity NULL` mantém `total_suggested_quantity` e `suggested_purchase_quantity` como `NULL`; **aplicada/homologada**.
 - `202609110002` — arredondamento operacional para cima (`CEIL`) das quantidades conhecidas materializadas na lista; **aplicada/homologada**.
+- `202609120001_filter_replenishment_draft_priorities.sql` — lista operacional aceita somente `CRITICAL`/`HIGH`/`MEDIUM`; o batch continua calculando e armazenando `LOW` no histórico. **Aplicada/homologada.**
+- `202609120002_add_store_to_manual_replenishment_item.sql` — inclusão manual exige `store_id`. **Aplicada/homologada.**
+- `202609120003_replenishment_order_status_events_contract.sql` — contrato de ciclo de vida, eventos, operation lines, revisão por allocation e aprovação sem início operacional. **Aplicada/homologada.**
+- `202609120004_filter_unknown_replenishment_operational_needs.sql` — geração pública exclui candidatos com `suggested_quantity IS NULL`. **Aplicada/homologada.**
+- `202609120005_filter_unknown_replenishment_internal_materialization.sql` — helper interno usado por supersede aplica o mesmo filtro. **Aplicada/homologada.**
 
 ## 12. RPCs importantes
 
@@ -280,7 +300,7 @@ Migrations estruturais relevantes:
 | `market_run_replenishment_batch` | Calcular e persistir run/candidatos | account, data, origem | run id | Reposição |
 | `market_generate_replenishment_order_draft` | Materializar lista consolidada | account | order id | Lista |
 | `market_get_replenishment_order` | Ler lista, allocations e fornecedor | account, order opcional | JSON consolidado | Lista |
-| `market_update_replenishment_order_item_quantity` | Ajustar compra na revisão | order/item, quantidade | item id | Lista |
+| `market_update_replenishment_allocation_review` | Revisar allocation por loja | account, order, allocation, Galpão, compra | allocation id | Lista |
 | `market_add_replenishment_order_manual_item` | Incluir produto na revisão | order, produto, quantidade | item id | Lista |
 | `market_cancel_replenishment_order_item_review` | Cancelar item logicamente | order/item, motivo | item id | Lista |
 | `market_approve_replenishment_order` | Aprovar draft | account, order | order id | Lista |
@@ -298,7 +318,7 @@ Migrations estruturais relevantes:
 - **Inventário:** tipo `initial|cycle`; sessão `draft|completed|cancelled`; motivos relevantes `EXPIRED_LOSS`, `DAMAGE`, `THEFT_LOSS`, `PREVIOUS_COUNT_ERROR`, `UNREGISTERED_PURCHASE`, `UNREGISTERED_TRANSFER`, `INTERNAL_USE`, `OTHER`.
 - **Run de reposição:** `running`, `completed`, `failed`; origem `scheduled|manual`; prioridade `critical|high|medium|low`.
 - **Candidate triggers:** `STOCKOUT`, `BELOW_MINIMUM`, `LOW_COVERAGE`, `SALES_ACCELERATION`, `ESSENTIAL_NO_RECENT_SALES`.
-- **Order:** `draft`, `approved`, `purchasing`, `separating`, `dispatched`, `completed`, `cancelled`.
+- **Order:** `draft`, `approved`, `in_progress`, `completed`, `cancelled`; aprovação não inicia operação.
 - **Order item:** `pending`, `partial`, `fulfilled`, `cancelled`; origem `batch`, `manual_review`, `manual_purchase`.
 - **Allocation:** `pending`, `allocated`, `dispatched`, `received`, `cancelled`.
 - **Integração:** `inactive`, `active`, `error`; importação de vendas `uploaded`, `processing`, `needs_mapping`, `processed`, `failed`, `cancelled` (e estados de conclusão evoluídos nas RPCs).
@@ -311,7 +331,7 @@ Migrations estruturais relevantes:
 - Warehouse é `market_stores.store_type = 'warehouse'`, não uma entidade paralela.
 - Histórico de fornecedor válido exige compra recebida e movimento `PURCHASE` correspondente.
 - `market_purchase_product_mappings` é de/para, não histórico de fornecedor.
-- `suggested_quantity NULL` não significa zero nem deve ser silenciosamente substituído por zero; na lista consolidada, `NULL` indica necessidade desconhecida/não calculável.
+- `suggested_quantity NULL` não significa zero nem deve ser silenciosamente substituído por zero; candidatos desconhecidos permanecem como pendência analítica no batch e não entram na lista operacional.
 - Dados comerciais externos de Accesys não alimentam automaticamente o ledger operacional.
 - Recebimento de compra é idempotente e por linha inteira; custo unitário desconhecido não gera entrada.
 - Rascunhos/cache/localStorage podem ajudar a UX, mas não são fonte de verdade operacional nem devem substituir validação backend ao restaurar contexto.
@@ -320,13 +340,12 @@ Migrations estruturais relevantes:
 ## 15. Pendências técnicas atuais
 
 - A UI/serviço frontend da Lista de Compras já possui leitura consolidada dentro de Abastecimento e executa mutações de revisão pré-compra em `draft`.
-- A operação pós-aprovação (`purchasing`, separação, despacho, recebimento da lista) ainda não tem fluxo frontend/backend completo observável.
-- Permanecem definidos, mas não implementados como fluxo integrado: visão individual por loja baseada na order, filtros de prioridade, contador de restantes, “marcar peguei”, remoção temporária, inclusão manual durante compra, scanner EAN nessa operação, priorização por fornecedor e retomada/validação de contexto.
+- A operação pós-aprovação (separação, despacho, recebimento da lista) ainda não tem fluxo frontend completo observável.
+- Permanecem definidos, mas não implementados como fluxo integrado: stale na interface, canReopen, canSupersede, Reabrir, Substituir, lista Galpão -> Loja, “marcar peguei”, inclusão manual durante compra, scanner EAN nessa operação, priorização por fornecedor e retomada/validação de contexto.
 
 ## 16. Última atualização
 
-- **Data:** 2026-09-11
-- **Commit HEAD de referência:** `df0b1a1e1f9edcdce9eae4ec4b80517f06844f3e` (`feat: adiciona abastecimento e reposicao inteligente`)
-- **Migrations mais recentes da Lista de Compras:** `202609100016_generate_replenishment_order_draft.sql`, `202609100017_read_replenishment_order_with_last_supplier.sql`, `202609100018_replenishment_order_review_backend.sql`, `202609110001_fix_replenishment_unknown_quantity_consolidation.sql` e `202609110002_round_replenishment_operational_quantities.sql`, aplicadas/homologadas.
-- **Frontend da Lista de Compras:** `MarketReplenishment` gera/reutiliza o draft, lê a lista consolidada e executa ajuste de quantidade com autosave, inclusão manual, retirada lógica e aprovação em `draft`, sem scanner funcional, compra operacional ou retomada local.
+- **Data:** 2026-09-12
+- **Migrations mais recentes da Lista de Compras:** `202609120001` a `202609120005`, além de `202609100016` a `202609110002`, aplicadas/homologadas.
+- **Frontend da Lista de Compras:** `MarketReplenishment` gera/reutiliza o draft, alterna Consolidada/loja, revisa allocations com autosave, permite inclusão manual por loja, aprova a order inteira somente na Consolidada e deixa a lista aprovada somente leitura.
 - **Observação:** atualizar este documento quando houver mudança estrutural relevante em schema, RLS, RPCs, fluxos de estoque/compras/reposição ou navegação Market.

@@ -2,7 +2,7 @@ import {
   ArrowLeft, CheckCircle2, ChevronDown, PackagePlus, PackageSearch, RefreshCw,
   ScanBarcode, Search, ShoppingCart, Trash2, Truck, X,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   addMarketReplenishmentOrderManualItem,
   approveMarketReplenishmentOrder,
@@ -10,23 +10,27 @@ import {
   generateMarketReplenishmentOrderDraft,
   getMarketReplenishmentOrder,
   getMarketReplenishmentOverview,
-  updateMarketReplenishmentOrderItemQuantity,
+  updateMarketReplenishmentAllocationReview,
 } from '../services/marketReplenishment'
-import { searchCatalogProducts } from '../services/marketReconciliation'
+import { listActiveProducts } from '../services/marketStock'
+import { findMarketStockProducts, findExactMarketStockProduct } from './MarketStockDashboard'
+import { BarcodeScanner } from '../components/BarcodeScanner'
 import { translateReplenishmentTriggerReason } from '../utils/marketReplenishment'
 import type { MarketStore } from '../types/market'
 import type {
   MarketReplenishmentOrderDetail,
+  MarketReplenishmentOrderAllocation,
   MarketReplenishmentOrderItem,
   MarketReplenishmentOrderStatus,
   MarketReplenishmentOverview,
   MarketReplenishmentPriorityLevel,
 } from '../types/marketReplenishment'
-import type { CatalogSearchResult } from '../types/marketReconciliation'
+import type { MarketStockProduct } from '../types/marketStock'
 
 interface Props { accountId: string; stores: MarketStore[]; onBack: () => void }
 
 const number = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 })
+const dailyAverage = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 const dateTimeFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
 
 const priorityLevelLabels: Record<MarketReplenishmentPriorityLevel, string> = {
@@ -36,9 +40,7 @@ const priorityLevelLabels: Record<MarketReplenishmentPriorityLevel, string> = {
 const orderStatusLabels: Record<MarketReplenishmentOrderStatus, string> = {
   draft: 'Rascunho',
   approved: 'Aprovada',
-  purchasing: 'Em compra',
-  separating: 'Em separação',
-  dispatched: 'Despachada',
+  in_progress: 'Em andamento',
   completed: 'Concluída',
   cancelled: 'Cancelada',
 }
@@ -57,32 +59,29 @@ const formatMinimumStock = (value: number | null) => value === null ? 'Não conf
 const formatCoverageDays = (value: number | null) => value === null ? '-' : `${number.format(value)} dias`
 const formatSuggestedQuantity = (value: number | null) => value === null ? 'A definir' : number.format(value)
 const formatWarehouseStock = (value: number | null) => value === null ? 'Saldo não conhecido' : number.format(value)
-const formatAvgDailyM7 = (value: number | null) => value === null ? '-' : number.format(value)
-const formatOrderQuantity = (value: number | null) => value === null ? 'Não calculada' : number.format(value)
+const formatAvgDailyM7 = (value: number | null) => value === null ? '-' : dailyAverage.format(value)
 const formatAllocationQuantity = (value: number | null) => value === null ? 'Revisão pendente' : number.format(value)
 
-function hasManualReviewPending(item: MarketReplenishmentOrderItem): boolean {
-  return item.allocations.some((allocation) => allocation.suggestedQuantity === null)
+type AllocationInputs = { warehouse: string; purchase: string }
+
+const allocationNeed = (allocation: MarketReplenishmentOrderAllocation) => allocation.adjustedQuantity ?? allocation.suggestedQuantity
+const activeAllocations = (item: MarketReplenishmentOrderItem) => item.allocations.filter((allocation) => allocation.status !== 'cancelled' && allocation.priorityLevel !== 'low')
+const sumKnown = (values: Array<number | null>): number | null => values.length && values.every((value) => value !== null) ? values.reduce<number>((sum, value) => sum + (value as number), 0) : null
+const hasManualReviewPending = (item: MarketReplenishmentOrderItem) => activeAllocations(item).some((allocation) => allocationNeed(allocation) === null)
+const formatOrderTotalNeed = (item: MarketReplenishmentOrderItem) => formatAllocationQuantity(sumKnown(activeAllocations(item).map(allocationNeed)))
+const formatOrderEffective = (item: MarketReplenishmentOrderItem) => formatAllocationQuantity(sumKnown(activeAllocations(item).map((allocation) => allocation.purchaseNeededQuantity)))
+const allocationInputValues = (allocation: MarketReplenishmentOrderAllocation): AllocationInputs => ({
+  warehouse: allocation.warehouseAllocatedQuantity === null ? '' : String(allocation.warehouseAllocatedQuantity),
+  purchase: allocation.purchaseNeededQuantity === null ? '' : String(allocation.purchaseNeededQuantity),
+})
+const operationalQuantity = (value: string) => {
+  const parsed = parseQuantity(value)
+  return parsed === null ? null : Math.ceil(parsed)
 }
 
-function hasOnlyPendingNeed(item: MarketReplenishmentOrderItem): boolean {
-  return hasManualReviewPending(item)
-    && item.adjustedPurchaseQuantity === null
-    && item.suggestedPurchaseQuantity === 0
-    && item.totalSuggestedQuantity === 0
-}
-
-function formatOrderTotalNeed(item: MarketReplenishmentOrderItem): string {
-  return hasOnlyPendingNeed(item) ? 'Revisão pendente' : formatOrderQuantity(item.totalSuggestedQuantity)
-}
-
-function formatOrderEffective(item: MarketReplenishmentOrderItem): string {
-  return hasOnlyPendingNeed(item) ? 'Não calculada' : formatOrderQuantity(item.effectivePurchaseQuantity)
-}
-
-function revisedQuantityInputValue(item: MarketReplenishmentOrderItem, inputs: Record<string, string>): string {
-  if (Object.prototype.hasOwnProperty.call(inputs, item.id)) return inputs[item.id]
-  return item.adjustedPurchaseQuantity === null ? '' : String(item.adjustedPurchaseQuantity)
+function normalizedQuantityInput(value: string): string {
+  const quantity = operationalQuantity(value)
+  return quantity === null ? value.trim() : String(quantity)
 }
 
 function parseQuantity(value: string): number | null {
@@ -93,9 +92,15 @@ function parseQuantity(value: string): number | null {
 }
 
 function friendlyReviewError(cause: unknown): string {
-  const message = cause instanceof Error ? cause.message : String(cause)
+  const message = cause && typeof cause === 'object' && 'message' in cause ? String(cause.message) : String(cause)
+  if (message.includes('REPLENISHMENT_ORDER_ALLOCATION_REQUIRED')) return 'Existe item sem loja de destino. Na Consolidada, localize e remova o item legado antes de aprovar.'
+  if (message.includes('REPLENISHMENT_ORDER_REVIEW_PENDING')) return 'Há quantidade desconhecida ou pendente. Revise Do Galpão e Comprar em cada loja.'
+  if (message.includes('REPLENISHMENT_ORDER_ALLOCATION_REVIEW_REQUIRED') || message.includes('source_split_check') || message.includes('REPLENISHMENT_ORDER_TARGET_MISMATCH')) return 'A decomposição da necessidade está inconsistente. Revise Do Galpão e Comprar nas lojas.'
+  if (message.includes('REPLENISHMENT_ORDER_NO_OPERATION')) return 'A lista não tem quantidade positiva para repor ou comprar. Revise as quantidades antes de aprovar.'
+  if (message.includes('REPLENISHMENT_ORDER_WAREHOUSE_EXCEEDED')) return 'A quantidade do Galpão ultrapassa o saldo disponível para este produto na lista.'
   if (message.includes('REPLENISHMENT_ORDER_NOT_DRAFT')) return 'A lista já saiu de rascunho. Atualize a leitura antes de revisar.'
   if (message.includes('REPLENISHMENT_ORDER_DUPLICATE_PRODUCT')) return 'Este produto já existe na lista.'
+  if (message.includes('REPLENISHMENT_ORDER_STORE_UNAVAILABLE')) return 'Loja indisponível para inclusão.'
   if (message.includes('REPLENISHMENT_ORDER_PRODUCT_UNAVAILABLE')) return 'Produto não encontrado ou inativo no catálogo.'
   if (message.includes('REPLENISHMENT_ORDER_INVALID_QUANTITY')) return 'Informe uma quantidade válida, maior ou igual a zero.'
   if (message.includes('REPLENISHMENT_ORDER_PERMISSION_DENIED')) return 'Seu perfil não pode revisar esta lista.'
@@ -124,14 +129,24 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
   const [orderDetail, setOrderDetail] = useState<MarketReplenishmentOrderDetail | null>(null)
   const [orderLoading, setOrderLoading] = useState(false)
   const [orderError, setOrderError] = useState('')
-  const [quantityInputs, setQuantityInputs] = useState<Record<string, string>>({})
+  const [quantityInputs, setQuantityInputs] = useState<Record<string, AllocationInputs>>({})
+  const quantityInputsRef = useRef<Record<string, AllocationInputs>>({})
+  const [allocationErrors, setAllocationErrors] = useState<Record<string, string>>({})
+  const [savingAllocations, setSavingAllocations] = useState<Record<string, boolean>>({})
+  const pendingSaves = useRef(new Map<string, Promise<boolean>>())
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve())
   const [savingItemId, setSavingItemId] = useState('')
   const [reviewMessage, setReviewMessage] = useState('')
   const [manualOpen, setManualOpen] = useState(false)
   const [manualQuery, setManualQuery] = useState('')
   const [manualSearching, setManualSearching] = useState(false)
-  const [manualResults, setManualResults] = useState<CatalogSearchResult[]>([])
-  const [manualSelected, setManualSelected] = useState<CatalogSearchResult | null>(null)
+  const [manualCatalog, setManualCatalog] = useState<{ accountId: string; products: MarketStockProduct[] } | null>(null)
+  const [manualScannerOpen, setManualScannerOpen] = useState(false)
+  const manualSearchRef = useRef<HTMLInputElement>(null)
+  const manualQuantityRef = useRef<HTMLInputElement>(null)
+  const manualProducts = manualCatalog?.accountId === accountId ? manualCatalog.products : []
+  const manualResults = useMemo(() => findMarketStockProducts(manualProducts, manualQuery).slice(0, 8), [manualProducts, manualQuery])
+  const [manualSelected, setManualSelected] = useState<MarketStockProduct | null>(null)
   const [manualQuantity, setManualQuantity] = useState('')
   const [manualError, setManualError] = useState('')
   const [manualSaving, setManualSaving] = useState(false)
@@ -139,15 +154,32 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
   const [approveConfirm, setApproveConfirm] = useState(false)
   const [approving, setApproving] = useState(false)
   const [orderPriorityFilter, setOrderPriorityFilter] = useState<OrderPriorityFilter>('all')
+  const [selectedStoreId, setSelectedStoreId] = useState('')
 
   const isDraftOrder = orderDetail?.order.status === 'draft'
   const visibleOrderItems = useMemo(
     () => (orderDetail?.items ?? []).filter((item) => item.status !== 'cancelled'),
     [orderDetail],
   )
+  const orderStores = useMemo(() => {
+    const names = new Map<string, string>()
+    for (const item of visibleOrderItems) {
+      for (const allocation of item.allocations) {
+        if (allocation.status !== 'cancelled' && allocation.priorityLevel !== 'low') names.set(allocation.storeId, allocation.storeName)
+      }
+    }
+    return [...names].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+  }, [visibleOrderItems])
+  const contextStoreId = orderStores.some((store) => store.id === selectedStoreId) ? selectedStoreId : ''
+  const contextOrderItems = useMemo(
+    () => contextStoreId ? visibleOrderItems.filter((item) => item.allocations.some((allocation) => allocation.storeId === contextStoreId && allocation.status !== 'cancelled' && allocation.priorityLevel !== 'low')) : visibleOrderItems,
+    [contextStoreId, visibleOrderItems],
+  )
   const filteredOrderItems = useMemo(
-    () => visibleOrderItems.filter((item) => orderPriorityFilter === 'all' || itemPriorityFilter(item) === orderPriorityFilter),
-    [orderPriorityFilter, visibleOrderItems],
+    () => contextOrderItems.filter((item) => orderPriorityFilter === 'all' || (contextStoreId
+      ? item.allocations.some((allocation) => allocation.storeId === contextStoreId && allocation.status !== 'cancelled' && allocation.priorityLevel === orderPriorityFilter)
+      : itemPriorityFilter(item) === orderPriorityFilter)),
+    [orderPriorityFilter, contextOrderItems, contextStoreId],
   )
   const candidateById = useMemo(() => {
     const candidates = new Map<string, NonNullable<MarketReplenishmentOverview['stores'][number]['candidates'][number]>>()
@@ -180,12 +212,12 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
     if (!orderId) return
     const result = await getMarketReplenishmentOrder(accountId, orderId)
     setOrderDetail(result)
-    setQuantityInputs({})
     setConfirmCancelItem(null)
     setApproveConfirm(false)
   }
 
   async function openPurchaseList(): Promise<void> {
+    if (!await flushAllocationReviews()) return
     setOrderLoading(true)
     setOrderError('')
     setReviewMessage('')
@@ -193,7 +225,6 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
       const orderId = await generateMarketReplenishmentOrderDraft(accountId)
       const result = await getMarketReplenishmentOrder(accountId, orderId)
       setOrderDetail(result)
-      setQuantityInputs({})
     } catch (cause) {
       console.error('Falha ao abrir Lista de Compras:', cause)
       setOrderError('Não foi possível abrir a Lista de Compras.')
@@ -202,67 +233,127 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
     }
   }
 
-  async function saveQuantity(item: MarketReplenishmentOrderItem): Promise<void> {
-    if (!orderDetail) return
-    if (!Object.prototype.hasOwnProperty.call(quantityInputs, item.id)) return
-    const raw = quantityInputs[item.id]
-    if (raw.trim() === '') {
-      setQuantityInputs((current) => {
-        const next = { ...current }
-        delete next[item.id]
-        return next
-      })
-      return
-    }
-    const quantity = parseQuantity(raw)
-    if (quantity === null) {
-      setReviewMessage('Informe uma quantidade válida para salvar a revisão.')
-      return
-    }
-    if (item.adjustedPurchaseQuantity !== null && quantity === item.adjustedPurchaseQuantity) {
-      setQuantityInputs((current) => {
-        const next = { ...current }
-        delete next[item.id]
-        return next
-      })
-      return
-    }
-    setSavingItemId(item.id)
-    setReviewMessage('')
-    try {
-      await updateMarketReplenishmentOrderItemQuantity(accountId, orderDetail.order.id, item.id, quantity)
-      await reloadOrder(orderDetail.order.id)
-      setReviewMessage('Quantidade revisada salva.')
-    } catch (cause) {
-      console.error('Falha ao ajustar item da lista:', cause)
-      setReviewMessage(friendlyReviewError(cause))
-    } finally {
-      setSavingItemId('')
-    }
+  function editAllocation(allocation: MarketReplenishmentOrderAllocation, field: keyof AllocationInputs, value: string): void {
+    const next = { ...(quantityInputsRef.current[allocation.id] ?? allocationInputValues(allocation)), [field]: value }
+    quantityInputsRef.current = { ...quantityInputsRef.current, [allocation.id]: next }
+    setQuantityInputs(quantityInputsRef.current)
   }
 
-  async function searchManualProducts(): Promise<void> {
-    const query = manualQuery.trim()
-    if (query.length < 2) {
-      setManualError('Digite ao menos 2 caracteres para buscar.')
-      return
+  function saveAllocation(allocationId: string): Promise<boolean> {
+    const pending = pendingSaves.current.get(allocationId)
+    if (pending) return pending
+    const inputs = quantityInputsRef.current[allocationId]
+    if (!inputs || !orderDetail || !isDraftOrder) return Promise.resolve(true)
+    const persistedAllocation = orderDetail.items
+      .flatMap((item) => item.allocations)
+      .find((allocation) => allocation.id === allocationId)
+    if (persistedAllocation) {
+      const persistedInputs = allocationInputValues(persistedAllocation)
+      if (normalizedQuantityInput(inputs.warehouse) === normalizedQuantityInput(persistedInputs.warehouse)
+        && normalizedQuantityInput(inputs.purchase) === normalizedQuantityInput(persistedInputs.purchase)) {
+        const next = { ...quantityInputsRef.current }
+        delete next[allocationId]
+        quantityInputsRef.current = next
+        setQuantityInputs(next)
+        return Promise.resolve(true)
+      }
     }
+    const warehouse = operationalQuantity(inputs.warehouse)
+    const purchase = operationalQuantity(inputs.purchase)
+    if (warehouse === null || purchase === null) {
+      setAllocationErrors((current) => ({ ...current, [allocationId]: 'Informe Do Galpão e Comprar. Use zero explicitamente quando não houver quantidade; campo vazio continua desconhecido.' }))
+      return Promise.resolve(false)
+    }
+    const orderId = orderDetail.order.id
+    setSavingAllocations((current) => ({ ...current, [allocationId]: true }))
+    const task = saveQueue.current.then(async () => {
+      try {
+        await updateMarketReplenishmentAllocationReview(accountId, orderId, allocationId, warehouse, purchase)
+        const result = await getMarketReplenishmentOrder(accountId, orderId)
+        if (!result) throw new Error('Lista não encontrada ao atualizar a revisão.')
+        setOrderDetail(result)
+        if (quantityInputsRef.current[allocationId] === inputs) {
+          const next = { ...quantityInputsRef.current }
+          delete next[allocationId]
+          quantityInputsRef.current = next
+          setQuantityInputs(next)
+        }
+        setAllocationErrors((current) => { const next = { ...current }; delete next[allocationId]; return next })
+        return true
+      } catch (cause) {
+        setAllocationErrors((current) => ({ ...current, [allocationId]: friendlyReviewError(cause) }))
+        return false
+      } finally {
+        pendingSaves.current.delete(allocationId)
+        setSavingAllocations((current) => { const next = { ...current }; delete next[allocationId]; return next })
+      }
+    })
+    pendingSaves.current.set(allocationId, task)
+    saveQueue.current = task
+    return task
+  }
+
+  async function flushAllocationReviews(): Promise<boolean> {
+    for (const id of Object.keys(quantityInputsRef.current)) {
+      if (!await saveAllocation(id)) return false
+      // Preserve and save an edit made while its earlier request was pending.
+      if (quantityInputsRef.current[id] && !await saveAllocation(id)) return false
+    }
+    return Object.keys(quantityInputsRef.current).length === 0
+  }
+
+  async function leaveReplenishment(): Promise<void> {
+    if (await flushAllocationReviews()) onBack()
+  }
+
+  useEffect(() => {
+    if (!manualOpen || manualCatalog?.accountId === accountId) return
+    let active = true
     setManualSearching(true)
     setManualError('')
-    try {
-      const results = await searchCatalogProducts(accountId, query, 10)
-      setManualResults(results)
-      if (!results.length) setManualError('Nenhum produto ativo encontrado.')
-    } catch (cause) {
-      console.error('Falha ao buscar produtos para inclusão manual:', cause)
-      setManualError('Não foi possível buscar produtos no catálogo.')
-    } finally {
-      setManualSearching(false)
+    void listActiveProducts(accountId).then((products) => {
+      if (active) setManualCatalog({ accountId, products })
+    }).catch(() => {
+      if (active) setManualError('Não foi possível carregar o catálogo. Feche e abra a inclusão para tentar novamente.')
+    }).finally(() => { if (active) setManualSearching(false) })
+    return () => { active = false }
+  }, [manualOpen, accountId, manualCatalog])
+
+  function selectManualProduct(product: MarketStockProduct): void {
+    setManualSelected(null)
+    setManualQuantity('')
+    if (existingProductIds.has(product.id)) {
+      setManualError('Este produto já existe na lista. Revise o item existente.')
+      return
+    }
+    setManualError('')
+    setManualSelected(product)
+    setManualQuery('')
+    window.setTimeout(() => manualQuantityRef.current?.focus(), 0)
+  }
+
+  function changeManualSearch(value: string): void {
+    setManualQuery(value)
+    setManualSelected(null)
+    setManualQuantity('')
+    setManualError('')
+    const exact = findExactMarketStockProduct(manualProducts, value)
+    if (exact) selectManualProduct(exact)
+  }
+
+  function handleManualScannedCode(code: string): void {
+    setManualScannerOpen(false)
+    changeManualSearch(code)
+    if (!findExactMarketStockProduct(manualProducts, code)) {
+      setManualError(findMarketStockProducts(manualProducts, code).length
+        ? 'Este código corresponde a mais de um produto. Escolha o item correto na lista.'
+        : 'Código não encontrado no catálogo. Continue pela busca manual.')
+      window.setTimeout(() => manualSearchRef.current?.focus(), 0)
     }
   }
 
   async function addManualItem(): Promise<void> {
-    if (!orderDetail || !manualSelected) return
+    if (!orderDetail || !manualSelected || !contextStoreId) return
     const quantity = parseQuantity(manualQuantity)
     if (quantity === null) {
       setManualError('Informe uma quantidade válida para incluir.')
@@ -271,14 +362,13 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
     setManualSaving(true)
     setManualError('')
     try {
-      await addMarketReplenishmentOrderManualItem(accountId, orderDetail.order.id, manualSelected.productId, quantity)
+      await addMarketReplenishmentOrderManualItem(accountId, orderDetail.order.id, manualSelected.id, quantity, contextStoreId)
       await reloadOrder(orderDetail.order.id)
       setManualOpen(false)
       setManualQuery('')
-      setManualResults([])
       setManualSelected(null)
       setManualQuantity('')
-      setReviewMessage('Produto incluído na revisão.')
+      setReviewMessage('Produto incluído na loja selecionada.')
     } catch (cause) {
       console.error('Falha ao incluir produto manual:', cause)
       setManualError(friendlyReviewError(cause))
@@ -305,6 +395,7 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
 
   async function approveOrder(): Promise<void> {
     if (!orderDetail) return
+    if (!await flushAllocationReviews()) return
     setApproving(true)
     setReviewMessage('')
     try {
@@ -320,7 +411,7 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
   }
 
   if (loading) return <div className="admin-message" role="status"><RefreshCw size={20} /> Carregando Abastecimento...</div>
-  if (error) return <div className="admin-message is-error" role="alert"><p>{error}</p><button className="button button-small button-outline" onClick={onBack}>Voltar</button></div>
+  if (error) return <div className="admin-message is-error" role="alert"><p>{error}</p><button className="button button-small button-outline" onClick={() => void leaveReplenishment()}>Voltar</button></div>
 
   return <div className="market-replenishment-dashboard">
     <button className="button button-small button-outline" onClick={onBack}><ArrowLeft size={16} /> Gestão do Mercado</button>
@@ -341,7 +432,10 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
       </section>
 
       <section className="market-replenishment-order-entry" aria-label="Lista de Compras">
-        <div><span className="panel-kicker">LISTA DE COMPRAS</span><h2>Compras consolidadas</h2><p>Gera ou reutiliza o rascunho do último batch efetivo e mantém a necessidade original como referência.</p></div>
+        <div><span className="panel-kicker">LISTA DE COMPRAS</span><select className="market-replenishment-context-select" aria-label="Contexto da Lista de Compras" value={contextStoreId} onChange={(event) => { setSelectedStoreId(event.target.value); setManualOpen(false); setManualSelected(null); setManualQuery(''); setManualQuantity(''); setManualError(''); setConfirmCancelItem(null); setApproveConfirm(false) }}>
+          <option value="">Consolidada</option>
+          {orderStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
+        </select><p>Gera ou reutiliza o rascunho do último batch efetivo e mantém a necessidade original como referência.</p></div>
         <button className="button" type="button" onClick={openPurchaseList} disabled={orderLoading}>
           {orderLoading ? <RefreshCw size={16} /> : <ShoppingCart size={16} />}
           {orderDetail ? 'Atualizar lista' : 'Abrir Lista de Compras'}
@@ -350,44 +444,50 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
       {orderError && <div className="admin-message is-error" role="alert">{orderError}</div>}
       {orderDetail && <section className="market-replenishment-order-panel">
         <div className="market-replenishment-order-heading">
-          <div><span className="panel-kicker">LISTA CONSOLIDADA</span><h2>{visibleOrderItems.length} itens</h2></div>
+          <div><span className="panel-kicker">{contextStoreId ? orderStores.find((store) => store.id === contextStoreId)?.name : 'LISTA CONSOLIDADA'}</span><h2>{contextOrderItems.length} itens</h2></div>
           <div className="market-replenishment-order-actions">
             <span className={`market-row-status ${orderDetail.order.status}`}>{orderStatusLabels[orderDetail.order.status]}</span>
-            {isDraftOrder && !approveConfirm && <button className="button button-small" type="button" onClick={() => setApproveConfirm(true)}><CheckCircle2 size={16} /> Aprovar lista</button>}
+            {isDraftOrder && !contextStoreId && !approveConfirm && <button className="button button-small" type="button" onClick={() => setApproveConfirm(true)}><CheckCircle2 size={16} /> Aprovar lista</button>}
           </div>
         </div>
         {!isDraftOrder && <p className="market-replenishment-readonly-note">Lista somente leitura. As ações de revisão ficam disponíveis apenas enquanto o status é rascunho.</p>}
-        {approveConfirm && isDraftOrder && <div className="market-replenishment-confirm">
+        {approveConfirm && isDraftOrder && !contextStoreId && <div className="market-replenishment-confirm">
           <span>Aprovar esta lista e encerrar a revisão?</span>
           <button className="button button-small" type="button" onClick={approveOrder} disabled={approving}>{approving ? <RefreshCw size={14} /> : <CheckCircle2 size={14} />} Confirmar</button>
           <button className="button button-small button-outline" type="button" onClick={() => setApproveConfirm(false)} disabled={approving}>Cancelar</button>
         </div>}
-        {reviewMessage && <p className="market-replenishment-order-note">{reviewMessage}</p>}
-        {isDraftOrder && <div className="market-replenishment-manual">
+        {contextStoreId && isDraftOrder && <p className="market-replenishment-order-note">A necessidade da loja é a soma de Do Galpão e Comprar. A remoção do produto e a aprovação continuam valendo para toda a lista.</p>}
+        {reviewMessage && <p role="status" className="market-replenishment-order-note">{reviewMessage}</p>}
+        {Object.keys(allocationErrors).length > 0 && <div role="alert" className="admin-message is-error">{Object.entries(allocationErrors).map(([id, message]) => {
+          const allocation = orderDetail.items.flatMap((item) => item.allocations).find((entry) => entry.id === id)
+          return <p key={id}>{allocation?.storeName ?? 'Loja'}: {message}</p>
+        })}</div>}
+        {isDraftOrder && contextStoreId && <div className="market-replenishment-manual">
           <button className="button button-small button-outline" type="button" onClick={() => setManualOpen((open) => !open)}>
             {manualOpen ? <X size={16} /> : <PackagePlus size={16} />} {manualOpen ? 'Fechar inclusão' : 'Adicionar produto'}
           </button>
           {manualOpen && <div className="market-replenishment-manual-box">
-            <div className="market-replenishment-manual-search">
-              <label><span>Produto do catálogo</span><input value={manualQuery} onChange={(event) => setManualQuery(event.target.value)} placeholder="Nome, SKU ou EAN" /></label>
-              <button className="button button-small button-outline" type="button" onClick={searchManualProducts} disabled={manualSearching}>
-                {manualSearching ? <RefreshCw size={14} /> : <Search size={14} />} Buscar
-              </button>
+            <div className="market-product-search market-replenishment-product-search">
+              <Search size={23} />
+              <input ref={manualSearchRef} type="search" inputMode="search" autoComplete="off" autoFocus aria-label="Buscar produto do catálogo" placeholder="Nome, EAN, código externo ou SKU" value={manualQuery} disabled={manualSearching || manualCatalog?.accountId !== accountId} onChange={(event) => changeManualSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && manualResults[0]) { event.preventDefault(); selectManualProduct(manualResults[0]) } }} />
+              <button className="market-scanner-button" type="button" aria-label="Escanear EAN para adicionar produto" disabled={manualSearching || manualCatalog?.accountId !== accountId} onClick={() => setManualScannerOpen(true)}><ScanBarcode /></button>
+              <small>Código exato seleciona o produto. Por nome, escolha um resultado ou pressione Enter.</small>
             </div>
-            {!!manualResults.length && <div className="market-replenishment-manual-results">
-              {manualResults.map((product) => {
-                const duplicate = existingProductIds.has(product.productId)
-                return <button key={product.productId} type="button" disabled={duplicate} className={manualSelected?.productId === product.productId ? 'is-selected' : ''} onClick={() => setManualSelected(product)}>
-                  <strong>{product.name}</strong><span>{product.ean ? `EAN ${product.ean}` : 'Sem EAN'} · {duplicate ? 'já está na lista' : product.unit}</span>
+            {manualSearching && <p role="status">Carregando catálogo...</p>}
+            {manualQuery.trim() && !manualSearching && <div className="market-product-results">
+              {manualResults.length ? manualResults.map((product) => {
+                const duplicate = existingProductIds.has(product.id)
+                return <button key={product.id} type="button" onClick={() => selectManualProduct(product)}>
+                  <span><strong>{product.name}</strong><small>{product.ean ? `EAN ${product.ean}` : product.externalProductCodes[0] || product.externalEans[0] || product.sku || product.unit}{duplicate ? ' · já está na lista' : ''}</small></span>
                 </button>
-              })}
+              }) : <p>Nenhum produto encontrado no catálogo.</p>}
             </div>}
             {manualSelected && <div className="market-replenishment-manual-selected">
               <strong>{manualSelected.name}</strong>
-              <label><span>Quantidade</span><input inputMode="decimal" value={manualQuantity} onChange={(event) => setManualQuantity(event.target.value)} placeholder="0" /></label>
+              <label><span>Quantidade</span><input ref={manualQuantityRef} inputMode="decimal" value={manualQuantity} onChange={(event) => setManualQuantity(event.target.value)} placeholder="0" /></label>
               <button className="button button-small" type="button" onClick={addManualItem} disabled={manualSaving}>{manualSaving ? <RefreshCw size={14} /> : <PackagePlus size={14} />} Incluir</button>
             </div>}
-            {manualError && <p className="market-replenishment-order-note">{manualError}</p>}
+            {manualError && <p role="status" className="market-replenishment-order-note">{manualError}</p>}
           </div>}
         </div>}
         <div className="market-replenishment-operation-bar" aria-label="Operação da Lista de Compras">
@@ -401,7 +501,13 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
           {!visibleOrderItems.length && <div className="admin-message">Nenhum item ativo nesta lista.</div>}
           {!!visibleOrderItems.length && !filteredOrderItems.length && <div className="admin-message">Nenhum item ativo neste filtro.</div>}
           {filteredOrderItems.map((item) => {
-            const inputValue = revisedQuantityInputValue(item, quantityInputs)
+            const allocations = activeAllocations(item).filter((allocation) => !contextStoreId || allocation.storeId === contextStoreId)
+            const storeAllocation = contextStoreId ? allocations[0] : undefined
+            const priority = storeAllocation ? storeAllocation.priorityLevel : (itemPriorityFilter(item) === 'all' ? 'low' : itemPriorityFilter(item))
+            const inputs = storeAllocation ? quantityInputs[storeAllocation.id] ?? allocationInputValues(storeAllocation) : null
+            const warehouse = inputs ? operationalQuantity(inputs.warehouse) : null
+            const purchase = inputs ? operationalQuantity(inputs.purchase) : null
+            const displayedNeed = storeAllocation && quantityInputs[storeAllocation.id] ? (warehouse === null || purchase === null ? null : warehouse + purchase) : storeAllocation ? allocationNeed(storeAllocation) : null
             return <article key={item.id} className={`market-replenishment-order-item${item.status === 'cancelled' ? ' is-cancelled' : ''}`}>
               <div className="market-replenishment-order-item-top">
                 <div className="market-replenishment-order-product">
@@ -409,32 +515,43 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
                   <span>{item.ean ? `EAN ${item.ean}` : 'Sem EAN'} · {item.unit} · origem {item.source === 'manual_review' ? 'revisão manual' : 'batch'}</span>
                 </div>
                 <div className="market-replenishment-item-actions">
-                  <span className={`market-row-status ${item.priority.prioritySort === 1 ? 'critical' : item.priority.prioritySort === 2 ? 'high' : item.priority.prioritySort === 3 ? 'medium' : 'low'}`}>
-                    {itemPriorityLabel(item)}
+                  <span className={`market-row-status ${priority ?? ''}`}>
+                    {storeAllocation ? (storeAllocation.priorityLevel ? priorityLevelLabels[storeAllocation.priorityLevel] : 'Prioridade não informada') : itemPriorityLabel(item)}
                   </span>
                   {isDraftOrder && item.status !== 'cancelled' && <button className="market-replenishment-icon-button" type="button" aria-label={`Retirar ${item.productName} da lista`} onClick={() => setConfirmCancelItem(item)}><Trash2 size={16} /></button>}
                 </div>
               </div>
               <dl className="market-replenishment-order-metrics">
+                {storeAllocation ? <>
+                  <div><dt>Necessidade da loja</dt><dd>{formatAllocationQuantity(displayedNeed)}</dd></div>
+                  <div><dt>Do Galpão</dt><dd>{formatAllocationQuantity(warehouse)}</dd></div>
+                  <div><dt>Comprar</dt><dd>{formatAllocationQuantity(purchase)}</dd></div>
+                </> : <>
                 <div><dt>Necessidade total</dt><dd>{formatOrderTotalNeed(item)}</dd></div>
                 <div><dt>Compra efetiva</dt><dd>{formatOrderEffective(item)}</dd></div>
-                <div><dt>Quantidade revisada</dt><dd className={item.adjustedPurchaseQuantity === null ? 'is-muted' : undefined}>{item.adjustedPurchaseQuantity === null ? '-' : number.format(item.adjustedPurchaseQuantity)}</dd></div>
-                <div><dt>Galpão</dt><dd>{formatWarehouseStock(item.warehouseStockSnapshot)}</dd></div>
+                </>}
+
+                {!storeAllocation && <div><dt>Do Galpão</dt><dd>{formatAllocationQuantity(sumKnown(allocations.map((allocation) => allocation.warehouseAllocatedQuantity)))}</dd></div>}
                 <div><dt>Último fornecedor</dt><dd className={item.lastSupplier ? undefined : 'is-muted'}>{item.lastSupplier?.supplierName ?? 'Sem histórico'}</dd></div>
               </dl>
-              {isDraftOrder && item.status !== 'cancelled' && <div className="market-replenishment-quantity-edit">
-                <span className="market-replenishment-quantity-label">Quantidade revisada</span>
-                <input className="market-replenishment-quantity-input" aria-label={`Quantidade revisada de ${item.productName}`} type="number" min="0" step="0.001" inputMode="decimal" value={inputValue} onChange={(event) => setQuantityInputs((current) => ({ ...current, [item.id]: event.target.value }))} onFocus={(event) => event.target.select()} onBlur={() => void saveQuantity(item)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} disabled={savingItemId === item.id} placeholder="-" />
-                {savingItemId === item.id && <span className="market-replenishment-quantity-saving"><RefreshCw size={13} /> Salvando</span>}
+              {isDraftOrder && contextStoreId && storeAllocation && inputs && <div className="market-replenishment-quantity-edit" role="group" aria-label={`Revisar ${item.productName} em ${storeAllocation.storeName}`} onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void saveAllocation(storeAllocation.id)
+              }}>
+                {(['warehouse', 'purchase'] as const).map((field) => <label key={field}>
+                  <span className="market-replenishment-quantity-label">{field === 'warehouse' ? 'Do Galpão' : 'Comprar'}</span>
+                  <input className="market-replenishment-quantity-input" aria-label={`${field === 'warehouse' ? 'Do Galpão' : 'Comprar'}: ${item.productName} em ${storeAllocation.storeName}`} type="number" min="0" step="1" inputMode="numeric" value={inputs[field]} onChange={(event) => editAllocation(storeAllocation, field, event.target.value)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} disabled={!!savingAllocations[storeAllocation.id] || approving} placeholder="A definir" />
+                </label>)}
+                {savingAllocations[storeAllocation.id] && <span role="status" className="market-replenishment-quantity-saving"><RefreshCw size={13} /> Salvando</span>}
+                {allocationErrors[storeAllocation.id] && <p role="alert" className="market-replenishment-order-note">{allocationErrors[storeAllocation.id]}</p>}
               </div>}
-              {hasManualReviewPending(item) && <div className="market-replenishment-unknown-note">
-                {item.allocations.filter((allocation) => allocation.suggestedQuantity === null).map((allocation) => {
+              {(storeAllocation || hasManualReviewPending(item)) && <div className="market-replenishment-unknown-note">
+                {allocations.filter((allocation) => contextStoreId || allocationNeed(allocation) === null).map((allocation) => {
                   const candidate = allocation.candidateId ? candidateById.get(allocation.candidateId) : null
                   return <div key={allocation.id}>
                     <strong>{allocation.storeName}</strong>
                     <span>Motivo: {candidate?.triggerReasons.length ? candidate.triggerReasons.map((reason) => translateReplenishmentTriggerReason(reason)).join(', ') : 'revisão manual necessária'}</span>
                     <span>Estoque da loja: {candidate ? formatKnownStock(candidate.currentStock) : 'não conhecido'}</span>
-                    <span>Média 7 dias: {candidate?.avgDailyM7 === null || !candidate ? 'não conhecida' : `${number.format(candidate.avgDailyM7)} un./dia`}</span>
+                    <span>Média 7 dias: {candidate?.avgDailyM7 === null || !candidate ? 'não conhecida' : `${formatAvgDailyM7(candidate.avgDailyM7)} un./dia`}</span>
                   </div>
                 })}
               </div>}
@@ -443,16 +560,16 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
                 <button className="button button-small" type="button" onClick={() => cancelItem(item)} disabled={savingItemId === item.id}>Confirmar</button>
                 <button className="button button-small button-outline" type="button" onClick={() => setConfirmCancelItem(null)} disabled={savingItemId === item.id}>Cancelar</button>
               </div>}
-              <div className="market-replenishment-order-allocations">
-                {item.allocations.length ? item.allocations.map((allocation) => <article key={allocation.id}>
+              {!contextStoreId && <div className="market-replenishment-order-allocations">
+                {allocations.length ? allocations.map((allocation) => <article key={allocation.id}>
                   <strong>{allocation.storeName}</strong>
                   <dl>
-                    <div><dt>Necessidade</dt><dd className={allocation.suggestedQuantity === null ? 'is-muted' : undefined}>{formatAllocationQuantity(allocation.suggestedQuantity)}</dd></div>
+                    <div><dt>Necessidade</dt><dd className={allocation.suggestedQuantity === null ? 'is-muted' : undefined}>{formatAllocationQuantity(allocationNeed(allocation))}</dd></div>
                     <div><dt>Do Galpão</dt><dd className={allocation.warehouseAllocatedQuantity === null ? 'is-muted' : undefined}>{formatAllocationQuantity(allocation.warehouseAllocatedQuantity)}</dd></div>
                     <div><dt>Comprar</dt><dd className={allocation.purchaseNeededQuantity === null ? 'is-muted' : undefined}>{formatAllocationQuantity(allocation.purchaseNeededQuantity)}</dd></div>
                   </dl>
-                </article>) : <article><strong>Consolidado</strong><span>Inclusão manual sem loja definida</span></article>}
-              </div>
+                </article>) : <article><strong>Consolidado</strong><span>Item legado sem destino. Remova este item durante a revisão para permitir a aprovação.</span></article>}
+              </div>}
               {item.reviewCancellationReason && <p className="market-replenishment-order-note">Retirado: {item.reviewCancellationReason}</p>}
             </article>
           })}
@@ -498,5 +615,6 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
         })}
       </section>
     </>}
+    {manualScannerOpen && <BarcodeScanner onDetected={handleManualScannedCode} onClose={() => { setManualScannerOpen(false); window.setTimeout(() => manualSearchRef.current?.focus(), 0) }} />}
   </div>
 }

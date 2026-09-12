@@ -145,17 +145,19 @@ export async function getMarketReplenishmentOrder(
   return data as MarketReplenishmentOrderDetail | null
 }
 
-export async function updateMarketReplenishmentOrderItemQuantity(
+export async function updateMarketReplenishmentAllocationReview(
   accountId: string,
   orderId: string,
-  orderItemId: string,
-  adjustedPurchaseQuantity: number,
+  allocationId: string,
+  warehouseQuantity: number,
+  purchaseQuantity: number,
 ): Promise<string> {
-  const { data, error } = await supabase.rpc('market_update_replenishment_order_item_quantity', {
+  const { data, error } = await supabase.rpc('market_update_replenishment_allocation_review', {
     p_market_account_id: accountId,
     p_order_id: orderId,
-    p_order_item_id: orderItemId,
-    p_adjusted_purchase_quantity: adjustedPurchaseQuantity,
+    p_allocation_id: allocationId,
+    p_warehouse_quantity: warehouseQuantity,
+    p_purchase_quantity: purchaseQuantity,
   })
   if (error) throw error
   return data as string
@@ -166,12 +168,14 @@ export async function addMarketReplenishmentOrderManualItem(
   orderId: string,
   productId: string,
   purchaseQuantity: number,
+  storeId: string,
 ): Promise<string> {
   const { data, error } = await supabase.rpc('market_add_replenishment_order_manual_item', {
     p_market_account_id: accountId,
     p_order_id: orderId,
     p_product_id: productId,
     p_purchase_quantity: purchaseQuantity,
+    p_store_id: storeId,
   })
   if (error) throw error
   return data as string

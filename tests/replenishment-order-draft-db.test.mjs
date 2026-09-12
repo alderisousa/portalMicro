@@ -3,11 +3,12 @@
 // testes de migrations/RPCs do Market.
 import { PGlite } from '../.scratch/purchase-db-test/node_modules/@electric-sql/pglite/dist/index.js'
 import { readFileSync } from 'node:fs'
-import test from 'node:test'
+import test, { after } from 'node:test'
 import assert from 'node:assert/strict'
 
 const sqlFile = (name) => readFileSync(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')
 const db = new PGlite()
+after(() => db.close())
 
 const account = '10000000-0000-4000-8000-000000000001'
 const otherAccount = '10000000-0000-4000-8000-000000000002'
@@ -259,12 +260,18 @@ await db.exec(`
       ('${run}', '${account}', '${storeB}', '${productA}', date '2026-09-10', 'high', 1, 6),
       ('${run}', '${account}', '${storeC}', '${productA}', date '2026-09-10', 'critical', 1, 5),
       ('${run}', '${account}', '${storeA}', '${productB}', date '2026-09-10', 'medium', 1, null),
-      ('${run}', '${account}', '${storeB}', '${productC}', date '2026-09-10', 'low', 1, 2);
+      ('${run}', '${account}', '${storeB}', '${productC}', date '2026-09-10', 'medium', 1, 1.429),
+      ('${run}', '${account}', '${storeA}', '${productD}', date '2026-09-10', 'low', 1, 9),
+      ('${run}', '${account}', '${storeC}', '${productC}', date '2026-09-10', 'low', 2, null);
 `)
 
 await db.exec(sqlFile('202609100016_generate_replenishment_order_draft.sql'))
 await db.exec(sqlFile('202609100017_read_replenishment_order_with_last_supplier.sql'))
 await db.exec(sqlFile('202609100018_replenishment_order_review_backend.sql'))
+await db.exec(sqlFile('202609110001_fix_replenishment_unknown_quantity_consolidation.sql'))
+await db.exec(sqlFile('202609110002_round_replenishment_operational_quantities.sql'))
+await db.exec(sqlFile('202609120001_filter_replenishment_draft_priorities.sql'))
+await db.exec(sqlFile('202609120002_add_store_to_manual_replenishment_item.sql'))
 
 const query = async (sql, params = []) => (await db.query(sql, params)).rows
 let orderId
@@ -275,6 +282,28 @@ test('gera uma lista draft a partir do ultimo run efetivo', async () => {
   const order = (await query('select * from public.market_replenishment_orders where id=$1', [orderId]))[0]
   assert.equal(order.run_id, run)
   assert.equal(order.status, 'draft')
+})
+
+test('draft inclui critical/high/medium e exclui LOW de itens e allocations sem alterar candidatos', async () => {
+  const priorities = await query(`
+    select distinct c.priority_level
+    from public.market_replenishment_order_allocations a
+    join public.market_replenishment_candidates c on c.id = a.candidate_id
+    join public.market_replenishment_order_items i on i.id = a.order_item_id
+    where i.order_id = $1 order by c.priority_level
+  `, [orderId])
+  assert.deepEqual(priorities.map(row => row.priority_level), ['critical', 'high', 'medium'])
+  assert.equal((await query('select count(*)::int as n from public.market_replenishment_order_items where order_id=$1 and product_id=$2', [orderId, productD]))[0].n, 0)
+  assert.equal((await query("select count(*)::int as n from public.market_replenishment_candidates where run_id=$1 and priority_level='low'", [run]))[0].n, 2)
+  const allocation = (await query(`
+    select a.suggested_quantity, a.purchase_needed_quantity
+    from public.market_replenishment_order_allocations a
+    join public.market_replenishment_order_items i on i.id=a.order_item_id
+    where i.order_id=$1 and i.product_id=$2
+  `, [orderId, productC]))[0]
+  assert.equal(Number(allocation.suggested_quantity), 2)
+  assert.equal(Number(allocation.purchase_needed_quantity), 2)
+  assert.equal(Number((await query('select suggested_quantity from public.market_replenishment_candidates where run_id=$1 and product_id=$2 and priority_level=$3', [run, productC, 'medium']))[0].suggested_quantity), 1.429)
 })
 
 test('consolida por produto e usa o saldo agregado dos warehouses uma unica vez', async () => {
@@ -288,9 +317,9 @@ test('consolida por produto e usa o saldo agregado dos warehouses uma unica vez'
   assert.equal(Number(itemA.total_suggested_quantity), 19)
   assert.equal(Number(itemA.warehouse_stock_snapshot), 10)
   assert.equal(Number(itemA.suggested_purchase_quantity), 9)
-  assert.equal(Number(itemB.total_suggested_quantity), 0)
+  assert.equal(itemB.total_suggested_quantity, null)
   assert.equal(Number(itemB.warehouse_stock_snapshot), 100)
-  assert.equal(Number(itemB.suggested_purchase_quantity), 0)
+  assert.equal(itemB.suggested_purchase_quantity, null)
   assert.equal(Number(itemC.total_suggested_quantity), 2)
   assert.equal(itemC.warehouse_stock_snapshot, null)
   assert.equal(Number(itemC.suggested_purchase_quantity), 2)
@@ -376,7 +405,7 @@ test('leitura consolidada retorna ultimo fornecedor valido por produto sem N+1 n
 
   const productBItem = byProduct.get(productB)
   assert.equal(productBItem.lastSupplier, null)
-  assert.equal(Number(productBItem.totalSuggestedQuantity), 0)
+  assert.equal(productBItem.totalSuggestedQuantity, null)
 
   const productCItem = byProduct.get(productC)
   assert.equal(productCItem.lastSupplier.supplierName, 'Fornecedor Sem CNPJ')
@@ -404,7 +433,7 @@ test('ajusta quantidade em draft preservando valores e origem do batch', async (
   assert.equal(updated.status, 'pending')
   assert.equal(Number(updated.total_suggested_quantity), 19)
   assert.equal(Number(updated.suggested_purchase_quantity), 9)
-  assert.equal(Number(updated.adjusted_purchase_quantity), 12.5)
+  assert.equal(Number(updated.adjusted_purchase_quantity), 13)
 
   const allocations = await query(
     'select count(*)::int as n from public.market_replenishment_order_allocations where order_item_id=$1',
@@ -415,36 +444,74 @@ test('ajusta quantidade em draft preservando valores e origem do batch', async (
   const payload = (await query('select public.market_get_replenishment_order($1,$2) as result', [account, orderId]))[0].result
   const productAItem = payload.items.find((item) => item.productId === productA)
   assert.equal(productAItem.source, 'batch')
-  assert.equal(Number(productAItem.effectivePurchaseQuantity), 12.5)
+  assert.equal(Number(productAItem.effectivePurchaseQuantity), 13)
 })
 
-test('inclui produto manual_review sem allocation inventada', async () => {
-  const manualItemId = (await query(
-    'select public.market_add_replenishment_order_manual_item($1,$2,$3,$4) as id',
-    [account, orderId, productD, 4],
-  ))[0].id
-  assert.ok(manualItemId)
-
-  const manual = (await query(
-    'select source,total_suggested_quantity,suggested_purchase_quantity,adjusted_purchase_quantity,status from public.market_replenishment_order_items where id=$1',
-    [manualItemId],
-  ))[0]
-  assert.equal(manual.source, 'manual_review')
-  assert.equal(manual.status, 'pending')
-  assert.equal(Number(manual.total_suggested_quantity), 0)
-  assert.equal(Number(manual.suggested_purchase_quantity), 0)
-  assert.equal(Number(manual.adjusted_purchase_quantity), 4)
-
-  const allocations = await query(
-    'select count(*)::int as n from public.market_replenishment_order_allocations where order_item_id=$1',
-    [manualItemId],
+test('inclusao manual exige loja, cria allocation, divide Galpao/compra e preserva validacoes', async () => {
+  orderId = (await query('select public.market_generate_replenishment_order_draft($1) as id', [account]))[0].id
+  const add = (store, quantity = 6, product = productD) => query(
+    'select public.market_add_replenishment_order_manual_item($1,$2,$3,$4,$5) as id',
+    [account, orderId, product, quantity, store],
   )
-  assert.equal(allocations[0].n, 0)
+  await assert.rejects(add(null), /REPLENISHMENT_ORDER_INVALID_INPUT/)
+  await assert.rejects(query('select public.market_add_replenishment_order_manual_item($1,$2,$3,$4)', [account, orderId, productD, 6]), /does not exist/)
+  await assert.rejects(add(warehouseA), /REPLENISHMENT_ORDER_STORE_UNAVAILABLE/)
+  await assert.rejects(add(storeA, null), /REPLENISHMENT_ORDER_INVALID_QUANTITY/)
+  await assert.rejects(add(storeA, 6, productA), /REPLENISHMENT_ORDER_DUPLICATE_PRODUCT/)
+
+  for (const scenario of [
+    { stock: 4, quantity: 6, need: 6, warehouse: 4, purchase: 2 },
+    { stock: 10, quantity: 6, need: 6, warehouse: 6, purchase: 0 },
+    { stock: null, quantity: 2.4833, need: 3, warehouse: 0, purchase: 3 },
+    { stock: -2, quantity: 6, need: 6, warehouse: 0, purchase: 6 },
+  ]) {
+    await db.exec('begin')
+    try {
+      if (scenario.stock !== null) await query(`
+        insert into public.market_stock_movements(market_account_id, market_store_id, product_id, movement_type, direction, quantity)
+        values ($1,$2,$3,'INVENTORY','IN',$4)
+      `, [account, warehouseA, productD, scenario.stock])
+      const id = (await add(storeA, scenario.quantity))[0].id
+      const row = (await query(`
+        select i.source, i.total_suggested_quantity, i.warehouse_stock_snapshot,
+          i.suggested_purchase_quantity, i.adjusted_purchase_quantity,
+          a.store_id, a.candidate_id, a.suggested_quantity,
+          a.warehouse_allocated_quantity, a.purchase_needed_quantity
+        from public.market_replenishment_order_items i
+        join public.market_replenishment_order_allocations a on a.order_item_id=i.id
+        where i.id=$1 and a.market_account_id=$2
+      `, [id, account]))[0]
+      assert.equal(row.source, 'manual_review')
+      assert.equal(row.store_id, storeA)
+      assert.equal(row.candidate_id, null)
+      assert.equal(Number(row.total_suggested_quantity), scenario.need)
+      assert.equal(Number(row.suggested_quantity), scenario.need)
+      assert.equal(row.warehouse_stock_snapshot === null ? null : Number(row.warehouse_stock_snapshot), scenario.stock)
+      assert.equal(Number(row.warehouse_allocated_quantity), scenario.warehouse)
+      assert.equal(Number(row.purchase_needed_quantity), scenario.purchase)
+      assert.equal(Number(row.suggested_purchase_quantity), scenario.purchase)
+      assert.equal(row.adjusted_purchase_quantity, null)
+    } finally { await db.exec('rollback') }
+  }
+  await db.exec('begin')
+  await query("update public.market_replenishment_orders set status='approved' where id=$1", [orderId])
+  await assert.rejects(add(storeA), /REPLENISHMENT_ORDER_NOT_DRAFT/)
+  await db.exec('rollback')
+
+  await db.exec('begin')
+  const foreignStore = '20000000-0000-4000-8000-000000000099'
+  await query("insert into public.market_stores(id,market_account_id,name,store_type) values ($1,$2,'Outra loja','store')", [foreignStore, otherAccount])
+  await assert.rejects(add(foreignStore), /REPLENISHMENT_ORDER_STORE_UNAVAILABLE/)
+  await db.exec('rollback')
+
+  const id = (await add(storeA, 4))[0].id
+  await assert.rejects(add(storeA, 4), /REPLENISHMENT_ORDER_DUPLICATE_PRODUCT/)
+  assert.equal((await query('select count(*)::int as n from public.market_replenishment_order_allocations where order_item_id=$1', [id]))[0].n, 1)
 })
 
 test('impede produto duplicado na mesma order', async () => {
   await assert.rejects(
-    query('select public.market_add_replenishment_order_manual_item($1,$2,$3,$4)', [account, orderId, productA, 1]),
+    query('select public.market_add_replenishment_order_manual_item($1,$2,$3,$4,$5)', [account, orderId, productA, 1, storeA]),
     /REPLENISHMENT_ORDER_DUPLICATE_PRODUCT/,
   )
 })
@@ -504,7 +571,7 @@ test('aprova lista draft e bloqueia alteracoes de revisao depois disso', async (
     /REPLENISHMENT_ORDER_NOT_DRAFT/,
   )
   await assert.rejects(
-    query('select public.market_add_replenishment_order_manual_item($1,$2,$3,$4)', [account, orderId, productC, 1]),
+    query('select public.market_add_replenishment_order_manual_item($1,$2,$3,$4,$5)', [account, orderId, productC, 1, storeA]),
     /REPLENISHMENT_ORDER_NOT_DRAFT/,
   )
   await assert.rejects(
@@ -531,5 +598,4 @@ test('perfil sem escopo total nao gera lista consolidada', async () => {
     query('select public.market_update_replenishment_order_item_quantity($1,$2,$3,$4)', [account, orderId, itemA.id, 10]),
     /REPLENISHMENT_ORDER_PERMISSION_DENIED/,
   )
-  await db.close()
 })
