@@ -5,7 +5,51 @@ import type { MarketStore } from '../types/market'
 import type {
   MarketReplenishmentCandidate, MarketReplenishmentOrderDetail, MarketReplenishmentOverview, MarketReplenishmentRunSummary,
   MarketReplenishmentTriggerReason,
+  ReplenishmentPurchaseLine,
+  ReplenishmentSupplyLine,
 } from '../types/marketReplenishment'
+
+export async function getReplenishmentPurchasing(accountId: string, orderId: string): Promise<ReplenishmentPurchaseLine[]> {
+  const { data, error } = await supabase.rpc('market_get_replenishment_purchasing', { p_market_account_id: accountId, p_order_id: orderId })
+  if (error) throw error
+  return data as ReplenishmentPurchaseLine[]
+}
+
+export async function setReplenishmentPurchased(accountId: string, orderId: string,
+  changes: Array<{ declarationId: string; version: number; quantity: number | null }>, requestId: string): Promise<void> {
+  const { error } = await supabase.rpc('market_set_replenishment_purchased', {
+    p_market_account_id: accountId, p_order_id: orderId, p_changes: changes, p_request_id: requestId,
+  })
+  if (error) throw error
+}
+
+export async function linkReplenishmentPurchaseNf(accountId: string, orderId: string, lineId: string,
+  itemId: string, quantity: number, requestId: string): Promise<void> {
+  const { error } = await supabase.rpc('market_link_replenishment_purchase_nf', {
+    p_market_account_id: accountId, p_order_id: orderId, p_declaration_id: lineId,
+    p_purchase_item_id: itemId, p_quantity: quantity, p_request_id: requestId,
+  })
+  if (error) throw error
+}
+
+export async function getReplenishmentStoreSupply(accountId: string, orderId: string, storeId: string): Promise<ReplenishmentSupplyLine[]> {
+  const { data, error } = await supabase.rpc('market_get_replenishment_store_supply', {
+    p_market_account_id: accountId, p_order_id: orderId, p_store_id: storeId,
+  })
+  if (error) throw error
+  return data as ReplenishmentSupplyLine[]
+}
+
+export async function executeReplenishmentStoreSupply(accountId: string, orderId: string, allocationId: string,
+  operationLineId: string, sourceStoreId: string, quantity: number, requestId: string): Promise<unknown> {
+  const { data, error } = await supabase.rpc('market_execute_replenishment_store_supply', {
+    p_market_account_id: accountId, p_order_id: orderId, p_allocation_id: allocationId,
+    p_warehouse_operation_line_id: operationLineId, p_source_store_id: sourceStoreId,
+    p_quantity: quantity, p_request_id: requestId,
+  })
+  if (error) throw error
+  return data
+}
 
 // Leitura direta (sem RPC): market_replenishment_runs/market_replenishment_candidates
 // já têm policy de select própria (market_is_member / market_is_member +

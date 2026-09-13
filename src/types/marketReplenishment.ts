@@ -160,3 +160,35 @@ export interface MarketReplenishmentOrderDetail {
   order: MarketReplenishmentOrderSummary
   items: MarketReplenishmentOrderItem[]
 }
+
+export interface ReplenishmentPurchaseLine {
+  id: string
+  productId: string
+  productName: string
+  targetQuantity: number
+  purchasedQuantity: number | null
+  version: number
+  stores: Array<{ storeId: string; storeName: string; targetQuantity: number }>
+  linked: boolean
+  coveredQuantity: number
+  receivedQuantity: number
+  invoices: Array<{ itemId: string; invoiceNumber: string | null; warehouseName: string; availableQuantity: number; received: boolean }>
+}
+
+export interface ReplenishmentSupplyLine {
+  id: string
+  operationLineId: string
+  allocationId: string
+  productId: string
+  productName: string
+  storeId: string
+  storeName: string
+  sourceStoreId: string
+  sourceStoreName: string
+  targetQuantity: number
+  confirmedQuantity: number
+  remainingQuantity: number
+  warehouseBalance: number
+  executedQuantity: number
+  suggestedQuantity: number
+}

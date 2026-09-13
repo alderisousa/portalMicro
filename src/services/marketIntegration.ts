@@ -91,6 +91,18 @@ export async function getMarketIntegration(
   const data = await invokeIntegrationAdmin<{ integration: MarketIntegrationConfiguration }>({
     action: 'get', marketAccountId, integrationId,
   })
+  // Older deployed Edge Functions may omit this field. Read the persisted
+  // value instead of turning an absent boolean into an unchecked checkbox.
+  if (typeof data.integration.automaticSyncEnabled !== 'boolean') {
+    const { data: persisted, error } = await supabase.from('market_integrations')
+      .select('automatic_sync_enabled').eq('market_account_id', marketAccountId)
+      .eq('id', integrationId).single()
+    if (error) throw error
+    if (typeof persisted?.automatic_sync_enabled !== 'boolean') {
+      throw new Error('Não foi possível carregar a configuração de sincronização automática.')
+    }
+    data.integration.automaticSyncEnabled = persisted.automatic_sync_enabled
+  }
   return data.integration
 }
 
@@ -103,11 +115,15 @@ export async function saveMarketIntegration(input: SaveMarketIntegrationInput) {
     externalCompanyId: input.externalCompanyId.trim(),
     username: input.username.trim(),
     status: input.status,
+    automaticSyncEnabled: input.automaticSyncEnabled,
   }
   if (input.integrationId) body.integrationId = input.integrationId
   if (input.password) body.password = input.password
 
   const data = await invokeIntegrationAdmin<{ integration: MarketIntegrationConfiguration }>(body)
+  if (typeof data.integration.automaticSyncEnabled !== 'boolean') {
+    throw new Error('O serviço de integração precisa ser atualizado para salvar a sincronização automática. Recarregue a configuração antes de tentar novamente.')
+  }
   return data.integration
 }
 

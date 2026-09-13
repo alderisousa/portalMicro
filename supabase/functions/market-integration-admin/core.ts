@@ -21,6 +21,7 @@ export type Integration = {
   base_url: string
   external_company_id: string
   status: 'inactive' | 'active' | 'error'
+  automatic_sync_enabled: boolean
   last_test_at: string | null
   last_test_succeeded: boolean | null
   last_test_error: string | null
@@ -103,6 +104,7 @@ const publicIntegration = (integration: Integration, credential: Credential | nu
   externalCompanyId: integration.external_company_id,
   username: credential?.username ?? null,
   status: integration.status,
+  automaticSyncEnabled: integration.automatic_sync_enabled,
   lastTestAt: integration.last_test_at,
   lastTestSucceeded: integration.last_test_succeeded,
   lastTestError: integration.last_test_error,
@@ -179,6 +181,10 @@ export const executeAction = async (
     const externalCompanyId = requiredString(body, 'externalCompanyId')
     const username = requiredString(body, 'username')
     const requestedStatus = body.status
+    const automaticSyncEnabled = body.automaticSyncEnabled
+    if (automaticSyncEnabled !== undefined && typeof automaticSyncEnabled !== 'boolean') {
+      throw new ApiError('INVALID_REQUEST', 'Sincronização automática deve ser um booleano.', 400)
+    }
     if (requestedStatus !== undefined && requestedStatus !== 'inactive' && requestedStatus !== 'active') {
       throw new ApiError('INVALID_REQUEST', 'Status da integração inválido.', 400)
     }
@@ -213,6 +219,7 @@ export const executeAction = async (
         base_url: baseUrl,
         external_company_id: externalCompanyId,
         status: requestedStatus ?? existingIntegration.status,
+        automatic_sync_enabled: automaticSyncEnabled ?? existingIntegration.automatic_sync_enabled,
         last_test_at: null,
         last_test_succeeded: null,
         last_test_error: null,
@@ -223,6 +230,7 @@ export const executeAction = async (
         base_url: baseUrl,
         external_company_id: externalCompanyId,
         status: requestedStatus ?? 'inactive',
+        automatic_sync_enabled: automaticSyncEnabled ?? true,
       })
 
     await dependencies.repository.saveCredential({

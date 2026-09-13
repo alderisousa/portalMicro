@@ -29,6 +29,7 @@ type FormState = {
   username: string
   password: string
   status: MarketIntegrationStatus
+  automaticSyncEnabled: boolean
 }
 
 type Feedback = { type: 'success' | 'error'; message: string }
@@ -39,6 +40,7 @@ const emptyForm: FormState = {
   username: '',
   password: '',
   status: 'inactive',
+  automaticSyncEnabled: true,
 }
 
 const todayInputValue = () => {
@@ -103,6 +105,7 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
       username: value.username ?? '',
       password: '',
       status: value.status === 'active' ? 'active' : 'inactive',
+      automaticSyncEnabled: value.automaticSyncEnabled,
     })
   }, [])
 
@@ -155,6 +158,7 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
         externalCompanyId: form.externalCompanyId,
         username: form.username,
         status: form.status,
+        automaticSyncEnabled: form.automaticSyncEnabled,
         ...(form.password ? { password: form.password } : {}),
       })
       applyIntegration(saved)
@@ -291,6 +295,8 @@ export function AdminMarketIntegration({ marketAccountId }: AdminMarketIntegrati
           <label>Provider<select value="accesys" disabled aria-label="Provider"><option value="accesys">Accesys</option></select></label>
           <label>Status<select value={form.status} disabled={saving || testing || syncing} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value as MarketIntegrationStatus }))}><option value="active">Ativa</option><option value="inactive">Inativa</option></select></label>
         </div>
+        <label className="admin-edit-checkbox"><input type="checkbox" checked={form.automaticSyncEnabled} disabled={saving || testing || syncing} aria-describedby="automatic-sync-help" onChange={(event) => setForm((current) => ({ ...current, automaticSyncEnabled: event.target.checked }))} />Sincronização automática</label>
+        <p id="automatic-sync-help" className="admin-form-note">Quando desativada, a integração continua disponível para sincronizações manuais, mas não participa dos agendamentos automáticos.</p>
         <div className="admin-form-row">
           <label>Company ID<strong aria-hidden="true"> *</strong><input required autoComplete="off" value={form.externalCompanyId} disabled={saving || testing || syncing} onChange={(event) => setForm((current) => ({ ...current, externalCompanyId: event.target.value }))} /></label>
           <label>URL da API<input readOnly value={ACCESYS_BASE_URL} aria-describedby="accesys-url-note" /></label>

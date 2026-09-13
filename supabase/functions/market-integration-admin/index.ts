@@ -24,7 +24,7 @@ const json = (body: Record<string, unknown>, status = 200) =>
 
 const integrationColumns = [
   'id', 'market_account_id', 'provider', 'base_url', 'external_company_id',
-  'status', 'last_test_at', 'last_test_succeeded', 'last_test_error',
+  'status', 'automatic_sync_enabled', 'last_test_at', 'last_test_succeeded', 'last_test_error',
 ].join(',')
 
 class SupabaseIntegrationRepository implements IntegrationRepository {

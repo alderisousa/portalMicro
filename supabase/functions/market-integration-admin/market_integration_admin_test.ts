@@ -102,6 +102,7 @@ const integration = (): Integration => ({
   base_url: 'https://apigateway.accesyslab.com.br',
   external_company_id: '434',
   status: 'inactive',
+  automatic_sync_enabled: true,
   last_test_at: null,
   last_test_succeeded: null,
   last_test_error: null,
@@ -169,6 +170,62 @@ const productPreviewFetcher = (payload: unknown, status = 200) => {
   }
   return { calls, fetcher: fetcher as typeof fetch }
 }
+
+test('automatico: save/get preservam false, aceitam true e mantem valor quando omitido', async () => {
+  const repository = new MemoryRepository()
+  repository.credential = { username: 'u', password_ciphertext: '\\x0102' }
+  const input = { action: 'save', marketAccountId: ACCOUNT_ID, integrationId: INTEGRATION_ID,
+    provider: 'accesys', baseUrl: repository.integration.base_url, externalCompanyId: '434', username: 'u', status: 'active' }
+  for (const value of [false, undefined, true]) {
+    const saved = await executeAction(USER_ID, { ...input, ...(value === undefined ? {} : { automaticSyncEnabled: value }) }, { repository, encryptionKey: KEY })
+    assert.equal(saved.integration.automaticSyncEnabled, value ?? false)
+    assert.equal(repository.integration.automatic_sync_enabled, value ?? false)
+    const loaded = await executeAction(USER_ID, { action: 'get', marketAccountId: ACCOUNT_ID, integrationId: INTEGRATION_ID }, { repository, encryptionKey: KEY })
+    assert.equal(loaded.integration.automaticSyncEnabled, value ?? false)
+  }
+  for (const invalid of [null, 'false', 0]) {
+    const writes = repository.writes
+    await assert.rejects(() => executeAction(USER_ID, { ...input, automaticSyncEnabled: invalid }, { repository, encryptionKey: KEY }),
+      (error: unknown) => error instanceof ApiError && error.code === 'INVALID_REQUEST')
+    assert.equal(repository.writes, writes)
+  }
+})
+
+test('automatico: nova configuracao assume true quando campo omitido', async () => {
+  const repository = new MemoryRepository()
+  const saved = await executeAction(USER_ID, { action: 'save', marketAccountId: ACCOUNT_ID,
+    provider: 'accesys', baseUrl: repository.integration.base_url, externalCompanyId: '434', username: 'u', password: 'p' },
+  { repository, encryptionKey: KEY })
+  assert.equal(saved.integration.automaticSyncEnabled, true)
+  assert.equal(repository.integration.automatic_sync_enabled, true)
+})
+
+test('automatico desligado permite sync manual e preview; inactive bloqueia ambos mas permite teste', async () => {
+  const repository = new MemoryRepository()
+  repository.integration.automatic_sync_enabled = false
+  repository.credential = { username: 'u', password_ciphertext: bytesToPostgresBytea(await encryptPassword('p', KEY)) }
+  for (const status of ['active', 'inactive'] as const) {
+    repository.integration.status = status
+    for (const mode of ['sync', 'preview']) {
+      const provider = productPreviewFetcher({ records: 0, page: 1, pages: 1, items: [] })
+      const action = () => executeAction(USER_ID, { action: 'sync-products', mode, marketAccountId: ACCOUNT_ID, integrationId: INTEGRATION_ID },
+        { repository, encryptionKey: KEY, fetcher: provider.fetcher })
+      if (status === 'active') {
+        const result = await action()
+        assert.equal(result.mode, mode)
+        if (mode === 'sync') assert.equal(result.run.status, 'completed')
+        assert.equal(provider.calls.length, 2)
+      } else {
+        await assert.rejects(action, (error: unknown) => error instanceof ApiError && error.code === 'INTEGRATION_UNAVAILABLE')
+        assert.equal(provider.calls.length, 0)
+      }
+    }
+    const provider = productPreviewFetcher({ items: [] })
+    const result = await executeAction(USER_ID, { action: 'test', marketAccountId: ACCOUNT_ID, integrationId: INTEGRATION_ID },
+      { repository, encryptionKey: KEY, fetcher: provider.fetcher })
+    assert.equal(result.succeeded, true)
+  }
+})
 
 test('authorization rejects a user who is not a global GiroMicro Admin', async () => {
   const repository = new MemoryRepository()

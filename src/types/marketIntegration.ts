@@ -8,6 +8,7 @@ export interface MarketIntegrationConfiguration {
   externalCompanyId: string
   username: string | null
   status: MarketIntegrationStatus | 'error'
+  automaticSyncEnabled: boolean
   lastTestAt: string | null
   lastTestSucceeded: boolean | null
   lastTestError: string | null
@@ -21,6 +22,7 @@ export interface SaveMarketIntegrationInput {
   username: string
   password?: string
   status: MarketIntegrationStatus
+  automaticSyncEnabled: boolean
 }
 
 export interface MarketProductCatalogPreview {

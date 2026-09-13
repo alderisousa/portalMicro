@@ -5,6 +5,7 @@ import { addMarketMember, createMarketStore, getMarketAccount, listMarketMembers
 import type { AdminAuthenticatedUser } from '../types/adminUsers'
 import type { MarketAccount, MarketAccountMember, MarketAccountStatus, MarketMemberRole, MarketMemberStatus, MarketPlanCode, MarketStore, MarketStoreInput, MarketStoreStatus, MarketStoreType } from '../types/market'
 import { AdminMarketIntegration } from './AdminMarketIntegration'
+import { updateMarketAccountName } from '../services/market'
 
 interface AdminMarketAccountProps { accountId: string; onBack: () => void }
 type Feedback = { type: 'success' | 'error'; message: string }
@@ -20,6 +21,7 @@ const friendlyError = (error: unknown, fallback: string) => {
 
 export function AdminMarketAccount({ accountId, onBack }: AdminMarketAccountProps) {
   const [account, setAccount] = useState<MarketAccount | null>(null)
+  const [accountName, setAccountName] = useState('')
   const [members, setMembers] = useState<MarketAccountMember[]>([])
   const [stores, setStores] = useState<MarketStore[]>([])
   const [users, setUsers] = useState<AdminAuthenticatedUser[]>([])
@@ -40,6 +42,7 @@ export function AdminMarketAccount({ accountId, onBack }: AdminMarketAccountProp
     try {
       const accountData = await getMarketAccount(accountId)
       if (!accountData || accountData.id !== accountId) throw new Error('Conta Market não encontrada ou sem acesso.')
+      setAccountName(accountData.name)
       const [memberData, storeData, authenticatedUsers] = await Promise.all([listMarketMembers(accountId), listMarketStores(accountId), listAuthenticatedUsers()])
       const userMap = new Map(authenticatedUsers.map((user) => [user.user_id, user]))
       setAccount(accountData); setSettings({ plan: accountData.plan_code === 'pro' ? 'pro' : 'pilot', status: accountData.status })
@@ -87,6 +90,22 @@ export function AdminMarketAccount({ accountId, onBack }: AdminMarketAccountProp
     catch (error) { console.error('Falha ao salvar configuração Market:', error); setFeedback({ type: 'error', message: friendlyError(error, 'Não foi possível alterar plano e status da conta.') }) }
     finally { setSavingAction('') }
   }
+  const saveName = async (event: FormEvent) => {
+    event.preventDefault()
+    if (savingAction || !account || account.id !== accountId) return
+    const name = accountName.trim()
+    if (!name) { setFeedback({ type: 'error', message: 'Informe o nome da conta Market.' }); return }
+    setSavingAction('name'); setFeedback(null)
+    try {
+      await updateMarketAccountName(accountId, name)
+      setAccount((current) => current ? { ...current, name } : current)
+      setAccountName(name)
+      setFeedback({ type: 'success', message: 'Nome do Market atualizado com sucesso.' })
+    } catch (error) {
+      console.error('Falha ao alterar nome do Market:', error)
+      setFeedback({ type: 'error', message: 'Não foi possível alterar o nome do Market.' })
+    } finally { setSavingAction('') }
+  }
   const saveStore = async (event: FormEvent) => {
     event.preventDefault(); if (!storeForm.name.trim() || !account || account.id !== accountId) return
     setSavingAction('store'); setFeedback(null)
@@ -102,6 +121,10 @@ export function AdminMarketAccount({ accountId, onBack }: AdminMarketAccountProp
     <button className="button button-small button-outline admin-detail-back" onClick={onBack}><ArrowLeft size={16} /> Voltar ao usuário</button>
     <header className="admin-market-header"><div><p className="eyebrow"><Store size={16} /> GiroMicro Market</p><h1>{account.name}</h1></div><dl><div><dt>Plano</dt><dd>{account.plan_code === 'pro' ? 'Pro' : 'Pilot'}</dd></div><div><dt>Status</dt><dd>{accountStatusLabels[account.status]}</dd></div></dl></header>
     {feedback && <p className={`admin-feedback ${feedback.type}`} role={feedback.type === 'error' ? 'alert' : 'status'}>{feedback.message}</p>}
+    <form className="admin-inline-form" onSubmit={saveName}>
+      <label>Nome do Market<input required value={accountName} disabled={Boolean(savingAction)} onChange={(event) => setAccountName(event.target.value)} /></label>
+      <div className="admin-form-actions"><button className="button button-small" disabled={Boolean(savingAction)}>{savingAction === 'name' ? 'Salvando...' : 'Salvar nome'}</button></div>
+    </form>
     <section className="admin-market-block"><div className="admin-list-heading"><div><span className="panel-kicker">ADMINISTRAÇÃO</span><h2>Configuração da conta</h2></div></div><form className="admin-inline-form" onSubmit={saveSettings}><div className="admin-form-row"><label>Plano<select value={settings.plan} onChange={(event) => setSettings((current) => ({ ...current, plan: event.target.value as MarketPlanCode }))}><option value="pilot">Pilot</option><option value="pro">Pro</option></select></label><label>Status<select value={settings.status} onChange={(event) => setSettings((current) => ({ ...current, status: event.target.value as MarketAccountStatus }))}><option value="pilot">Piloto</option><option value="active">Ativo</option><option value="suspended">Suspenso</option><option value="cancelled">Cancelado</option></select></label></div><div className="admin-form-actions"><button className="button button-small" disabled={savingAction === 'settings'}>{savingAction === 'settings' ? 'Salvando...' : 'Salvar alterações'}</button></div></form></section>
     <AdminMarketIntegration marketAccountId={accountId} />
     <section className="admin-market-block"><div className="admin-list-heading"><div><span className="panel-kicker">ACESSOS</span><h2>Usuários da conta</h2></div><button className="button button-small" onClick={openNewMember}><UserPlus size={15} /> Vincular usuário</button></div>

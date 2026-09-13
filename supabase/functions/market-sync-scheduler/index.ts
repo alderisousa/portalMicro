@@ -50,7 +50,7 @@ Deno.serve(async (request) => {
 
   const client = createClient(supabaseUrl, providedApiKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data, error } = await client.from('market_integrations').select('id,market_account_id,market_accounts!inner(status)')
-    .eq('provider', 'accesys').eq('status', 'active').in('market_accounts.status', ['pilot', 'active'])
+    .eq('provider', 'accesys').eq('status', 'active').eq('automatic_sync_enabled', true).in('market_accounts.status', ['pilot', 'active'])
   if (error) return json({ error: 'INTEGRATION_LOOKUP_FAILED' }, 500)
   const integrations = (data ?? []) as unknown as Integration[]
   const results: ItemResult[] = []

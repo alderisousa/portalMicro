@@ -157,6 +157,25 @@ function dependencies(repository: MemoryRepository, provider: MemoryProvider) {
   }
 }
 
+test('automatico desligado permite vendas manuais; inactive continua bloqueada', async () => {
+  for (const status of ['active', 'inactive']) {
+    const repository = new MemoryRepository()
+    repository.integration = { ...repository.integration, ...{ automatic_sync_enabled: false }, status }
+    const provider = new MemoryProvider([{ records: 1, page: 1, pages: 1, items: [order()] }])
+    const action = () => executeSalesSync(USER_ID, singleDayRequest(), dependencies(repository, provider))
+    if (status === 'active') {
+      const result = await action()
+      assert.equal(result.summary.status, 'completed')
+      assert.equal(result.summary.ordersInserted, 1)
+      assert.equal(repository.lastBeginSource, 'admin')
+    } else {
+      await assert.rejects(action, (error: unknown) => error instanceof SyncApiError && error.code === 'INTEGRATION_UNAVAILABLE')
+      assert.equal(provider.calls.length, 0)
+      assert.equal(repository.run, null)
+    }
+  }
+})
+
 test('rejeita usuario que nao e Admin global antes de criar run', async () => {
   const repository = new MemoryRepository()
   repository.globalAdmin = false

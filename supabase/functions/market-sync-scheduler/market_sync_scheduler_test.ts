@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { runInNewContext } from 'node:vm'
+import { stripTypeScriptTypes } from 'node:module'
 
 // .replace: normaliza CRLF->LF na leitura para que os regexes abaixo (que
 // assumem \n literal) não fiquem sensíveis ao line-ending do checkout local
@@ -12,6 +14,55 @@ const service = readFileSync(new URL('../../../src/services/marketIntegration.ts
 const repository = readFileSync(new URL('../market-integration-admin/index.ts', import.meta.url), 'utf8')
 const salesSync = readFileSync(new URL('../market-sales-sync/index.ts', import.meta.url), 'utf8')
 const functionConfig = readFileSync(new URL('../../config.toml', import.meta.url), 'utf8')
+
+for (const task of ['sales', 'products']) {
+  test(`${task}: scheduler seleciona somente ativa + automatico habilitado`, async () => {
+    const rows = [
+      { id: 'enabled', market_account_id: 'a', provider: 'accesys', status: 'active', automatic_sync_enabled: true, 'market_accounts.status': 'active' },
+      { id: 'manual-only', market_account_id: 'b', provider: 'accesys', status: 'active', automatic_sync_enabled: false, 'market_accounts.status': 'active' },
+      { id: 'inactive', market_account_id: 'c', provider: 'accesys', status: 'inactive', automatic_sync_enabled: true, 'market_accounts.status': 'active' },
+      { id: 'pilot', market_account_id: 'd', provider: 'accesys', status: 'active', automatic_sync_enabled: true, 'market_accounts.status': 'pilot' },
+      { id: 'unavailable-market', market_account_id: 'e', provider: 'accesys', status: 'active', automatic_sync_enabled: true, 'market_accounts.status': 'inactive' },
+      { id: 'other-provider', market_account_id: 'f', provider: 'other', status: 'active', automatic_sync_enabled: true, 'market_accounts.status': 'active' },
+    ]
+    let selected = rows
+    const query = {
+      select() { return this },
+      eq(column: string, value: unknown) { selected = selected.filter((row) => row[column as keyof typeof row] === value); return this },
+      in(column: string, values: unknown[]) { selected = selected.filter((row) => values.includes(row[column as keyof typeof row])); return this },
+      then(resolve: (value: unknown) => unknown) { return Promise.resolve({ data: selected, error: null }).then(resolve) },
+    }
+    const calls: Array<Record<string, unknown>> = []
+    let handler!: (request: Request) => Promise<Response>
+    const env: Record<string, string> = {
+      SUPABASE_URL: 'https://scheduler.invalid', SUPABASE_SECRET_KEYS: '{"default":"test-key"}', MARKET_SCHEDULER_SECRET: 'test-secret',
+    }
+    // Execute the real handler with in-memory Supabase and HTTP adapters.
+    const source = scheduler.replace(/^import .*createClient.*\n/, '')
+    runInNewContext(stripTypeScriptTypes(source), {
+      Deno: { env: { get: (key: string) => env[key] }, serve: (fn: typeof handler) => { handler = fn } },
+      createClient: () => ({ from: () => query, rpc: async () => ({ data: 'replenishment-run', error: null }) }),
+      Response, console: { info() {}, error() {} },
+      fetch: async (_url: string, init: RequestInit) => {
+        calls.push(JSON.parse(init.body as string))
+        return Response.json(task === 'sales'
+          ? { status: 'completed', syncRunId: 'sales-run', period: { startDate: '2026-09-12' } }
+          : { run: { id: 'product-run', status: 'completed' } })
+      },
+    })
+    const response = await handler(new Request('https://scheduler.invalid', {
+      method: 'POST', headers: { apikey: 'test-key', 'x-market-scheduler-secret': 'test-secret' }, body: JSON.stringify({ task }),
+    }))
+    assert.equal(response.status, 200)
+    assert.equal((await response.json()).integrationsFound, 2)
+    assert.deepEqual(calls.map((call) => [call.marketAccountId, call.integrationId]), [['a', 'enabled'], ['d', 'pilot']])
+  })
+}
+
+test('automatico: migration adiciona boolean NOT NULL DEFAULT true', () => {
+  const sql = readFileSync(new URL('../../migrations/202609130001_add_market_integration_automatic_sync.sql', import.meta.url), 'utf8')
+  assert.match(sql, /alter table public\.market_integrations\s+add column automatic_sync_enabled boolean not null default true/i)
+})
 
 test('scheduler isola integracoes e reutiliza as Edge Functions existentes', () => {
   assert.match(scheduler, /for \(const integration of integrations\)/)

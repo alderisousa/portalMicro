@@ -26,6 +26,8 @@ import type {
   MarketReplenishmentPriorityLevel,
 } from '../types/marketReplenishment'
 import type { MarketStockProduct } from '../types/marketStock'
+import { ReplenishmentPurchasing } from '../components/ReplenishmentPurchasing'
+import { ReplenishmentStoreSupply } from '../components/ReplenishmentStoreSupply'
 
 interface Props { accountId: string; stores: MarketStore[]; onBack: () => void }
 
@@ -442,7 +444,9 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
         </button>
       </section>
       {orderError && <div className="admin-message is-error" role="alert">{orderError}</div>}
-      {orderDetail && <section className="market-replenishment-order-panel">
+      {orderDetail && ['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <ReplenishmentPurchasing key={`${accountId}:${orderDetail.order.id}`} accountId={accountId} orderId={orderDetail.order.id} storeId={contextStoreId} editable={orderDetail.order.status !== 'completed'} />}
+      {orderDetail && contextStoreId && ['approved', 'in_progress'].includes(orderDetail.order.status) && <ReplenishmentStoreSupply key={`${accountId}:${orderDetail.order.id}:${contextStoreId}`} accountId={accountId} orderId={orderDetail.order.id} storeId={contextStoreId} editable />}
+      {orderDetail && !['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <section className="market-replenishment-order-panel">
         <div className="market-replenishment-order-heading">
           <div><span className="panel-kicker">{contextStoreId ? orderStores.find((store) => store.id === contextStoreId)?.name : 'LISTA CONSOLIDADA'}</span><h2>{contextOrderItems.length} itens</h2></div>
           <div className="market-replenishment-order-actions">

@@ -252,3 +252,12 @@ export async function updateMarketAccountSettings(
   })
   throwIfError(error)
 }
+
+export async function updateMarketAccountName(accountId: string, name: string): Promise<void> {
+  const trimmedName = name.trim()
+  if (!trimmedName) throw new Error('Informe o nome da conta Market.')
+  // The existing market_accounts_admin_update RLS policy requires global Admin.
+  const { error } = await supabase.from('market_accounts')
+    .update({ name: trimmedName }).eq('id', accountId).select('id').single()
+  throwIfError(error)
+}

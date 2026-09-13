@@ -272,6 +272,10 @@ await db.exec(sqlFile('202609110001_fix_replenishment_unknown_quantity_consolida
 await db.exec(sqlFile('202609110002_round_replenishment_operational_quantities.sql'))
 await db.exec(sqlFile('202609120001_filter_replenishment_draft_priorities.sql'))
 await db.exec(sqlFile('202609120002_add_store_to_manual_replenishment_item.sql'))
+await db.exec(`create or replace function public.market_replenishment_assert_access_internal(p_account uuid) returns void language plpgsql security definer set search_path=public as $$ begin if p_account is null or not exists (select 1 from public.market_accounts where id=p_account and status in ('pilot','active')) then raise exception 'REPLENISHMENT_ORDER_ACCOUNT_UNAVAILABLE'; end if; if auth.uid() is not null and not exists (select 1 from public.market_account_members m where m.market_account_id=p_account and m.user_id=auth.uid() and m.status='active' and (m.role in ('owner','admin') or (m.role='manager' and m.all_stores))) then raise exception 'REPLENISHMENT_ORDER_PERMISSION_DENIED'; end if; end; $$`)
+await db.exec(`alter function public.market_generate_replenishment_order_draft(uuid) rename to market_generate_replenishment_order_draft_legacy`)
+await db.exec(`create function public.market_materialize_replenishment_order_draft_internal(p_account uuid,p_run uuid) returns uuid language plpgsql security definer set search_path=public as $$ begin return public.market_generate_replenishment_order_draft_legacy(p_account); end; $$`)
+await db.exec(sqlFile('202609130004_fix_replenishment_active_order_reuse.sql'))
 
 const query = async (sql, params = []) => (await db.query(sql, params)).rows
 let orderId
@@ -598,4 +602,33 @@ test('perfil sem escopo total nao gera lista consolidada', async () => {
     query('select public.market_update_replenishment_order_item_quantity($1,$2,$3,$4)', [account, orderId, itemA.id, 10]),
     /REPLENISHMENT_ORDER_PERMISSION_DENIED/,
   )
+})
+
+test('reutiliza qualquer ordem ativa antes de considerar batch novo', async () => {
+  await db.exec('begin')
+  try {
+    await query("update public.market_account_members set all_stores = true where market_account_id=$1", [account])
+    const activeOrderId = (await query('select public.market_generate_replenishment_order_draft($1) id', [account]))[0].id
+    const newerRun = crypto.randomUUID()
+    await query(`insert into public.market_replenishment_runs(id,market_account_id,reference_date,algorithm_version,status,is_effective,started_at,finished_at) values($1,$2,date '2026-09-11','v1','completed',true,timestamptz '2026-09-11 06:00:00+00',timestamptz '2026-09-11 06:01:00+00')`, [newerRun, account])
+    await query(`insert into public.market_replenishment_candidates(run_id,market_account_id,store_id,product_id,reference_date,priority_level,rank_position,suggested_quantity) values($1,$2,$3,$4,date '2026-09-11','high',1,3)`, [newerRun, account, storeA, productC])
+    assert.equal((await query('select public.market_generate_replenishment_order_draft($1) id', [account]))[0].id, activeOrderId)
+    await query("update public.market_replenishment_orders set status='approved' where id=$1", [activeOrderId])
+    assert.equal((await query('select public.market_generate_replenishment_order_draft($1) id', [account]))[0].id, activeOrderId)
+    await query("update public.market_replenishment_orders set status='in_progress' where id=$1", [activeOrderId])
+    assert.equal((await query('select public.market_generate_replenishment_order_draft($1) id', [account]))[0].id, activeOrderId)
+    await query("update public.market_replenishment_orders set status='completed' where id=$1", [activeOrderId])
+    const completedOldNewBatch = crypto.randomUUID()
+    await query(`insert into public.market_replenishment_runs(id,market_account_id,reference_date,algorithm_version,status,is_effective,started_at,finished_at) values($1,$2,date '2026-09-12','v1','completed',true,timestamptz '2026-09-12 06:00:00+00',timestamptz '2026-09-12 06:01:00+00')`, [completedOldNewBatch, account])
+    await query(`insert into public.market_replenishment_candidates(run_id,market_account_id,store_id,product_id,reference_date,priority_level,rank_position,suggested_quantity) values($1,$2,$3,$4,date '2026-09-12','high',1,3)`, [completedOldNewBatch, account, storeA, productC])
+    const createdAfterCompleted = (await query('select public.market_generate_replenishment_order_draft($1) id', [account]))[0].id
+    assert.notEqual(createdAfterCompleted, orderId)
+    await query("update public.market_replenishment_orders set status='cancelled' where id=$1", [createdAfterCompleted])
+    const cancelledOldNewBatch = crypto.randomUUID()
+    await query(`insert into public.market_replenishment_runs(id,market_account_id,reference_date,algorithm_version,status,is_effective,started_at,finished_at) values($1,$2,date '2026-09-13','v1','completed',true,timestamptz '2026-09-13 06:00:00+00',timestamptz '2026-09-13 06:01:00+00')`, [cancelledOldNewBatch, account])
+    await query(`insert into public.market_replenishment_candidates(run_id,market_account_id,store_id,product_id,reference_date,priority_level,rank_position,suggested_quantity) values($1,$2,$3,$4,date '2026-09-13','high',1,3)`, [cancelledOldNewBatch, account, storeA, productC])
+    const createdAfterCancelled = (await query('select public.market_generate_replenishment_order_draft($1) id', [account]))[0].id
+    assert.notEqual(createdAfterCancelled, createdAfterCompleted)
+    assert.equal((await query("select count(*)::int n from public.market_replenishment_orders where market_account_id=$1 and status in ('draft','approved','in_progress')", [account]))[0].n, 1)
+  } finally { await db.exec('rollback') }
 })
