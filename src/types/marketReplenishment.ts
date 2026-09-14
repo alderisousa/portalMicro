@@ -157,18 +157,25 @@ export interface MarketReplenishmentOrderItem {
 }
 
 export interface MarketReplenishmentOrderDetail {
+  isStale?: boolean
   order: MarketReplenishmentOrderSummary
   items: MarketReplenishmentOrderItem[]
 }
 
 export interface ReplenishmentPurchaseLine {
+  orderId: string
+  orderStatus: MarketReplenishmentOrderStatus
+  remainingToBuy: number
+  awaitingQuantity: number
+  committedQuantity: number
+  canCorrect: boolean
   id: string
   productId: string
   productName: string
   targetQuantity: number
   purchasedQuantity: number | null
   version: number
-  stores: Array<{ storeId: string; storeName: string; targetQuantity: number }>
+  stores: Array<{ allocationId: string; storeId: string; storeName: string; targetQuantity: number; purchasedQuantity: number; receivedQuantity: number; awaitingQuantity: number; deliveredQuantity: number; remainingPhysical: number }>
   linked: boolean
   coveredQuantity: number
   receivedQuantity: number
@@ -176,8 +183,9 @@ export interface ReplenishmentPurchaseLine {
 }
 
 export interface ReplenishmentSupplyLine {
+  orderId: string
   id: string
-  operationLineId: string
+  operationLineId: string | null
   allocationId: string
   productId: string
   productName: string
@@ -191,4 +199,12 @@ export interface ReplenishmentSupplyLine {
   warehouseBalance: number
   executedQuantity: number
   suggestedQuantity: number
+}
+
+export interface ReplenishmentDelivery {
+  id: string
+  productName: string
+  storeName: string
+  sourceStoreName: string
+  quantity: number
 }

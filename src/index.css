@@ -1449,3 +1449,25 @@ li.is-open > .market-history-item { border-color: var(--green); background: var(
 .market-replenishment-product-search input { min-width: 0; }
 
 .market-replenishment-quantity-edit label { display: grid; gap: 5px; min-width: 0; }
+
+.market-replenishment-purchase-card { gap: 6px; padding: 10px 12px; }
+.market-replenishment-stale-notice { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid #d8dfd7; border-radius: 8px; background: #f7f8f5; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.market-replenishment-stale-notice strong { color: var(--ink); }
+.market-replenishment-stale-notice p { margin: 0; }
+.market-replenishment-purchase-card h3, .market-replenishment-purchase-card p { margin: 0; }
+.market-replenishment-purchase-card .market-replenishment-order-allocations { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.market-replenishment-purchase-summary { display: flex; flex-wrap: wrap; gap: 3px 14px; }
+.market-replenishment-purchase-card .market-replenishment-purchase-quantity-actions { display: flex; grid-column: 1 / -1; justify-content: flex-start; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-width: 0; }
+.market-replenishment-purchase-quantity-label { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.market-replenishment-purchase-quantity-label .market-replenishment-quantity-input { width: 104px; max-width: 100%; padding: 9px 10px; }
+.market-replenishment-purchase-quantity-actions .button { flex: 0 0 auto; width: auto; min-height: 46px; }
+.market-replenishment-purchase-card .market-replenishment-purchase-nf { display: flex; flex-wrap: wrap; justify-content: flex-start; align-items: flex-end; gap: 6px 10px; min-width: 0; }
+.market-replenishment-purchase-nf-note { flex: 0 0 100%; min-width: 0; word-break: normal; overflow-wrap: break-word; }
+.market-replenishment-purchase-nf label { display: grid; gap: 5px; flex: 1 1 260px; min-width: 0; }
+.market-replenishment-purchase-nf select { width: 100%; min-width: 0; min-height: 42px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font: inherit; }
+.market-replenishment-purchase-nf .button { max-width: 100%; white-space: normal; }
+@media (max-width: 640px) {
+  .market-replenishment-purchase-card .market-replenishment-purchase-quantity-actions,
+  .market-replenishment-purchase-card .market-replenishment-purchase-nf { flex-direction: column; align-items: stretch; }
+  .market-replenishment-purchase-nf label, .market-replenishment-purchase-nf-note { flex: none; }
+}

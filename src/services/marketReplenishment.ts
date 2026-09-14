@@ -7,9 +7,16 @@ import type {
   MarketReplenishmentTriggerReason,
   ReplenishmentPurchaseLine,
   ReplenishmentSupplyLine,
+  ReplenishmentDelivery,
 } from '../types/marketReplenishment'
 
-export async function getReplenishmentPurchasing(accountId: string, orderId: string): Promise<ReplenishmentPurchaseLine[]> {
+export async function getReplenishmentDeliveryHistory(accountId: string, storeId: string | null): Promise<ReplenishmentDelivery[]> {
+  const { data, error } = await supabase.rpc('market_get_replenishment_delivery_history', { p_market_account_id: accountId, p_store_id: storeId })
+  if (error) throw error
+  return data as ReplenishmentDelivery[]
+}
+
+export async function getReplenishmentPurchasing(accountId: string, orderId: string | null): Promise<ReplenishmentPurchaseLine[]> {
   const { data, error } = await supabase.rpc('market_get_replenishment_purchasing', { p_market_account_id: accountId, p_order_id: orderId })
   if (error) throw error
   return data as ReplenishmentPurchaseLine[]
@@ -32,7 +39,7 @@ export async function linkReplenishmentPurchaseNf(accountId: string, orderId: st
   if (error) throw error
 }
 
-export async function getReplenishmentStoreSupply(accountId: string, orderId: string, storeId: string): Promise<ReplenishmentSupplyLine[]> {
+export async function getReplenishmentStoreSupply(accountId: string, orderId: string | null, storeId: string | null): Promise<ReplenishmentSupplyLine[]> {
   const { data, error } = await supabase.rpc('market_get_replenishment_store_supply', {
     p_market_account_id: accountId, p_order_id: orderId, p_store_id: storeId,
   })
@@ -41,7 +48,7 @@ export async function getReplenishmentStoreSupply(accountId: string, orderId: st
 }
 
 export async function executeReplenishmentStoreSupply(accountId: string, orderId: string, allocationId: string,
-  operationLineId: string, sourceStoreId: string, quantity: number, requestId: string): Promise<unknown> {
+  operationLineId: string | null, sourceStoreId: string, quantity: number, requestId: string): Promise<unknown> {
   const { data, error } = await supabase.rpc('market_execute_replenishment_store_supply', {
     p_market_account_id: accountId, p_order_id: orderId, p_allocation_id: allocationId,
     p_warehouse_operation_line_id: operationLineId, p_source_store_id: sourceStoreId,

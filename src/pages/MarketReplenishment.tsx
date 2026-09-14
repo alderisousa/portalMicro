@@ -1,5 +1,5 @@
 import {
-  ArrowLeft, CheckCircle2, ChevronDown, PackagePlus, PackageSearch, RefreshCw,
+  ArrowLeft, CheckCircle2, ChevronDown, History, PackagePlus, PackageSearch, RefreshCw,
   ScanBarcode, Search, ShoppingCart, Trash2, Truck, X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -27,7 +27,7 @@ import type {
 } from '../types/marketReplenishment'
 import type { MarketStockProduct } from '../types/marketStock'
 import { ReplenishmentPurchasing } from '../components/ReplenishmentPurchasing'
-import { ReplenishmentStoreSupply } from '../components/ReplenishmentStoreSupply'
+import { ReplenishmentHistory } from '../components/ReplenishmentHistory'
 
 interface Props { accountId: string; stores: MarketStore[]; onBack: () => void }
 
@@ -157,6 +157,7 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
   const [approving, setApproving] = useState(false)
   const [orderPriorityFilter, setOrderPriorityFilter] = useState<OrderPriorityFilter>('all')
   const [selectedStoreId, setSelectedStoreId] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   const isDraftOrder = orderDetail?.order.status === 'draft'
   const visibleOrderItems = useMemo(
@@ -444,8 +445,22 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
         </button>
       </section>
       {orderError && <div className="admin-message is-error" role="alert">{orderError}</div>}
-      {orderDetail && ['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <ReplenishmentPurchasing key={`${accountId}:${orderDetail.order.id}`} accountId={accountId} orderId={orderDetail.order.id} storeId={contextStoreId} editable={orderDetail.order.status !== 'completed'} />}
-      {orderDetail && contextStoreId && ['approved', 'in_progress'].includes(orderDetail.order.status) && <ReplenishmentStoreSupply key={`${accountId}:${orderDetail.order.id}:${contextStoreId}`} accountId={accountId} orderId={orderDetail.order.id} storeId={contextStoreId} editable />}
+
+      <section className="market-replenishment-order-entry" aria-label="Histórico de Reposição">
+        <div><span className="panel-kicker">HISTÓRICO</span><p>Compras e entregas já realizadas, independente da lista atual — disponível mesmo sem lista aberta ou com a lista em rascunho.</p></div>
+        <button className="button button-small button-outline" type="button" onClick={() => setHistoryOpen((open) => !open)}>
+          <History size={16} /> {historyOpen ? 'Ocultar histórico' : 'Ver histórico'}
+        </button>
+      </section>
+      {historyOpen && <ReplenishmentHistory accountId={accountId} storeId={contextStoreId} />}
+
+      {orderDetail?.isStale === true && ['draft', 'approved', 'in_progress'].includes(orderDetail.order.status) && <aside className="market-replenishment-stale-notice" role="status">
+        <strong>{orderDetail.order.status === 'in_progress' ? 'Lista em andamento de uma análise anterior' : 'Lista ativa de uma análise anterior'}</strong>
+        <p>Esta lista foi criada com base em uma análise anterior e ainda está {orderDetail.order.status === 'in_progress' ? 'em execução' : 'ativa'}. A análise mais recente encontrou {number.format(overview.run.productsSelected)} necessidades, enquanto esta lista contém somente os itens da ordem atual.</p>
+        {orderDetail.order.status === 'in_progress' && <p>Conclua esta lista para gerar uma nova com base na análise mais recente.</p>}
+        <p>Análise mais recente: {number.format(overview.run.productsSelected)} necessidades · Lista atual: {number.format(visibleOrderItems.length)} itens</p>
+      </aside>}
+      {orderDetail && ['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <ReplenishmentPurchasing key={`${accountId}:${orderDetail.order.id}`} accountId={accountId} orderId={orderDetail.order.id} orderDetail={orderDetail} storeId={contextStoreId} editable={orderDetail.order.status !== 'completed'} onChanged={() => reloadOrder(orderDetail.order.id)} />}
       {orderDetail && !['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <section className="market-replenishment-order-panel">
         <div className="market-replenishment-order-heading">
           <div><span className="panel-kicker">{contextStoreId ? orderStores.find((store) => store.id === contextStoreId)?.name : 'LISTA CONSOLIDADA'}</span><h2>{contextOrderItems.length} itens</h2></div>

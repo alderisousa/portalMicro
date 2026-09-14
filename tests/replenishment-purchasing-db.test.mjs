@@ -14,6 +14,7 @@ const migration = readFileSync(new URL('../supabase/migrations/202609130002_repl
 await db.exec(migration)
 const supplyMigration = readFileSync(new URL('../supabase/migrations/202609130003_replenishment_atomic_store_supply.sql', import.meta.url), 'utf8')
 await db.exec(supplyMigration)
+await db.exec(readFileSync(new URL('../supabase/migrations/202609130004_fix_replenishment_active_order_reuse.sql', import.meta.url), 'utf8'))
 const read = async (id) => (await query('select market_get_replenishment_purchasing($1,$2) data',[account,id]))[0].data
 const save = (id,changes,req=request(),tenant=account) => query('select market_set_replenishment_purchased($1,$2,$3,$4)',[tenant,id,JSON.stringify(changes),req])
 const link = (id,line,item,amount,req=request()) => query('select market_link_replenishment_purchase_nf($1,$2,$3,$4,$5,$6)',[account,id,line,item,amount,req])
@@ -30,6 +31,30 @@ async function warehouseSupplyLine(id) {
 async function addWarehouseStock(product,amount=28) {
   await query("insert into market_stock_movements(market_account_id,market_store_id,product_id,movement_type,direction,quantity,reference_type,reference_id,reference_item_id) values($1,$2,$3,'PURCHASE','IN',$4,'PURCHASE',$5,$6)",[account,warehouseA,product,amount,request(),request()])
 }
+
+contractTest('active order with newer batch retains pending purchases and blocks supersede after supply', async () => {
+  const { id, lines } = await ready()
+  const supply = await warehouseSupplyLine(id)
+  await addWarehouseStock(supply.product_id)
+  await query('select market_execute_replenishment_store_supply($1,$2,$3,$4,$5,$6,$7)',
+    [account, id, supply.allocation_id, supply.operation_line_id, warehouseA, supply.target_quantity, request()])
+  const latest = request()
+  await query(`insert into market_replenishment_runs(id,market_account_id,reference_date,algorithm_version,status,is_effective,started_at,finished_at)
+    values ($1,$2,'2026-09-14','v1','completed',true,'2026-09-14T10:00:00Z','2026-09-14T10:01:00Z')`, [latest, account])
+  await query(`insert into market_replenishment_candidates(run_id,market_account_id,store_id,product_id,reference_date,priority_level,rank_position,suggested_quantity)
+    values ($1,$2,$3,$4,'2026-09-14','high',1,3)`, [latest, account, storeA, lines[0].productId])
+  const detail = (await query('select market_get_replenishment_order($1,$2) data', [account, id]))[0].data
+  assert.equal(await generate(), id)
+  assert.equal(detail.order.status, 'in_progress')
+  assert.equal(detail.latestEligibleRunId, latest)
+  assert.equal(detail.isStale, true)
+  assert.equal(detail.canSupersede, false)
+  assert.equal(detail.canReopen, false)
+  assert.ok(detail.purchase.pendingLines > 0)
+  assert.deepEqual(await read(id), lines)
+  await reject(() => query('select market_supersede_replenishment_order($1,$2,$3)', [account, id, request()]), /CANNOT_SUPERSEDE/)
+  await reject(() => query('select market_cancel_replenishment_order($1,$2,$3,$4)', [account, id, 'Nova análise', request()]), /CANNOT_CANCEL/)
+})
 
 contractTest('consolidated mark default, excess adjustment, undo and concurrency never create stock',async()=>{
   const {id,lines}=await ready(); const line=lines[0]
