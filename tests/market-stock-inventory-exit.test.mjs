@@ -67,6 +67,23 @@ test('"Finalizar inventário" continua com as mesmas 3 condições originais de 
   assert.match(finishBar, /<button className="button" disabled=\{!countedItems\.length \|\| !startedAt \|\| saveState === 'conflict'[^}]*\} onClick=\{\(\) => \{ void syncDraftItems\(\); setConfirming\(true\) \}\}>Finalizar inventário<\/button>/)
 })
 
+test('primeiro inventário usa a confirmação especial e mantém a mesma rotina de finalização', () => {
+  assert.match(src, /const isFirstInventory = draft\?\.inventoryType === 'initial' && selectedStore\?\.stock_control_started_at == null/)
+  const confirm = src.match(/\{isFirstInventory \? <><span className="panel-kicker">PRIMEIRO INVENTÁRIO<\/span>[\s\S]*?<\/div>\}/)?.[0] ?? ''
+  assert.ok(confirm, 'confirmação especial do primeiro inventário não encontrada')
+  assert.match(confirm, /Finalizar o primeiro inventário\?/)
+  assert.match(confirm, /Confirme que toda a contagem da loja foi concluída\./)
+  assert.match(confirm, /novas vendas sincronizadas começarão a dar baixa automaticamente\./)
+  assert.match(confirm, /<button className="button button-outline" disabled=\{saving\} onClick=\{\(\) => setConfirming\(false\)\}>Cancelar<\/button>/)
+  assert.match(confirm, /onClick=\{\(\) => void finalizeDraft\(\)\}/)
+})
+
+test('confirmação normal continua para ciclo ou loja já iniciada', () => {
+  assert.match(src, /\{isFirstInventory \? <><span className="panel-kicker">PRIMEIRO INVENTÁRIO<\/span>/)
+  assert.match(src, /: <><span className="panel-kicker">CONFIRMAR INVENTÁRIO<\/span>/)
+  assert.match(src, /isFirstInventory \? 'Finalizar inventário' : isCycleInventory \? 'Confirmar inventário' : 'Confirmar e iniciar estoque'/)
+})
+
 test('reabrir o rascunho depois de fechar sempre resincroniza items a partir do draft salvo (resumeDraft), sem depender de estado local antigo', () => {
   const body = src.match(/const resumeDraft = async \(\) => \{([\s\S]*?)\n {2}\}/)?.[0] ?? ''
   // 202609080004 (saneamento de motivo incoerente) insere um .map() entre a
