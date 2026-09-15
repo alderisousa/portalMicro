@@ -8,6 +8,8 @@ import type {
   ReplenishmentPurchaseLine,
   ReplenishmentSupplyLine,
   ReplenishmentDelivery,
+  ReplenishmentOrderHistorySummary,
+  ReplenishmentOrderHistoryItem,
 } from '../types/marketReplenishment'
 
 export async function getReplenishmentDeliveryHistory(accountId: string, storeId: string | null): Promise<ReplenishmentDelivery[]> {
@@ -37,6 +39,21 @@ export async function linkReplenishmentPurchaseNf(accountId: string, orderId: st
     p_purchase_item_id: itemId, p_quantity: quantity, p_request_id: requestId,
   })
   if (error) throw error
+}
+
+// Lista de ordens (sem p_order_id) ou detalhe por necessidade de uma ordem
+// (com orderId) para a tela de Historico. Ver market_get_replenishment_order_history
+// (202609150002) para a definicao de pendente/processado.
+export async function getReplenishmentOrderHistory(accountId: string, storeId: string | null): Promise<ReplenishmentOrderHistorySummary[]> {
+  const { data, error } = await supabase.rpc('market_get_replenishment_order_history', { p_market_account_id: accountId, p_order_id: null, p_store_id: storeId })
+  if (error) throw error
+  return data as ReplenishmentOrderHistorySummary[]
+}
+
+export async function getReplenishmentOrderHistoryDetail(accountId: string, orderId: string, storeId: string | null): Promise<ReplenishmentOrderHistoryItem[]> {
+  const { data, error } = await supabase.rpc('market_get_replenishment_order_history', { p_market_account_id: accountId, p_order_id: orderId, p_store_id: storeId })
+  if (error) throw error
+  return data as ReplenishmentOrderHistoryItem[]
 }
 
 export async function getReplenishmentStoreSupply(accountId: string, orderId: string | null, storeId: string | null): Promise<ReplenishmentSupplyLine[]> {
@@ -243,6 +260,27 @@ export async function cancelMarketReplenishmentOrderItemReview(
     p_order_id: orderId,
     p_order_item_id: orderItemId,
     p_cancellation_reason: cancellationReason,
+  })
+  if (error) throw error
+  return data as string
+}
+
+// Libera UMA loja dentro da ordem consolidada (202609150003): revisa/valida
+// somente as allocations ativas dessa loja e cria as operation_lines dela,
+// sem exigir que as demais lojas da mesma ordem tambem estejam prontas.
+// Idempotente por p_request_id; reinvocar para uma loja ja liberada cobre
+// allocations novas (ex.: item manual incluido depois) sem duplicar nada.
+export async function releaseMarketReplenishmentOrderStore(
+  accountId: string,
+  orderId: string,
+  storeId: string,
+  requestId?: string,
+): Promise<string> {
+  const { data, error } = await supabase.rpc('market_release_replenishment_order_store', {
+    p_market_account_id: accountId,
+    p_order_id: orderId,
+    p_store_id: storeId,
+    ...(requestId ? { p_request_id: requestId } : {}),
   })
   if (error) throw error
   return data as string

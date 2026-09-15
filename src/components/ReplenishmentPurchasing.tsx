@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { executeReplenishmentStoreSupply, getReplenishmentPurchasing, getReplenishmentStoreSupply, setReplenishmentPurchased } from '../services/marketReplenishment'
 import type { MarketReplenishmentOrderDetail, ReplenishmentPurchaseLine, ReplenishmentSupplyLine } from '../types/marketReplenishment'
 import { purchaseWorkQueues } from '../utils/replenishmentPurchaseDisplay'
@@ -6,6 +6,9 @@ import { purchaseWorkQueues } from '../utils/replenishmentPurchaseDisplay'
 interface Props { accountId: string; orderId: string; storeId: string; editable: boolean; orderDetail: MarketReplenishmentOrderDetail; onChanged?: () => Promise<void> }
 type View = 'buy' | 'waiting' | 'supply'
 const format = (value: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 }).format(value)
+// Sentinela para "Sem sugestão" no filtro de fornecedor: nunca colide com um
+// nome real de fornecedor, que é sempre uma string não vazia (ver filtro abaixo).
+const NO_SUPPLIER_FILTER = '__no_supplier__'
 function friendlyError(error: unknown) {
   const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : ''
   if (message.includes('VERSION_CONFLICT')) return 'A compra foi alterada em outro dispositivo. Atualize antes de salvar.'
@@ -28,6 +31,14 @@ export function ReplenishmentPurchasing({ accountId, storeId, orderDetail, onCha
   const inFlight = useRef(false)
   const generation = useRef(0)
   const request = useRef<{ key: string; id: string } | null>(null)
+  // Só a PRIMEIRA carga (montagem) mostra a tela cheia de "Carregando
+  // reposição...". orderDetail muda de referência a cada liberação de loja
+  // (o pai atualiza status/allocations) e isso já dispara este reload via
+  // o efeito abaixo — sem este controle, toda liberação reconstruía a área
+  // inteira de Comprar/Aguardando entrada/Abastecer. Recargas seguintes
+  // (liberação, troca de loja, botão "Atualizar") mantêm o conteúdo atual
+  // visível enquanto buscam os dados novos.
+  const loadedOnce = useRef(false)
   const reload = useCallback(async () => {
     const ticket = ++generation.current
     setLoading(true)
@@ -37,13 +48,37 @@ export function ReplenishmentPurchasing({ accountId, storeId, orderDetail, onCha
         getReplenishmentStoreSupply(accountId, null, storeId || null),
       ])
       if (ticket === generation.current) { setLines(purchases); setSupply(available); setInputs({}) }
-    } finally { if (ticket === generation.current) setLoading(false) }
+    } finally { if (ticket === generation.current) { setLoading(false); loadedOnce.current = true } }
   }, [accountId, storeId])
   useEffect(() => {
     void reload().catch(error => setMessage(friendlyError(error)))
     return () => { generation.current++ }
   }, [reload, orderDetail])
   const queues = purchaseWorkQueues(lines, storeId)
+
+  // Fornecedor é somente sugestão/referência visual: reusa lastSupplier já
+  // presente em orderDetail.items (market_get_replenishment_order), sem nova
+  // RPC e sem vincular produto a fornecedor. Nunca grava nada, só filtra a
+  // visualização da aba Comprar.
+  const [supplierFilter, setSupplierFilter] = useState('')
+  const supplierByProduct = useMemo(() => {
+    const map = new Map<string, string | null>()
+    for (const item of orderDetail.items) map.set(item.productId, item.lastSupplier?.supplierName?.trim() || null)
+    return map
+  }, [orderDetail])
+  const supplierOptions = useMemo(() => {
+    const names = new Set<string>()
+    for (const { line } of queues.buy) {
+      const name = supplierByProduct.get(line.productId)
+      if (name) names.add(name)
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b, 'pt-BR'))
+  }, [queues.buy, supplierByProduct])
+  const filteredBuyQueue = queues.buy.filter(({ line }) => {
+    if (!supplierFilter) return true
+    const name = supplierByProduct.get(line.productId)
+    return supplierFilter === NO_SUPPLIER_FILTER ? !name : name === supplierFilter
+  })
 
   async function mutate(key: string, action: (requestId: string) => Promise<void>) {
     if (inFlight.current) return
@@ -87,10 +122,21 @@ export function ReplenishmentPurchasing({ accountId, storeId, orderDetail, onCha
       <button className="button button-small button-outline" disabled={busy || loading} onClick={() => void reload().catch(error => setMessage(friendlyError(error)))}>Atualizar</button>
     </div>
     {message && <p role="status">{message}</p>}
-    {loading ? <p role="status">Carregando reposição...</p> : <>
+    {loading && !loadedOnce.current ? <p role="status">Carregando reposição...</p> : <>
       {view === 'buy' && <>
+        {!!queues.buy.length && <div className="market-replenishment-purchase-filter-bar" aria-label="Filtrar por fornecedor">
+          <label>
+            <span>Fornecedor</span>
+            <select className="market-replenishment-context-select" value={supplierFilter} onChange={event => setSupplierFilter(event.target.value)}>
+              <option value="">Todos os fornecedores</option>
+              {supplierOptions.map(name => <option key={name} value={name}>{name}</option>)}
+              <option value={NO_SUPPLIER_FILTER}>Sem sugestão</option>
+            </select>
+          </label>
+        </div>}
         {!queues.buy.length && <p>Nenhuma quantidade pendente de compra.</p>}
-        {queues.buy.map(({ line, quantity }) => <article key={line.id} className="market-replenishment-order-item market-replenishment-purchase-card">
+        {!!queues.buy.length && !filteredBuyQueue.length && <p>Nenhum produto pendente para este fornecedor.</p>}
+        {filteredBuyQueue.map(({ line, quantity }) => <article key={line.id} className="market-replenishment-order-item market-replenishment-purchase-card">
           <h3>{line.productName}</h3><p>Comprar: {format(quantity)} · Já comprado: {format(line.purchasedQuantity ?? 0)}</p>
           <p>{line.stores.filter(s => !storeId || s.storeId === storeId).map(s => s.storeName).join(' · ')}</p>
           <p>Informe o total adquirido para o produto nesta lista, incluindo compras anteriores.</p>
@@ -107,7 +153,7 @@ export function ReplenishmentPurchasing({ accountId, storeId, orderDetail, onCha
         </article>)}
       </>}
       {view === 'supply' && <>
-        <p>Atenda primeiro a necessidade mais antiga de cada produto. O saldo é revalidado na confirmação.</p>
+        <p>O saldo do Galpão é revalidado no momento da confirmação.</p>
         {!supply.length && <p>Nenhuma necessidade integralmente disponível para abastecimento.</p>}
         {supply.map(line => <article key={line.id} className="market-replenishment-order-item market-replenishment-purchase-card">
           <h3>{line.productName}</h3><p>{line.storeName} · Abastecer: {format(line.remainingQuantity)}</p>

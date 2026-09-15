@@ -130,6 +130,10 @@ export interface MarketReplenishmentOrderAllocation {
   purchaseNeededQuantity: number | null
   priorityLevel: MarketReplenishmentPriorityLevel | null
   rankPosition: number | null
+  // Preenchido quando a loja desta allocation ja foi liberada
+  // (market_replenishment_order_store_releases, na approval_revision
+  // atual). Allocation liberada fica congelada: nao pode mais ser revisada.
+  releasedAt: string | null
 }
 
 export interface MarketReplenishmentOrderItem {
@@ -207,4 +211,40 @@ export interface ReplenishmentDelivery {
   storeName: string
   sourceStoreName: string
   quantity: number
+}
+
+export type ReplenishmentOrderHistorySituation = 'partial' | 'completed'
+
+// Resumo de uma ordem para a tela de Historico (market_get_replenishment_order_history,
+// sem p_order_id). totalItems/processedItems/pendingItems contam necessidades
+// (produto x loja) com necessidade real (target>0), nunca produtos soltos —
+// ver market_replenishment_physical_needs_internal. situation deriva da
+// entrega fisica real, não do status comercial da ordem (uma ordem pode virar
+// 'completed' comercialmente com entrega Galpão->Loja ainda pendente).
+export interface ReplenishmentOrderHistorySummary {
+  id: string
+  status: MarketReplenishmentOrderStatus
+  createdAt: string
+  approvedAt: string | null
+  completedAt: string | null
+  totalItems: number
+  processedItems: number
+  pendingItems: number
+  situation: ReplenishmentOrderHistorySituation
+}
+
+// Detalhe de uma ordem para a tela de Historico (market_get_replenishment_order_history,
+// com p_order_id): uma linha por necessidade (produto x loja). status
+// 'processed' exige entrega Galpão->Loja efetiva (deliveredQuantity>=targetQuantity),
+// nunca apenas "comprado".
+export interface ReplenishmentOrderHistoryItem {
+  allocationId: string
+  productId: string
+  productName: string
+  storeId: string
+  storeName: string
+  targetQuantity: number
+  deliveredQuantity: number
+  remainingQuantity: number
+  status: 'pending' | 'processed'
 }

@@ -1,6 +1,6 @@
 import {
-  ArrowLeft, CheckCircle2, ChevronDown, History, PackagePlus, PackageSearch, RefreshCw,
-  ScanBarcode, Search, ShoppingCart, Trash2, Truck, X,
+  ArrowLeft, CheckCircle2, ChevronDown, History, Lock, PackagePlus, PackageSearch, RefreshCw,
+  ScanBarcode, Search, ShoppingCart, Trash2, Truck, Unlock, X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -10,6 +10,7 @@ import {
   generateMarketReplenishmentOrderDraft,
   getMarketReplenishmentOrder,
   getMarketReplenishmentOverview,
+  releaseMarketReplenishmentOrderStore,
   updateMarketReplenishmentAllocationReview,
 } from '../services/marketReplenishment'
 import { listActiveProducts } from '../services/marketStock'
@@ -72,10 +73,42 @@ const sumKnown = (values: Array<number | null>): number | null => values.length 
 const hasManualReviewPending = (item: MarketReplenishmentOrderItem) => activeAllocations(item).some((allocation) => allocationNeed(allocation) === null)
 const formatOrderTotalNeed = (item: MarketReplenishmentOrderItem) => formatAllocationQuantity(sumKnown(activeAllocations(item).map(allocationNeed)))
 const formatOrderEffective = (item: MarketReplenishmentOrderItem) => formatAllocationQuantity(sumKnown(activeAllocations(item).map((allocation) => allocation.purchaseNeededQuantity)))
+// Do Galpão tem 0 como default operacional quando ainda não há decisão
+// persistida: o saldo físico do Galpão é só informação para o operador,
+// nunca convertido automaticamente em quantidade "Do Galpão" — o padrão é
+// sempre 0, independente de quanto exista disponível. Comprar continua sem
+// default: vazio/null é "a definir" e segue exigindo decisão explícita.
 const allocationInputValues = (allocation: MarketReplenishmentOrderAllocation): AllocationInputs => ({
-  warehouse: allocation.warehouseAllocatedQuantity === null ? '' : String(allocation.warehouseAllocatedQuantity),
+  warehouse: allocation.warehouseAllocatedQuantity === null ? '0' : String(allocation.warehouseAllocatedQuantity),
   purchase: allocation.purchaseNeededQuantity === null ? '' : String(allocation.purchaseNeededQuantity),
 })
+const warehouseInputQuantity = (value: string) => value.trim() === '' ? 0 : operationalQuantity(value)
+
+// Atualizacao local e discreta apos salvar Do Galpao/Comprar: evita
+// recarregar a lista inteira do servidor a cada quantidade (o que causava a
+// tela "piscar" e perder posicao/scroll/foco). Necessidade total/Compra
+// efetiva por item ja sao recalculadas no cliente a partir das allocations
+// (formatOrderTotalNeed/formatOrderEffective), entao nenhum campo do item
+// precisa ser resincronizado com o servidor so por causa desta edicao.
+function withUpdatedAllocation(
+  orderDetail: MarketReplenishmentOrderDetail,
+  allocationId: string,
+  warehouse: number,
+  purchase: number,
+): MarketReplenishmentOrderDetail {
+  return {
+    ...orderDetail,
+    items: orderDetail.items.map((item) => {
+      if (!item.allocations.some((allocation) => allocation.id === allocationId)) return item
+      return {
+        ...item,
+        allocations: item.allocations.map((allocation) => allocation.id === allocationId
+          ? { ...allocation, warehouseAllocatedQuantity: warehouse, purchaseNeededQuantity: purchase, adjustedQuantity: warehouse + purchase }
+          : allocation),
+      }
+    }),
+  }
+}
 const operationalQuantity = (value: string) => {
   const parsed = parseQuantity(value)
   return parsed === null ? null : Math.ceil(parsed)
@@ -96,6 +129,11 @@ function parseQuantity(value: string): number | null {
 function friendlyReviewError(cause: unknown): string {
   const message = cause && typeof cause === 'object' && 'message' in cause ? String(cause.message) : String(cause)
   if (message.includes('REPLENISHMENT_ORDER_ALLOCATION_REQUIRED')) return 'Existe item sem loja de destino. Na Consolidada, localize e remova o item legado antes de aprovar.'
+  if (message.includes('REPLENISHMENT_RELEASE_REVIEW_PENDING')) return 'Há quantidade desconhecida ou pendente nesta loja. Revise Do Galpão e Comprar no item destacado.'
+  if (message.includes('REPLENISHMENT_RELEASE_WAREHOUSE_EXCEEDED')) return 'Galpão acima do saldo disponível considerando as lojas já liberadas. Ajuste a quantidade.'
+  if (message.includes('REPLENISHMENT_ORDER_STORE_NO_ALLOCATIONS')) return 'Esta loja não tem necessidades ativas nesta lista.'
+  if (message.includes('REPLENISHMENT_ORDER_STORE_RELEASED')) return 'Esta loja já foi liberada; o plano dela não pode mais ser alterado.'
+  if (message.includes('REPLENISHMENT_ORDER_ITEM_PARTIALLY_RELEASED')) return 'Este produto já tem loja liberada; não é mais possível retirar o item inteiro.'
   if (message.includes('REPLENISHMENT_ORDER_REVIEW_PENDING')) return 'Há quantidade desconhecida ou pendente. Revise Do Galpão e Comprar em cada loja.'
   if (message.includes('REPLENISHMENT_ORDER_ALLOCATION_REVIEW_REQUIRED') || message.includes('source_split_check') || message.includes('REPLENISHMENT_ORDER_TARGET_MISMATCH')) return 'A decomposição da necessidade está inconsistente. Revise Do Galpão e Comprar nas lojas.'
   if (message.includes('REPLENISHMENT_ORDER_NO_OPERATION')) return 'A lista não tem quantidade positiva para repor ou comprar. Revise as quantidades antes de aprovar.'
@@ -158,8 +196,12 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
   const [orderPriorityFilter, setOrderPriorityFilter] = useState<OrderPriorityFilter>('all')
   const [selectedStoreId, setSelectedStoreId] = useState('')
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [releaseConfirm, setReleaseConfirm] = useState(false)
+  const [releasing, setReleasing] = useState(false)
+  const [highlightAllocationId, setHighlightAllocationId] = useState('')
 
   const isDraftOrder = orderDetail?.order.status === 'draft'
+  const orderTerminal = orderDetail?.order.status === 'completed' || orderDetail?.order.status === 'cancelled'
   const visibleOrderItems = useMemo(
     () => (orderDetail?.items ?? []).filter((item) => item.status !== 'cancelled'),
     [orderDetail],
@@ -173,7 +215,25 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
     }
     return [...names].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
   }, [visibleOrderItems])
+  // Liberacao progressiva por loja (202609150003): releasedAt por allocation
+  // diz quais lojas ja estao operacionalizadas (congeladas) dentro da MESMA
+  // ordem consolidada. Nunca deriva isso de allocation.status.
+  const releasedStoreIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const item of visibleOrderItems) {
+      for (const allocation of item.allocations) {
+        if (allocation.releasedAt) ids.add(allocation.storeId)
+      }
+    }
+    return ids
+  }, [visibleOrderItems])
+  const hasPendingStores = orderStores.some((store) => !releasedStoreIds.has(store.id))
   const contextStoreId = orderStores.some((store) => store.id === selectedStoreId) ? selectedStoreId : ''
+  const contextStoreReleased = contextStoreId ? releasedStoreIds.has(contextStoreId) : false
+  // O que pode ser revisado/editado no contexto atual: rascunho de verdade,
+  // ou (com liberacao progressiva) a loja/Consolidada ainda tiver pendencia.
+  const contextEditable = isDraftOrder || (contextStoreId ? !contextStoreReleased : hasPendingStores)
+  const showReviewPanel = !!orderDetail && !orderTerminal && (isDraftOrder || hasPendingStores || !!contextStoreId)
   const contextOrderItems = useMemo(
     () => contextStoreId ? visibleOrderItems.filter((item) => item.allocations.some((allocation) => allocation.storeId === contextStoreId && allocation.status !== 'cancelled' && allocation.priorityLevel !== 'low')) : visibleOrderItems,
     [contextStoreId, visibleOrderItems],
@@ -236,6 +296,27 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
     }
   }
 
+  // Fluxo rápido no celular: ao concluir "Comprar" (Tab/Enter), o foco
+  // segue direto para o campo "Do Galpão" do próximo item VISÍVEL que
+  // ainda aceita edição (mesmo filtro/loja de contexto), sem depender da
+  // ordem natural do DOM (que passaria por botões como "Retirar" entre um
+  // item e outro). Preserva scroll/filtro atuais; não navega para fora da
+  // lista filtrada.
+  function focusNextAllocationField(currentAllocationId: string): void {
+    const currentIndex = filteredOrderItems.findIndex((item) => activeAllocations(item).some((allocation) => allocation.id === currentAllocationId))
+    for (let i = currentIndex + 1; i < filteredOrderItems.length; i++) {
+      const nextAllocation = contextStoreId
+        ? activeAllocations(filteredOrderItems[i]).find((allocation) => allocation.storeId === contextStoreId)
+        : undefined
+      if (nextAllocation && !nextAllocation.releasedAt) {
+        const target = document.getElementById(`replenishment-quantity-warehouse-${nextAllocation.id}`)
+        if (target) { target.focus(); return }
+      }
+    }
+    // Último item visível: apenas conclui a edição atual (salva via blur).
+    ;(document.activeElement as HTMLElement | null)?.blur()
+  }
+
   function editAllocation(allocation: MarketReplenishmentOrderAllocation, field: keyof AllocationInputs, value: string): void {
     const next = { ...(quantityInputsRef.current[allocation.id] ?? allocationInputValues(allocation)), [field]: value }
     quantityInputsRef.current = { ...quantityInputsRef.current, [allocation.id]: next }
@@ -246,10 +327,15 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
     const pending = pendingSaves.current.get(allocationId)
     if (pending) return pending
     const inputs = quantityInputsRef.current[allocationId]
-    if (!inputs || !orderDetail || !isDraftOrder) return Promise.resolve(true)
-    const persistedAllocation = orderDetail.items
+    const persistedAllocation = orderDetail?.items
       .flatMap((item) => item.allocations)
       .find((allocation) => allocation.id === allocationId)
+    // Editavel em rascunho OU (liberacao progressiva) enquanto a loja da
+    // allocation ainda nao foi liberada. Uma loja ja liberada esta
+    // congelada — nunca silenciosamente descartada, aqui o input nem
+    // deveria existir (inputs some quando a UI marca a allocation como
+    // nao editavel), mas o guard fica tambem aqui por segurança.
+    if (!inputs || !orderDetail || orderTerminal || (persistedAllocation && !isDraftOrder && persistedAllocation.releasedAt)) return Promise.resolve(true)
     if (persistedAllocation) {
       const persistedInputs = allocationInputValues(persistedAllocation)
       if (normalizedQuantityInput(inputs.warehouse) === normalizedQuantityInput(persistedInputs.warehouse)
@@ -261,20 +347,21 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
         return Promise.resolve(true)
       }
     }
-    const warehouse = operationalQuantity(inputs.warehouse)
+    const warehouse = warehouseInputQuantity(inputs.warehouse)
     const purchase = operationalQuantity(inputs.purchase)
     if (warehouse === null || purchase === null) {
-      setAllocationErrors((current) => ({ ...current, [allocationId]: 'Informe Do Galpão e Comprar. Use zero explicitamente quando não houver quantidade; campo vazio continua desconhecido.' }))
-      return Promise.resolve(false)
+      // Comprar ainda não informado: preenchimento em andamento, não é
+      // erro. Não há nada válido para persistir ainda, e não mostramos
+      // mensagem preventiva — a validação real acontece só ao liberar a
+      // loja, no backend, que aponta exatamente a allocation pendente.
+      return Promise.resolve(true)
     }
     const orderId = orderDetail.order.id
     setSavingAllocations((current) => ({ ...current, [allocationId]: true }))
     const task = saveQueue.current.then(async () => {
       try {
         await updateMarketReplenishmentAllocationReview(accountId, orderId, allocationId, warehouse, purchase)
-        const result = await getMarketReplenishmentOrder(accountId, orderId)
-        if (!result) throw new Error('Lista não encontrada ao atualizar a revisão.')
-        setOrderDetail(result)
+        setOrderDetail((current) => current ? withUpdatedAllocation(current, allocationId, warehouse, purchase) : current)
         if (quantityInputsRef.current[allocationId] === inputs) {
           const next = { ...quantityInputsRef.current }
           delete next[allocationId]
@@ -302,7 +389,12 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
       // Preserve and save an edit made while its earlier request was pending.
       if (quantityInputsRef.current[id] && !await saveAllocation(id)) return false
     }
-    return Object.keys(quantityInputsRef.current).length === 0
+    // Uma edição local com Comprar ainda vazio (preenchimento em
+    // andamento) não é falha de flush — saveAllocation já retorna true
+    // sem persistir nada para ela. Só um erro real (retorno false acima)
+    // interrompe o fluxo; quem chama (ex.: liberar loja) segue para o
+    // backend, cuja própria validação aponta a allocation pendente.
+    return true
   }
 
   async function leaveReplenishment(): Promise<void> {
@@ -413,16 +505,96 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
     }
   }
 
+  function releaseErrorDetail(cause: unknown): {
+    allocationId?: string; storeId?: string; productId?: string; requestedWarehouse?: number; availableWarehouse?: number
+  } | null {
+    if (!cause || typeof cause !== 'object' || !('details' in cause)) return null
+    const details = (cause as { details?: unknown }).details
+    if (typeof details !== 'string' || !details) return null
+    try {
+      return JSON.parse(details) as { allocationId?: string; storeId?: string; productId?: string; requestedWarehouse?: number; availableWarehouse?: number }
+    } catch { return null }
+  }
+
+  // REPLENISHMENT_RELEASE_REVIEW_PENDING já devolve o allocationId direto.
+  // REPLENISHMENT_RELEASE_WAREHOUSE_EXCEEDED devolve productId/storeId (o
+  // saldo de Galpão é checado por produto, consolidando as lojas já
+  // liberadas — não existe uma única allocation "culpada"); resolvemos a
+  // allocation do produto na loja sendo liberada para reusar a mesma
+  // navegação (scroll/destaque/foco) já existente para o outro erro.
+  function resolveReleaseErrorAllocationId(
+    detail: { allocationId?: string; storeId?: string; productId?: string },
+  ): string | null {
+    if (detail.allocationId) return detail.allocationId
+    if (!detail.productId || !orderDetail) return null
+    const storeId = detail.storeId ?? contextStoreId
+    const item = orderDetail.items.find((entry) => entry.productId === detail.productId)
+    const allocation = item?.allocations.find((entry) => entry.storeId === storeId)
+    return allocation?.id ?? null
+  }
+
+  async function releaseStore(): Promise<void> {
+    if (!orderDetail || !contextStoreId) return
+    if (!await flushAllocationReviews()) return
+    setReleasing(true)
+    setReviewMessage('')
+    const storeName = orderStores.find((store) => store.id === contextStoreId)?.name ?? 'Loja'
+    try {
+      await releaseMarketReplenishmentOrderStore(accountId, orderDetail.order.id, contextStoreId)
+      await reloadOrder(orderDetail.order.id)
+      setReleaseConfirm(false)
+      setReviewMessage(`${storeName} liberada.`)
+    } catch (cause) {
+      console.error('Falha ao liberar loja:', cause)
+      // Backend continua autoridade: so navegamos com o que ele devolve
+      // (allocationId direto, ou productId+storeId no caso do saldo de
+      // Galpão), sem repetir a regra de validação aqui.
+      const detail = releaseErrorDetail(cause)
+      const allocationId = detail ? resolveReleaseErrorAllocationId(detail) : null
+      if (allocationId) {
+        // Mensagem de validação de item vai só no card (nunca solta no
+        // cabeçalho): o card já é levado até a tela do operador.
+        const cardMessage = detail?.requestedWarehouse !== undefined && detail?.availableWarehouse !== undefined
+          ? `Galpão insuficiente: solicitado ${number.format(detail.requestedWarehouse)}, disponível ${number.format(detail.availableWarehouse)}.`
+          : friendlyReviewError(cause)
+        setAllocationErrors((current) => ({ ...current, [allocationId]: cardMessage }))
+        setOrderPriorityFilter('all')
+        setHighlightAllocationId(allocationId)
+        window.setTimeout(() => {
+          document.getElementById(`replenishment-allocation-${allocationId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          window.setTimeout(() => document.getElementById(`replenishment-quantity-warehouse-${allocationId}`)?.focus(), 320)
+        }, 0)
+        window.setTimeout(() => setHighlightAllocationId(''), 2600)
+      } else {
+        // Sem item para navegar (erro genérico: permissão, rede, etc.):
+        // só aqui faz sentido uma mensagem curta no cabeçalho.
+        setReviewMessage(friendlyReviewError(cause))
+      }
+    } finally {
+      setReleasing(false)
+    }
+  }
+
   if (loading) return <div className="admin-message" role="status"><RefreshCw size={20} /> Carregando Abastecimento...</div>
   if (error) return <div className="admin-message is-error" role="alert"><p>{error}</p><button className="button button-small button-outline" onClick={() => void leaveReplenishment()}>Voltar</button></div>
 
   return <div className="market-replenishment-dashboard">
     <button className="button button-small button-outline" onClick={onBack}><ArrowLeft size={16} /> Gestão do Mercado</button>
-    <header className="market-dashboard-header"><p className="eyebrow"><Truck size={16} /> GiroMicro Market</p><h1>Abastecimento</h1><p>Reposição Inteligente</p></header>
+    <header className="market-dashboard-header">
+      <p className="eyebrow"><Truck size={16} /> GiroMicro Market</p>
+      <h1>Abastecimento</h1>
+      {historyOpen
+        ? <button className="button button-small button-outline" type="button" onClick={() => setHistoryOpen(false)}><ArrowLeft size={16} /> Voltar ao abastecimento</button>
+        : <p>Reposição Inteligente</p>}
+    </header>
 
-    {!overview?.run ? <div className="market-dashboard-blocked"><PackageSearch /><h2>Nenhuma análise concluída ainda</h2><p>Quando o batch de Reposição Inteligente concluir uma execução para este Market, o resultado aparecerá aqui.</p></div> : <>
+    {!overview?.run ? <div className="market-dashboard-blocked"><PackageSearch /><h2>Nenhuma análise concluída ainda</h2><p>Quando o batch de Reposição Inteligente concluir uma execução para este Market, o resultado aparecerá aqui.</p></div>
+      : historyOpen ? <ReplenishmentHistory accountId={accountId} /> : <>
       <section className="market-dashboard-section">
-        <span className="panel-kicker">ÚLTIMA ANÁLISE</span>
+        <div className="panel-heading">
+          <span className="panel-kicker">ÚLTIMA ANÁLISE</span>
+          <button className="button button-small button-outline" type="button" onClick={() => setHistoryOpen(true)}><History size={16} /> Histórico</button>
+        </div>
         <div className="market-store-performance"><article><dl>
           <div><dt>Quando</dt><dd>{overview.run.finishedAt ? dateTimeFormat.format(new Date(overview.run.finishedAt)) : '-'}</dd></div>
           <div><dt>Lojas processadas</dt><dd>{overview.run.storesProcessed}</dd></div>
@@ -435,7 +607,7 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
       </section>
 
       <section className="market-replenishment-order-entry" aria-label="Lista de Compras">
-        <div><span className="panel-kicker">LISTA DE COMPRAS</span><select className="market-replenishment-context-select" aria-label="Contexto da Lista de Compras" value={contextStoreId} onChange={(event) => { setSelectedStoreId(event.target.value); setManualOpen(false); setManualSelected(null); setManualQuery(''); setManualQuantity(''); setManualError(''); setConfirmCancelItem(null); setApproveConfirm(false) }}>
+        <div><span className="panel-kicker">LISTA DE COMPRAS</span><select className="market-replenishment-context-select" aria-label="Contexto da Lista de Compras" value={contextStoreId} onChange={(event) => { setSelectedStoreId(event.target.value); setManualOpen(false); setManualSelected(null); setManualQuery(''); setManualQuantity(''); setManualError(''); setConfirmCancelItem(null); setApproveConfirm(false); setReleaseConfirm(false); setHighlightAllocationId('') }}>
           <option value="">Consolidada</option>
           {orderStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
         </select><p>Gera ou reutiliza o rascunho do último batch efetivo e mantém a necessidade original como referência.</p></div>
@@ -446,14 +618,6 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
       </section>
       {orderError && <div className="admin-message is-error" role="alert">{orderError}</div>}
 
-      <section className="market-replenishment-order-entry" aria-label="Histórico de Reposição">
-        <div><span className="panel-kicker">HISTÓRICO</span><p>Compras e entregas já realizadas, independente da lista atual — disponível mesmo sem lista aberta ou com a lista em rascunho.</p></div>
-        <button className="button button-small button-outline" type="button" onClick={() => setHistoryOpen((open) => !open)}>
-          <History size={16} /> {historyOpen ? 'Ocultar histórico' : 'Ver histórico'}
-        </button>
-      </section>
-      {historyOpen && <ReplenishmentHistory accountId={accountId} storeId={contextStoreId} />}
-
       {orderDetail?.isStale === true && ['draft', 'approved', 'in_progress'].includes(orderDetail.order.status) && <aside className="market-replenishment-stale-notice" role="status">
         <strong>{orderDetail.order.status === 'in_progress' ? 'Lista em andamento de uma análise anterior' : 'Lista ativa de uma análise anterior'}</strong>
         <p>Esta lista foi criada com base em uma análise anterior e ainda está {orderDetail.order.status === 'in_progress' ? 'em execução' : 'ativa'}. A análise mais recente encontrou {number.format(overview.run.productsSelected)} necessidades, enquanto esta lista contém somente os itens da ordem atual.</p>
@@ -461,27 +625,37 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
         <p>Análise mais recente: {number.format(overview.run.productsSelected)} necessidades · Lista atual: {number.format(visibleOrderItems.length)} itens</p>
       </aside>}
       {orderDetail && ['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <ReplenishmentPurchasing key={`${accountId}:${orderDetail.order.id}`} accountId={accountId} orderId={orderDetail.order.id} orderDetail={orderDetail} storeId={contextStoreId} editable={orderDetail.order.status !== 'completed'} onChanged={() => reloadOrder(orderDetail.order.id)} />}
-      {orderDetail && !['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <section className="market-replenishment-order-panel">
+      {orderDetail && showReviewPanel && <section className="market-replenishment-order-panel">
         <div className="market-replenishment-order-heading">
-          <div><span className="panel-kicker">{contextStoreId ? orderStores.find((store) => store.id === contextStoreId)?.name : 'LISTA CONSOLIDADA'}</span><h2>{contextOrderItems.length} itens</h2></div>
+          <div>
+            <span className="panel-kicker">{contextStoreId ? orderStores.find((store) => store.id === contextStoreId)?.name : 'LISTA CONSOLIDADA'}</span>
+            <h2>{contextOrderItems.length} itens</h2>
+          </div>
           <div className="market-replenishment-order-actions">
-            <span className={`market-row-status ${orderDetail.order.status}`}>{orderStatusLabels[orderDetail.order.status]}</span>
+            {contextStoreId && <span className={`market-row-status ${contextStoreReleased ? 'completed' : 'draft'}`}>
+              {contextStoreReleased ? <><Lock size={13} /> Liberada</> : <><Unlock size={13} /> Pendente de liberação</>}
+            </span>}
+            {!contextStoreId && <span className={`market-row-status ${orderDetail.order.status}`}>{orderStatusLabels[orderDetail.order.status]}</span>}
             {isDraftOrder && !contextStoreId && !approveConfirm && <button className="button button-small" type="button" onClick={() => setApproveConfirm(true)}><CheckCircle2 size={16} /> Aprovar lista</button>}
+            {contextStoreId && !contextStoreReleased && !releaseConfirm && <button className="button button-small" type="button" onClick={() => setReleaseConfirm(true)}><CheckCircle2 size={16} /> Liberar {orderStores.find((store) => store.id === contextStoreId)?.name}</button>}
+            {/* Confirmação compacta e inline: fica na mesma linha de ações
+                do cabeçalho (sem virar um bloco novo abaixo dele) e some
+                assim que confirmada/cancelada — nunca ocupa a tela. */}
+            {contextStoreId && !contextStoreReleased && releaseConfirm && <span className="market-replenishment-inline-confirm">
+              <span>Confirmar liberação?</span>
+              <button className="button button-small" type="button" onClick={releaseStore} disabled={releasing}>{releasing ? <RefreshCw size={14} /> : <CheckCircle2 size={14} />} Sim</button>
+              <button className="button button-small button-outline" type="button" onClick={() => setReleaseConfirm(false)} disabled={releasing}>Não</button>
+            </span>}
           </div>
         </div>
-        {!isDraftOrder && <p className="market-replenishment-readonly-note">Lista somente leitura. As ações de revisão ficam disponíveis apenas enquanto o status é rascunho.</p>}
+        {!contextEditable && <p className="market-replenishment-readonly-note">{contextStoreId ? 'Loja já liberada: os valores desta loja estão congelados e a compra segue pela aba Comprar.' : 'Todas as lojas desta lista já foram liberadas: a revisão consolidada acabou, acompanhe pela aba Comprar.'}</p>}
         {approveConfirm && isDraftOrder && !contextStoreId && <div className="market-replenishment-confirm">
           <span>Aprovar esta lista e encerrar a revisão?</span>
           <button className="button button-small" type="button" onClick={approveOrder} disabled={approving}>{approving ? <RefreshCw size={14} /> : <CheckCircle2 size={14} />} Confirmar</button>
           <button className="button button-small button-outline" type="button" onClick={() => setApproveConfirm(false)} disabled={approving}>Cancelar</button>
         </div>}
-        {contextStoreId && isDraftOrder && <p className="market-replenishment-order-note">A necessidade da loja é a soma de Do Galpão e Comprar. A remoção do produto e a aprovação continuam valendo para toda a lista.</p>}
         {reviewMessage && <p role="status" className="market-replenishment-order-note">{reviewMessage}</p>}
-        {Object.keys(allocationErrors).length > 0 && <div role="alert" className="admin-message is-error">{Object.entries(allocationErrors).map(([id, message]) => {
-          const allocation = orderDetail.items.flatMap((item) => item.allocations).find((entry) => entry.id === id)
-          return <p key={id}>{allocation?.storeName ?? 'Loja'}: {message}</p>
-        })}</div>}
-        {isDraftOrder && contextStoreId && <div className="market-replenishment-manual">
+        {contextEditable && contextStoreId && <div className="market-replenishment-manual">
           <button className="button button-small button-outline" type="button" onClick={() => setManualOpen((open) => !open)}>
             {manualOpen ? <X size={16} /> : <PackagePlus size={16} />} {manualOpen ? 'Fechar inclusão' : 'Adicionar produto'}
           </button>
@@ -524,10 +698,12 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
             const storeAllocation = contextStoreId ? allocations[0] : undefined
             const priority = storeAllocation ? storeAllocation.priorityLevel : (itemPriorityFilter(item) === 'all' ? 'low' : itemPriorityFilter(item))
             const inputs = storeAllocation ? quantityInputs[storeAllocation.id] ?? allocationInputValues(storeAllocation) : null
-            const warehouse = inputs ? operationalQuantity(inputs.warehouse) : null
+            const warehouse = inputs ? warehouseInputQuantity(inputs.warehouse) : null
             const purchase = inputs ? operationalQuantity(inputs.purchase) : null
             const displayedNeed = storeAllocation && quantityInputs[storeAllocation.id] ? (warehouse === null || purchase === null ? null : warehouse + purchase) : storeAllocation ? allocationNeed(storeAllocation) : null
-            return <article key={item.id} className={`market-replenishment-order-item${item.status === 'cancelled' ? ' is-cancelled' : ''}`}>
+            const itemHasReleasedAllocation = item.allocations.some((allocation) => allocation.releasedAt)
+            const canCancelItem = !orderTerminal && item.status !== 'cancelled' && !itemHasReleasedAllocation
+            return <article key={item.id} id={storeAllocation ? `replenishment-allocation-${storeAllocation.id}` : `replenishment-item-${item.id}`} className={`market-replenishment-order-item${item.status === 'cancelled' ? ' is-cancelled' : ''}${storeAllocation && highlightAllocationId === storeAllocation.id ? ' is-highlighted' : ''}`}>
               <div className="market-replenishment-order-item-top">
                 <div className="market-replenishment-order-product">
                   <strong>{item.productName}</strong>
@@ -537,10 +713,12 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
                   <span className={`market-row-status ${priority ?? ''}`}>
                     {storeAllocation ? (storeAllocation.priorityLevel ? priorityLevelLabels[storeAllocation.priorityLevel] : 'Prioridade não informada') : itemPriorityLabel(item)}
                   </span>
-                  {isDraftOrder && item.status !== 'cancelled' && <button className="market-replenishment-icon-button" type="button" aria-label={`Retirar ${item.productName} da lista`} onClick={() => setConfirmCancelItem(item)}><Trash2 size={16} /></button>}
+                  {storeAllocation?.releasedAt && <span className="market-row-status completed"><Lock size={12} /> Liberada</span>}
+                  {canCancelItem && <button className="market-replenishment-icon-button" type="button" aria-label={`Retirar ${item.productName} da lista`} onClick={() => setConfirmCancelItem(item)}><Trash2 size={16} /></button>}
                 </div>
               </div>
               <dl className="market-replenishment-order-metrics">
+                <div><dt>Galpão disponível</dt><dd className={item.warehouseStockSnapshot === null ? 'is-muted' : undefined}>{formatWarehouseStock(item.warehouseStockSnapshot)}</dd></div>
                 {storeAllocation ? <>
                   <div><dt>Necessidade da loja</dt><dd>{formatAllocationQuantity(displayedNeed)}</dd></div>
                   <div><dt>Do Galpão</dt><dd>{formatAllocationQuantity(warehouse)}</dd></div>
@@ -553,16 +731,31 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
                 {!storeAllocation && <div><dt>Do Galpão</dt><dd>{formatAllocationQuantity(sumKnown(allocations.map((allocation) => allocation.warehouseAllocatedQuantity)))}</dd></div>}
                 <div><dt>Último fornecedor</dt><dd className={item.lastSupplier ? undefined : 'is-muted'}>{item.lastSupplier?.supplierName ?? 'Sem histórico'}</dd></div>
               </dl>
-              {isDraftOrder && contextStoreId && storeAllocation && inputs && <div className="market-replenishment-quantity-edit" role="group" aria-label={`Revisar ${item.productName} em ${storeAllocation.storeName}`} onBlur={(event) => {
+              {contextEditable && contextStoreId && storeAllocation && !storeAllocation.releasedAt && inputs && <div className="market-replenishment-quantity-edit" role="group" aria-label={`Revisar ${item.productName} em ${storeAllocation.storeName}`} onBlur={(event) => {
                 if (!event.currentTarget.contains(event.relatedTarget as Node | null)) void saveAllocation(storeAllocation.id)
               }}>
                 {(['warehouse', 'purchase'] as const).map((field) => <label key={field}>
                   <span className="market-replenishment-quantity-label">{field === 'warehouse' ? 'Do Galpão' : 'Comprar'}</span>
-                  <input className="market-replenishment-quantity-input" aria-label={`${field === 'warehouse' ? 'Do Galpão' : 'Comprar'}: ${item.productName} em ${storeAllocation.storeName}`} type="number" min="0" step="1" inputMode="numeric" value={inputs[field]} onChange={(event) => editAllocation(storeAllocation, field, event.target.value)} onFocus={(event) => event.target.select()} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} disabled={!!savingAllocations[storeAllocation.id] || approving} placeholder="A definir" />
+                  <input id={field === 'warehouse' ? `replenishment-quantity-warehouse-${storeAllocation.id}` : undefined} className="market-replenishment-quantity-input" aria-label={`${field === 'warehouse' ? 'Do Galpão' : 'Comprar'}: ${item.productName} em ${storeAllocation.storeName}`} type="number" min="0" step="1" inputMode="numeric" value={inputs[field]} onChange={(event) => editAllocation(storeAllocation, field, event.target.value)} onFocus={(event) => event.target.select()} onKeyDown={(event) => {
+                    // "Comprar" e o ultimo campo do item: Enter conclui a
+                    // edicao e ja avanca para o proximo item visivel; Tab
+                    // (sem Shift) faz o mesmo em vez de seguir a ordem
+                    // natural do DOM (que passaria por botoes como
+                    // "Retirar" do proximo card).
+                    if (field === 'purchase' && (event.key === 'Enter' || (event.key === 'Tab' && !event.shiftKey))) {
+                      event.preventDefault()
+                      focusNextAllocationField(storeAllocation.id)
+                      return
+                    }
+                    if (event.key === 'Enter') event.currentTarget.blur()
+                  }} disabled={!!savingAllocations[storeAllocation.id] || approving || releasing} placeholder="A definir" />
                 </label>)}
                 {savingAllocations[storeAllocation.id] && <span role="status" className="market-replenishment-quantity-saving"><RefreshCw size={13} /> Salvando</span>}
                 {allocationErrors[storeAllocation.id] && <p role="alert" className="market-replenishment-order-note">{allocationErrors[storeAllocation.id]}</p>}
               </div>}
+              {storeAllocation?.releasedAt && <dl className="market-replenishment-order-metrics">
+                <div><dt>Liberada</dt><dd>{dateTimeFormat.format(new Date(storeAllocation.releasedAt))}</dd></div>
+              </dl>}
               {(storeAllocation || hasManualReviewPending(item)) && <div className="market-replenishment-unknown-note">
                 {allocations.filter((allocation) => contextStoreId || allocationNeed(allocation) === null).map((allocation) => {
                   const candidate = allocation.candidateId ? candidateById.get(allocation.candidateId) : null
@@ -581,7 +774,7 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
               </div>}
               {!contextStoreId && <div className="market-replenishment-order-allocations">
                 {allocations.length ? allocations.map((allocation) => <article key={allocation.id}>
-                  <strong>{allocation.storeName}</strong>
+                  <strong>{allocation.storeName}{allocation.releasedAt ? ' · Liberada' : ''}</strong>
                   <dl>
                     <div><dt>Necessidade</dt><dd className={allocation.suggestedQuantity === null ? 'is-muted' : undefined}>{formatAllocationQuantity(allocationNeed(allocation))}</dd></div>
                     <div><dt>Do Galpão</dt><dd className={allocation.warehouseAllocatedQuantity === null ? 'is-muted' : undefined}>{formatAllocationQuantity(allocation.warehouseAllocatedQuantity)}</dd></div>
