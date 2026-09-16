@@ -294,3 +294,29 @@ export async function approveMarketReplenishmentOrder(accountId: string, orderId
   if (error) throw error
   return data as string
 }
+
+export async function getReplenishmentClosurePreview(accountId: string, orderId: string): Promise<import('../types/marketReplenishment').ReplenishmentClosurePreview> {
+  const { data, error } = await supabase.rpc('market_get_replenishment_closure_preview', { p_market_account_id: accountId, p_order_id: orderId })
+  if (error) throw error
+  return data
+}
+export async function closeReplenishmentOrder(accountId: string, orderId: string, requestId: string, reason: string | null = null): Promise<import('../types/marketReplenishment').ReplenishmentClosurePreview> {
+  const { data, error } = await supabase.rpc('market_close_replenishment_order', { p_market_account_id: accountId, p_order_id: orderId, p_request_id: requestId, p_reason: reason })
+  if (error) throw error
+  return data
+}
+export async function closeAndCreateReplenishmentOrder(accountId: string, orderId: string, requestId: string, reason: string | null = null): Promise<import('../types/marketReplenishment').ReplenishmentNewCycleResult> {
+  const { data, error } = await supabase.rpc('market_close_and_create_replenishment_order', { p_market_account_id: accountId, p_order_id: orderId, p_request_id: requestId, p_reason: reason })
+  if (error) throw error
+  return data
+}
+export async function getReplenishmentSupplyBatchPreview(accountId: string, orderId: string): Promise<import('../types/marketReplenishment').ReplenishmentSupplyBatchPreview> {
+  const { data, error } = await supabase.rpc('market_get_replenishment_supply_batch_preview', { p_market_account_id: accountId, p_order_id: orderId })
+  if (error) throw error
+  return data
+}
+export async function executeReplenishmentSupplyBatch(accountId: string, orderId: string, items: ReplenishmentSupplyLine[], requestId: string): Promise<unknown> {
+  const { data, error } = await supabase.rpc('market_execute_replenishment_supply_batch', { p_market_account_id: accountId, p_order_id: orderId, p_items: items, p_request_id: requestId })
+  if (error) throw error
+  return data
+}

@@ -1,5 +1,5 @@
 import {
-  ArrowLeft, CheckCircle2, ChevronDown, History, Lock, PackagePlus, PackageSearch, RefreshCw,
+  ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, History, Lock, PackagePlus, PackageSearch, RefreshCw,
   ScanBarcode, Search, ShoppingCart, Trash2, Truck, Unlock, X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -29,6 +29,7 @@ import type {
 import type { MarketStockProduct } from '../types/marketStock'
 import { ReplenishmentPurchasing } from '../components/ReplenishmentPurchasing'
 import { ReplenishmentHistory } from '../components/ReplenishmentHistory'
+import { ReplenishmentCycleAction } from '../components/ReplenishmentCycleAction'
 
 interface Props { accountId: string; stores: MarketStore[]; onBack: () => void }
 
@@ -46,6 +47,7 @@ const orderStatusLabels: Record<MarketReplenishmentOrderStatus, string> = {
   in_progress: 'Em andamento',
   completed: 'Concluída',
   cancelled: 'Cancelada',
+  closed: 'Encerrada',
 }
 
 type OrderPriorityFilter = 'critical' | 'high' | 'medium' | 'all'
@@ -167,6 +169,7 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
   const [error, setError] = useState('')
   const [expandedStoreId, setExpandedStoreId] = useState('')
   const [orderDetail, setOrderDetail] = useState<MarketReplenishmentOrderDetail | null>(null)
+  const purchaseListHeader = useRef<HTMLElement>(null)
   const [orderLoading, setOrderLoading] = useState(false)
   const [orderError, setOrderError] = useState('')
   const [quantityInputs, setQuantityInputs] = useState<Record<string, AllocationInputs>>({})
@@ -201,7 +204,7 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
   const [highlightAllocationId, setHighlightAllocationId] = useState('')
 
   const isDraftOrder = orderDetail?.order.status === 'draft'
-  const orderTerminal = orderDetail?.order.status === 'completed' || orderDetail?.order.status === 'cancelled'
+  const orderTerminal = orderDetail?.order.status === 'completed' || orderDetail?.order.status === 'cancelled' || orderDetail?.order.status === 'closed'
   const visibleOrderItems = useMemo(
     () => (orderDetail?.items ?? []).filter((item) => item.status !== 'cancelled'),
     [orderDetail],
@@ -606,7 +609,7 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
         </dl></article></div>
       </section>
 
-      <section className="market-replenishment-order-entry" aria-label="Lista de Compras">
+      <section ref={purchaseListHeader} className="market-replenishment-order-entry" aria-label="Lista de Compras">
         <div><span className="panel-kicker">LISTA DE COMPRAS</span><select className="market-replenishment-context-select" aria-label="Contexto da Lista de Compras" value={contextStoreId} onChange={(event) => { setSelectedStoreId(event.target.value); setManualOpen(false); setManualSelected(null); setManualQuery(''); setManualQuantity(''); setManualError(''); setConfirmCancelItem(null); setApproveConfirm(false); setReleaseConfirm(false); setHighlightAllocationId('') }}>
           <option value="">Consolidada</option>
           {orderStores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
@@ -617,12 +620,28 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
         </button>
       </section>
       {orderError && <div className="admin-message is-error" role="alert">{orderError}</div>}
+      {!orderDetail && reviewMessage && <p role="status" className="market-replenishment-order-note">{reviewMessage}</p>}
 
       {orderDetail?.isStale === true && ['draft', 'approved', 'in_progress'].includes(orderDetail.order.status) && <aside className="market-replenishment-stale-notice" role="status">
         <strong>{orderDetail.order.status === 'in_progress' ? 'Lista em andamento de uma análise anterior' : 'Lista ativa de uma análise anterior'}</strong>
         <p>Esta lista foi criada com base em uma análise anterior e ainda está {orderDetail.order.status === 'in_progress' ? 'em execução' : 'ativa'}. A análise mais recente encontrou {number.format(overview.run.productsSelected)} necessidades, enquanto esta lista contém somente os itens da ordem atual.</p>
-        {orderDetail.order.status === 'in_progress' && <p>Conclua esta lista para gerar uma nova com base na análise mais recente.</p>}
+        {orderDetail.order.status === 'in_progress' && <p>Você pode concluir esta lista ou encerrar o ciclo para iniciar uma nova análise.</p>}
         <p>Análise mais recente: {number.format(overview.run.productsSelected)} necessidades · Lista atual: {number.format(visibleOrderItems.length)} itens</p>
+        {['approved', 'in_progress'].includes(orderDetail.order.status) && <ReplenishmentCycleAction
+          key={`${accountId}:${orderDetail.order.id}`} accountId={accountId} orderId={orderDetail.order.id} mode="close"
+          disabled={releasing || approving || Object.values(savingAllocations).some(Boolean)}
+          onSuccess={async result => {
+            if (!result) return
+            const [nextOrder, nextOverview] = await Promise.all([
+              getMarketReplenishmentOrder(accountId, result.newOrderId), getMarketReplenishmentOverview(accountId, stores),
+            ])
+            if (!nextOrder) throw new Error('Nova lista indisponível para leitura.')
+            setOrderDetail(null); setOverview(nextOverview); setSelectedStoreId('')
+            setQuantityInputs({}); quantityInputsRef.current = {}; setAllocationErrors({})
+            setOrderPriorityFilter('all'); setConfirmCancelItem(null); setApproveConfirm(false)
+            setReleaseConfirm(false); setManualOpen(false); setManualSelected(null); setOrderError('')
+            setReviewMessage(`Lista anterior encerrada e nova análise criada. Vendas consolidadas até ${result.referenceDate.split('-').reverse().join('/')}.`)
+          }} />}
       </aside>}
       {orderDetail && ['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <ReplenishmentPurchasing key={`${accountId}:${orderDetail.order.id}`} accountId={accountId} orderId={orderDetail.order.id} orderDetail={orderDetail} storeId={contextStoreId} editable={orderDetail.order.status !== 'completed'} onChanged={() => reloadOrder(orderDetail.order.id)} />}
       {orderDetail && showReviewPanel && <section className="market-replenishment-order-panel">
@@ -688,7 +707,10 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
             {orderPriorityFilters.map((filter) => <button key={filter.value} type="button" className={orderPriorityFilter === filter.value ? 'is-active' : ''} onClick={() => setOrderPriorityFilter(filter.value)}>{filter.label}</button>)}
           </div>
           <strong>{remainingOrderItems} restantes</strong>
-          <button className="market-scanner-button" type="button" aria-label="Scanner indisponível nesta etapa" disabled><ScanBarcode size={22} /></button>
+          <div className="market-replenishment-operation-tools">
+            <button className="market-scanner-button" type="button" aria-label="Voltar ao topo da lista" title="Voltar ao topo da lista" onClick={() => purchaseListHeader.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><ArrowUp size={22} aria-hidden="true" /></button>
+            <button className="market-scanner-button" type="button" aria-label="Scanner indisponível nesta etapa" disabled><ScanBarcode size={22} /></button>
+          </div>
         </div>
         <div className="market-replenishment-order-items">
           {!visibleOrderItems.length && <div className="admin-message">Nenhum item ativo nesta lista.</div>}

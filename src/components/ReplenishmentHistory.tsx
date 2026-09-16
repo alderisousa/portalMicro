@@ -4,7 +4,7 @@ import { getReplenishmentOrderHistory, getReplenishmentOrderHistoryDetail } from
 import type { ReplenishmentOrderHistoryItem, ReplenishmentOrderHistorySummary } from '../types/marketReplenishment'
 
 interface Props { accountId: string }
-const format = (value: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 }).format(value)
+const format = (value: number | null) => value === null ? 'A definir' : new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 }).format(value)
 const dateFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' })
 
 type ItemFilter = 'pending' | 'processed' | 'all'
@@ -14,7 +14,7 @@ const itemFilters: Array<{ value: ItemFilter; label: string }> = [
   { value: 'all', label: 'Todos' },
 ]
 
-const situationLabels: Record<ReplenishmentOrderHistorySummary['situation'], string> = { partial: 'Parcial', completed: 'Concluída' }
+const situationLabels: Record<ReplenishmentOrderHistorySummary['situation'], string> = { partial: 'Parcial', completed: 'Concluída', closed: 'Encerrada', closed_with_pending: 'Encerrada com pendências' }
 
 // Histórico é sobre listas/ordens, não produtos soltos: mostra primeiro a
 // relação de ordens (data de entrada, total/processado/pendente, situação);
@@ -75,7 +75,6 @@ export function ReplenishmentHistory({ accountId }: Props) {
   }
 
   const filteredItems = items.filter((item) => itemFilter === 'all' || item.status === itemFilter)
-  const pendingGroupEndsAt = orders.findIndex((order) => order.pendingItems === 0)
 
   if (selectedOrder) {
     return <section className="market-replenishment-order-panel market-replenishment-history-panel" aria-label="Itens da lista">
@@ -85,6 +84,7 @@ export function ReplenishmentHistory({ accountId }: Props) {
       </div>
       <div className="market-replenishment-order-heading"><h2>Lista de {dateFormat.format(new Date(selectedOrder.approvedAt ?? selectedOrder.createdAt))}</h2></div>
       <p>{selectedOrder.processedItems} de {selectedOrder.totalItems} necessidades já entregues à loja · {selectedOrder.pendingItems} pendentes.</p>
+      {selectedOrder.status === 'closed' && <p>Encerrada em {selectedOrder.closedAt ? dateFormat.format(new Date(selectedOrder.closedAt)) : '—'}{selectedOrder.closureReason ? ` · Motivo: ${selectedOrder.closureReason}` : ''}. Quantidades registradas no encerramento.</p>}
       <div className="market-replenishment-filter-tabs" role="group" aria-label="Filtrar itens da lista">
         {itemFilters.map((filter) => <button key={filter.value} type="button" className={itemFilter === filter.value ? 'is-active' : ''} onClick={() => setItemFilter(filter.value)}>{filter.label}</button>)}
       </div>
@@ -93,7 +93,13 @@ export function ReplenishmentHistory({ accountId }: Props) {
         {!filteredItems.length && <p>Nenhum item neste filtro.</p>}
         {filteredItems.map((item) => <article key={item.allocationId} className="market-replenishment-order-item market-replenishment-purchase-card">
           <h3>{item.productName}</h3>
-          <p>{item.storeName} · {item.status === 'processed' ? 'Processado' : 'Aguardando entrada'}: {format(item.deliveredQuantity)} de {format(item.targetQuantity)}</p>
+          {'orderStatus' in item && item.orderStatus === 'closed' ? <>
+            <p>{item.storeName} · Planejado: {format(item.targetQuantity)}</p>
+            <p>Processado: {format(item.processedQuantity)}</p>
+            <p>Pronto para abastecer ao encerrar: {format(item.readyToSupplyQuantity)}</p>
+            <p>Aguardando entrada ao encerrar: {format(item.awaitingReceiptQuantity)}</p>
+            <p>Ainda para comprar ao encerrar: {format(item.stillToBuyQuantity)}</p>
+          </> : <p>{item.storeName} · {item.status === 'processed' ? 'Processado' : 'Aguardando entrada'}: {format(item.deliveredQuantity)} de {format(item.targetQuantity)}</p>}
         </article>)}
       </>}
     </section>
@@ -104,12 +110,11 @@ export function ReplenishmentHistory({ accountId }: Props) {
       <h2>Histórico</h2>
       <button className="button button-small button-outline" disabled={ordersLoading} onClick={() => void reloadOrders()}>Atualizar</button>
     </div>
-    <p>Listas de reposição aprovadas, em andamento ou concluídas, com o quanto já foi efetivamente entregue às lojas.</p>
+    <p>Listas de reposição aprovadas, em andamento, concluídas ou encerradas, com o quanto já foi efetivamente entregue às lojas.</p>
     {ordersMessage && <p role="alert">{ordersMessage}</p>}
     {ordersLoading ? <p role="status">Carregando histórico...</p> : <>
       {!orders.length && <p>Nenhuma lista aprovada neste filtro.</p>}
-      {orders.map((order, index) => <div key={order.id}>
-        {index === pendingGroupEndsAt && index > 0 && <span className="panel-kicker">CONCLUÍDAS</span>}
+      {orders.map((order) => <div key={order.id}>
         <button type="button" className="market-purchase-card-header market-replenishment-history-order" onClick={() => void openOrder(order)}>
           <div className="market-purchase-card-main"><strong>Lista de {dateFormat.format(new Date(order.approvedAt ?? order.createdAt))}</strong><span>{order.totalItems} {order.totalItems === 1 ? 'necessidade' : 'necessidades'}</span></div>
           <dl className="market-purchase-card-stats">

@@ -172,12 +172,14 @@ contractTest('multiple atomic executions accumulate real quantity but cap confir
   assert.equal(Number(state.confirmedQuantity),Math.min(Number(line.target_quantity),2))
 })
 
-test('new migration never inserts stock; UI uses pending/purchased and only checks NF receipt',()=>{
+test('purchase declaration never inserts stock; UI uses backend queues and automatic receipt',()=>{
   assert.doesNotMatch(migration,/insert\s+into\s+(public\.)?market_stock_movements/i)
   assert.doesNotMatch(migration,/TRANSFER_OUT|TRANSFER_IN/)
   assert.match(supplyMigration,/store_type='warehouse'/)
   const ui=readFileSync(new URL('../src/components/ReplenishmentPurchasing.tsx',import.meta.url),'utf8')
-  assert.match(ui,/line\.purchasedQuantity !== null/)
-  assert.match(ui,/Lance primeiro a\(s\) nota\(s\)/)
+  assert.match(ui,/purchaseWorkQueues\(lines, storeId\)/)
+  assert.match(ui,/store\.awaitingQuantity/)
+  assert.match(ui,/line\.canCorrect && line\.committedQuantity === 0/)
+  assert.doesNotMatch(ui,/linkReplenishmentPurchaseNf/)
   assert.match(ui,/Desfazer comprado/)
 })

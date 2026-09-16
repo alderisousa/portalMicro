@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { executeReplenishmentStoreSupply, getReplenishmentPurchasing, getReplenishmentStoreSupply, setReplenishmentPurchased } from '../services/marketReplenishment'
 import type { MarketReplenishmentOrderDetail, ReplenishmentPurchaseLine, ReplenishmentSupplyLine } from '../types/marketReplenishment'
 import { purchaseWorkQueues } from '../utils/replenishmentPurchaseDisplay'
+import { ReplenishmentCycleAction } from './ReplenishmentCycleAction'
 
 interface Props { accountId: string; orderId: string; storeId: string; editable: boolean; orderDetail: MarketReplenishmentOrderDetail; onChanged?: () => Promise<void> }
 type View = 'buy' | 'waiting' | 'supply'
@@ -154,6 +155,11 @@ export function ReplenishmentPurchasing({ accountId, storeId, orderDetail, onCha
       </>}
       {view === 'supply' && <>
         <p>O saldo do Galpão é revalidado no momento da confirmação.</p>
+        {[...new Set(supply.map(line => line.orderId))].map(id => <div key={id}>
+          <p>{id === orderDetail.order.id ? 'Lista atual' : `Lista ${id.slice(0, 8)}`} · todas as lojas</p>
+          <ReplenishmentCycleAction accountId={accountId} orderId={id} mode="supply" disabled={busy || loading}
+            onSuccess={async () => { await reload(); await onChanged?.(); setMessage('Abastecimentos registrados com sucesso.') }} />
+        </div>)}
         {!supply.length && <p>Nenhuma necessidade integralmente disponível para abastecimento.</p>}
         {supply.map(line => <article key={line.id} className="market-replenishment-order-item market-replenishment-purchase-card">
           <h3>{line.productName}</h3><p>{line.storeName} · Abastecer: {format(line.remainingQuantity)}</p>

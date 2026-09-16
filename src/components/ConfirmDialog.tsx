@@ -1,6 +1,13 @@
 import { useEffect, useId, useRef } from 'react'
+import type { ReactNode } from 'react'
 
 interface ConfirmDialogProps {
+  children?: ReactNode
+  cancelLabel?: string
+  confirmDisabled?: boolean
+  cancelDisabled?: boolean
+  className?: string
+  trapFocus?: boolean
   title: string
   description: string
   confirmLabel: string
@@ -13,6 +20,7 @@ interface ConfirmDialogProps {
 }
 
 export function ConfirmDialog({
+  children, cancelLabel = 'Cancelar', confirmDisabled = false, cancelDisabled = false, className = '', trapFocus = false,
   title,
   description,
   confirmLabel,
@@ -26,11 +34,16 @@ export function ConfirmDialog({
   const titleId = useId()
   const descriptionId = useId()
   const cancelButton = useRef<HTMLButtonElement>(null)
+  const dialog = useRef<HTMLDivElement>(null)
   const processingRef = useRef(processing)
   const onCancelRef = useRef(onCancel)
 
   processingRef.current = processing
   onCancelRef.current = onCancel
+
+  useEffect(() => {
+    if (trapFocus && processing) dialog.current?.focus()
+  }, [trapFocus, processing])
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null
@@ -59,11 +72,21 @@ export function ConfirmDialog({
       }}
     >
       <div
-        className="confirm-dialog"
+        className={`confirm-dialog ${className}`}
+        ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
+        tabIndex={-1}
+        onKeyDown={event => {
+          if (!trapFocus || event.key !== 'Tab') return
+          const elements = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled), input:not(:disabled), select:not(:disabled), a[href]'))
+          const first = elements[0], last = elements[elements.length - 1]
+          if (!first) { event.preventDefault(); event.currentTarget.focus(); return }
+          if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) { event.preventDefault(); last.focus() }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+        }}
       >
         {previewUrl && (
           <img
@@ -76,6 +99,7 @@ export function ConfirmDialog({
         <div className="confirm-dialog-content">
           <h2 id={titleId}>{title}</h2>
           <p id={descriptionId}>{description}</p>
+          {children}
         </div>
 
         <div className="confirm-dialog-actions">
@@ -84,15 +108,15 @@ export function ConfirmDialog({
             type="button"
             className="button button-outline"
             onClick={onCancel}
-            disabled={processing}
+            disabled={processing || cancelDisabled}
           >
-            Cancelar
+            {cancelLabel}
           </button>
           <button
             type="button"
             className={`button${confirmVariant === 'destructive' ? ' button-destructive' : ''}`}
             onClick={onConfirm}
-            disabled={processing}
+            disabled={processing || confirmDisabled}
           >
             {processing ? processingLabel : confirmLabel}
           </button>

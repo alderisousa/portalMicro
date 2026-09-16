@@ -25,7 +25,10 @@ test('normal UI has three queues, no invoice selection or reconciliation button,
  const ui=readFileSync(new URL('../src/components/ReplenishmentPurchasing.tsx',import.meta.url),'utf8')
  for(const label of ['Comprar','Aguardando entrada','Abastecer']) assert.ok(ui.includes(`label: '${label}'`))
  assert.doesNotMatch(ui,/label: 'Histórico'/)
- assert.doesNotMatch(ui,/NF correspondente|Vincular quantidade|linkReplenishmentPurchaseNf|checkInvoices|<select/)
+ // O seletor de fornecedor existente deve permanecer; a restricao e ao
+ // vinculo manual de NF, nao a qualquer select da tela.
+ assert.doesNotMatch(ui,/NF correspondente|Vincular quantidade|linkReplenishmentPurchaseNf|checkInvoices/)
+ assert.match(ui,/aria-label="Filtrar por fornecedor"/)
  assert.match(ui,/getReplenishmentPurchasing\(accountId, null\)/)
  assert.match(ui,/getReplenishmentStoreSupply\(accountId, null,/)
  assert.match(ui,/line.canCorrect && line.committedQuantity === 0/)
@@ -33,9 +36,10 @@ test('normal UI has three queues, no invoice selection or reconciliation button,
 })
 test('Histórico é uma área própria, independente da lista/ordem atual, reusando as mesmas fontes',()=>{
  const ui=readFileSync(new URL('../src/components/ReplenishmentHistory.tsx',import.meta.url),'utf8')
- assert.match(ui,/getReplenishmentPurchasing\(accountId, null\)/)
- assert.match(ui,/getReplenishmentDeliveryHistory/)
- assert.match(ui,/purchaseWorkQueues/)
+ assert.match(ui,/getReplenishmentOrderHistory\(accountId, null\)/)
+ assert.match(ui,/getReplenishmentOrderHistoryDetail\(accountId, order.id, null\)/)
+ assert.match(ui,/item\.readyToSupplyQuantity/)
+ assert.doesNotMatch(ui,/setReplenishmentPurchased|executeReplenishmentStoreSupply/)
  assert.doesNotMatch(ui,/interface Props[^}]*(orderDetail|orderId)/)
  const page=readFileSync(new URL('../src/pages/MarketReplenishment.tsx',import.meta.url),'utf8')
  assert.match(page,/<ReplenishmentHistory/)

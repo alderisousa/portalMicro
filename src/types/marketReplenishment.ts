@@ -79,6 +79,7 @@ export type MarketReplenishmentOrderStatus =
   | 'in_progress'
   | 'completed'
   | 'cancelled'
+  | 'closed'
 
 export type MarketReplenishmentOrderItemStatus = 'pending' | 'partial' | 'fulfilled' | 'cancelled'
 export type MarketReplenishmentOrderItemSource = 'batch' | 'manual_review' | 'manual_purchase'
@@ -213,7 +214,7 @@ export interface ReplenishmentDelivery {
   quantity: number
 }
 
-export type ReplenishmentOrderHistorySituation = 'partial' | 'completed'
+export type ReplenishmentOrderHistorySituation = 'partial' | 'completed' | 'closed' | 'closed_with_pending'
 
 // Resumo de uma ordem para a tela de Historico (market_get_replenishment_order_history,
 // sem p_order_id). totalItems/processedItems/pendingItems contam necessidades
@@ -222,6 +223,9 @@ export type ReplenishmentOrderHistorySituation = 'partial' | 'completed'
 // entrega fisica real, não do status comercial da ordem (uma ordem pode virar
 // 'completed' comercialmente com entrega Galpão->Loja ainda pendente).
 export interface ReplenishmentOrderHistorySummary {
+  closedAt?: string
+  closedBy?: string
+  closureReason?: string | null
   id: string
   status: MarketReplenishmentOrderStatus
   createdAt: string
@@ -237,7 +241,8 @@ export interface ReplenishmentOrderHistorySummary {
 // com p_order_id): uma linha por necessidade (produto x loja). status
 // 'processed' exige entrega Galpão->Loja efetiva (deliveredQuantity>=targetQuantity),
 // nunca apenas "comprado".
-export interface ReplenishmentOrderHistoryItem {
+export type ReplenishmentOrderHistoryItem = ReplenishmentClosedHistoryItem | ReplenishmentLegacyHistoryItem
+export interface ReplenishmentLegacyHistoryItem {
   allocationId: string
   productId: string
   productName: string
@@ -247,4 +252,34 @@ export interface ReplenishmentOrderHistoryItem {
   deliveredQuantity: number
   remainingQuantity: number
   status: 'pending' | 'processed'
+}
+
+export interface ReplenishmentClosureSummary {
+  totalNeeds: number; processed: number; readyToSupply: number; awaitingReceipt: number; stillToBuy: number
+  unknownQuantityNeeds: number; processedUnits: number; readyToSupplyUnits: number; awaitingReceiptUnits: number; stillToBuyKnownUnits: number
+}
+export interface ReplenishmentClosureNeed {
+  allocationId: string; productId: string; productName: string; storeId: string; storeName: string
+  targetQuantity: number | null; deliveredQuantity: number; remainingQuantity: number | null
+  purchasedQuantity: number; receivedQuantity: number; processedQuantity: number; readyToSupplyQuantity: number
+  awaitingReceiptQuantity: number; stillToBuyQuantity: number | null; sourceStoreId: string | null
+  quantityUnknown: boolean; status: 'pending' | 'processed'
+}
+export interface ReplenishmentClosurePreview {
+  schemaVersion: number; orderId: string; createdAt: string; runId: string; referenceDate: string
+  summary: ReplenishmentClosureSummary; needs: ReplenishmentClosureNeed[]; purchases: ReplenishmentPurchaseLine[]
+  closedAt?: string; closedBy?: string; closureReason?: string | null
+}
+export interface ReplenishmentNewCycleResult {
+  closedOrderId: string; newRunId: string; newOrderId: string; referenceDate: string; analysisTimestamp: string
+}
+export interface ReplenishmentSupplyBatchStoreSummary {
+  storeId: string; storeName: string; allocationCount: number; totalUnits: number
+}
+export interface ReplenishmentSupplyBatchPreview {
+  orderId: string; items: ReplenishmentSupplyLine[]; stores: ReplenishmentSupplyBatchStoreSummary[]
+  storeCount: number; allocationCount: number; productCount: number; totalUnits: number
+}
+export interface ReplenishmentClosedHistoryItem extends ReplenishmentClosureNeed {
+  orderStatus: 'closed'; closedAt: string; closedBy: string; closureReason: string | null
 }
