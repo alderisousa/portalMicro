@@ -7,12 +7,13 @@ import { replenishmentCycleError } from '../utils/replenishmentCycle'
 
 interface Props {
   accountId: string; orderId: string; mode: 'close' | 'supply'; disabled?: boolean
+  triggerLabel?: string
   onSuccess: (result?: ReplenishmentNewCycleResult) => Promise<void>
 }
 const format = (value: number) => new Intl.NumberFormat('pt-BR').format(value)
 
 // O preview fica intacto ate o fim da tentativa, inclusive durante retry.
-export function ReplenishmentCycleAction({ accountId, orderId, mode, disabled, onSuccess }: Props) {
+export function ReplenishmentCycleAction({ accountId, orderId, mode, disabled, triggerLabel, onSuccess }: Props) {
   const [closure, setClosure] = useState<ReplenishmentClosurePreview | null>(null)
   const [batch, setBatch] = useState<ReplenishmentSupplyBatchPreview | null>(null)
   const [busy, setBusy] = useState(false)
@@ -60,7 +61,7 @@ export function ReplenishmentCycleAction({ accountId, orderId, mode, disabled, o
   }
   const summary = closure?.summary
   return <>
-    <button type="button" className={`button button-small button-outline${mode === 'close' ? ' replenishment-close-action' : ''}`} disabled={disabled || busy} onClick={() => void preview()}>{busy && !open ? 'Carregando resumo...' : label}</button>
+    <button type="button" className={`button button-small button-outline${mode === 'close' ? ' replenishment-close-action' : ''}`} disabled={disabled || busy} onClick={() => void preview()}>{busy && !open ? 'Carregando resumo...' : triggerLabel ?? label}</button>
     {!open && message && <p role="status">{message}</p>}
     {open && createPortal(<ConfirmDialog trapFocus className="replenishment-cycle-dialog" title={mode === 'close' ? 'Encerrar abastecimento atual?' : 'Confirmar abastecimentos?'}
       description={mode === 'close' ? 'Esta lista será encerrada e uma nova análise será feita com as vendas consolidadas e o estoque atual.' : 'Esta ação informa ao GiroMicro que a separação e a entrega dos itens abaixo já foram realizadas.'}

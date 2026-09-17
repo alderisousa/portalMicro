@@ -623,12 +623,16 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
       {!orderDetail && reviewMessage && <p role="status" className="market-replenishment-order-note">{reviewMessage}</p>}
 
       {orderDetail?.isStale === true && ['draft', 'approved', 'in_progress'].includes(orderDetail.order.status) && <aside className="market-replenishment-stale-notice" role="status">
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16 }}>
+        <div style={{ flex: '1 1 320px', minWidth: 0 }}>
         <strong>{orderDetail.order.status === 'in_progress' ? 'Lista em andamento de uma análise anterior' : 'Lista ativa de uma análise anterior'}</strong>
         <p>Esta lista foi criada com base em uma análise anterior e ainda está {orderDetail.order.status === 'in_progress' ? 'em execução' : 'ativa'}. A análise mais recente encontrou {number.format(overview.run.productsSelected)} necessidades, enquanto esta lista contém somente os itens da ordem atual.</p>
         {orderDetail.order.status === 'in_progress' && <p>Você pode concluir esta lista ou encerrar o ciclo para iniciar uma nova análise.</p>}
         <p>Análise mais recente: {number.format(overview.run.productsSelected)} necessidades · Lista atual: {number.format(visibleOrderItems.length)} itens</p>
-        {['approved', 'in_progress'].includes(orderDetail.order.status) && <ReplenishmentCycleAction
+        </div>
+        {overview.run.id !== orderDetail.order.runId && <div style={{ marginLeft: 'auto' }}><ReplenishmentCycleAction
           key={`${accountId}:${orderDetail.order.id}`} accountId={accountId} orderId={orderDetail.order.id} mode="close"
+          triggerLabel="Usar análise mais recente"
           disabled={releasing || approving || Object.values(savingAllocations).some(Boolean)}
           onSuccess={async result => {
             if (!result) return
@@ -641,7 +645,8 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
             setOrderPriorityFilter('all'); setConfirmCancelItem(null); setApproveConfirm(false)
             setReleaseConfirm(false); setManualOpen(false); setManualSelected(null); setOrderError('')
             setReviewMessage(`Lista anterior encerrada e nova análise criada. Vendas consolidadas até ${result.referenceDate.split('-').reverse().join('/')}.`)
-          }} />}
+          }} /></div>}
+        </div>
       </aside>}
       {orderDetail && ['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <ReplenishmentPurchasing key={`${accountId}:${orderDetail.order.id}`} accountId={accountId} orderId={orderDetail.order.id} orderDetail={orderDetail} storeId={contextStoreId} editable={orderDetail.order.status !== 'completed'} onChanged={() => reloadOrder(orderDetail.order.id)} />}
       {orderDetail && showReviewPanel && <section className="market-replenishment-order-panel">

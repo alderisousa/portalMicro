@@ -33,6 +33,12 @@ await db.exec(sqlFile('202609100001_add_market_replenishment_settings.sql'))
 await db.exec(sqlFile('202609100013_add_replenishment_acceleration_min_units.sql'))
 await db.exec(sqlFile('202609100015_fix_replenishment_strong_acceleration_aggravator.sql'))
 await db.exec(sqlFile('202609150001_fix_replenishment_materialize_unknown_quantity.sql'))
+for (const name of [
+ '202609170002_replenishment_safe_settings_and_list_limit.sql',
+ '202609170003_allow_stale_draft_replenishment_closure.sql',
+ '202609170004_allow_closed_unapproved_draft.sql',
+ '202609170005_allow_closed_without_operation_lines.sql',
+]) await db.exec(sqlFile(name))
 
 const data=async(sql,params)=>(await query(sql,params))[0].data
 const preview=id=>data('select market_get_replenishment_closure_preview($1,$2) data',[account,id])
@@ -289,3 +295,56 @@ contractTest('fatos vinculados e allocations tambem ficam imutaveis depois de cl
  await query('select market_reconcile_replenishment_receipts_internal($1,$2)',[account,[productA]])
  assert.equal((await supplyQueue(id,productA)).length,0)
 })
+
+contractTest('draft stale pode ser substituido; CLOSED sem aprovacao nem operation_lines passa constraints diferidas',async()=>{
+ const id=await generate()
+ await sales()
+ const latest=await data("select market_run_replenishment_batch($1,'2026-09-12','manual') data",[account])
+ const detail=await data('select market_get_replenishment_order($1,$2) data',[account,id])
+ assert.equal(detail.isStale,true)
+ assert.notEqual(detail.order.runId,latest)
+ assert.equal(detail.order.status,'draft')
+ await preview(id)
+ const req=request(),result=await renew(id,req)
+ assert.deepEqual(await renew(id,req),result)
+ const old=(await query('select status,approved_at,approval_revision from market_replenishment_orders where id=$1',[id]))[0]
+ assert.deepEqual(old,{status:'closed',approved_at:null,approval_revision:0})
+ assert.equal((await query('select count(*)::int n from market_replenishment_operation_lines where order_id=$1',[id]))[0].n,0)
+ const next=(await query('select status,run_id from market_replenishment_orders where id=$1',[result.newOrderId]))[0]
+ assert.equal(next.status,'draft');assert.equal(next.run_id,result.newRunId)
+ assert.notEqual(result.newOrderId,id)
+ await db.exec('set constraints all immediate')
+ await reject(()=>query("update market_replenishment_orders set status='approved' where id=$1",[id]),/CLOSED|INVALID_TRANSITION/)
+})
+
+contractTest('falha na nova analise preserva draft e nao fabrica aprovacao',async()=>{
+ const id=await generate()
+ await reject(()=>renew(id),/RELIABLE_SALES_DATE_UNAVAILABLE/)
+ const old=(await query('select status,approved_at,approval_revision from market_replenishment_orders where id=$1',[id]))[0]
+ assert.deepEqual(old,{status:'draft',approved_at:null,approval_revision:0})
+})
+
+for(const [limit,critical,expected] of [[20,0,20],[100,0,100],[150,0,150],[100,120,120],[100,230,200]]) {
+ contractTest(`batch real: limite normal ${limit}, criticos ${critical}, selecionados ${expected} por loja`,async()=>{
+  await sales()
+  await query('update market_replenishment_settings set normal_list_limit=$1,demand_method=\'m7\',acceleration_threshold_pct=100',[limit])
+  await query('delete from market_sales_import_rows')
+  await query(`insert into market_products(id,market_account_id,name)
+   select ('a0000000-0000-4000-8000-'||lpad(g::text,12,'0'))::uuid,$1,'Teste limite '||g from generate_series(1,230) g`,[account])
+  await query(`insert into market_sales_import_rows(import_id,market_account_id,market_store_id,product_id,sale_date,quantity)
+   select i.id,$1,s,p.id,'2026-09-12',14 from market_sales_imports i
+   cross join unnest($2::uuid[]) s cross join market_products p where p.name like 'Teste limite %'`,[account,[storeA,storeB]])
+  await query(`insert into market_stock_movements(market_account_id,market_store_id,product_id,movement_type,direction,quantity)
+   select $1,s,p.id,'INVENTORY','IN',case when right(p.id::text,12)::int <= $3 then 0 else 8 end
+   from market_products p cross join unnest($2::uuid[]) s where p.name like 'Teste limite %'`,[account,[storeA,storeB],critical])
+  const run=await data("select market_run_replenishment_batch($1,'2026-09-12','manual') data",[account])
+  const summary=(await query('select status,products_selected,critical_count from market_replenishment_runs where id=$1',[run]))[0]
+  assert.equal(summary.status,'completed')
+  const counts=await query(`select store_id,count(*)::int n,count(*) filter(where priority_level='critical')::int critical
+   from market_replenishment_candidates where run_id=$1 group by store_id order by store_id`,[run])
+  assert.equal(counts.length,2)
+  for(const row of counts){assert.equal(row.n,expected);assert.equal(row.critical,Math.min(critical,200))}
+  assert.equal(summary.products_selected,expected*2)
+  assert.equal(summary.critical_count,Math.min(critical,200)*2)
+ })
+}
