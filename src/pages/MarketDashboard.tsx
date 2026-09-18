@@ -14,12 +14,16 @@ import { MarketStoreProductParameters } from './MarketStoreProductParameters'
 import { canEditStoreProductParameters } from '../services/marketStoreProductParameters'
 import { MarketSaleMargin } from './MarketSaleMargin'
 import { canAccessMarketSaleMargin } from '../services/marketSaleMargin'
+import { readMarketPosition, saveMarketModule, clearMarketPosition, canRestoreMarketModule, type MarketModule } from '../utils/marketPosition'
 import { MarketDuplicateProducts } from './MarketDuplicateProducts'
 
-interface MarketDashboardProps { header: ReactNode; accountId: string; onBack: () => void }
+interface MarketDashboardProps { header: ReactNode; accountId: string; userId?: string; onBack: () => void }
 const roleLabels = { owner: 'Proprietário', admin: 'Administrador', manager: 'Gerente', operator: 'Operador', viewer: 'Visualização' }
 
-export function MarketDashboard({ header, accountId, onBack }: MarketDashboardProps) {
+export function MarketDashboard({ header, accountId, userId = '', onBack }: MarketDashboardProps) {
+  const [savedPosition] = useState(() => readMarketPosition(userId, accountId))
+  const [positionReady, setPositionReady] = useState(false)
+  const [integrationChecked, setIntegrationChecked] = useState(false)
   const [access, setAccess] = useState<CurrentUserMarketAccess | null>(null)
   const [loading, setLoading] = useState(true)
   const [showDuplicateProducts, setShowDuplicateProducts] = useState(false)
@@ -49,10 +53,37 @@ export function MarketDashboard({ header, accountId, onBack }: MarketDashboardPr
     void getMarketSalesSyncContext(accountId)
       .then((result) => { if (active) setSalesIntegrationAvailable(result.integrationAvailable) })
       .catch((error) => { console.error('Falha ao validar integração de vendas:', error) })
+      .finally(() => { if (active) setIntegrationChecked(true) })
     return () => { active = false }
   }, [accountId])
 
-  if (loading) return <main>{header}<section className="market-dashboard container"><div className="admin-message" role="status">Validando acesso à conta Market...</div></section></main>
+  useEffect(() => {
+    if (loading || positionReady) return
+    if (!access || access.member_status !== 'active' || !['pilot', 'active'].includes(access.status)) {
+      clearMarketPosition(userId); setPositionReady(true); return
+    }
+    const module = savedPosition?.module ?? 'dashboard'
+    if (module === 'imports' && !integrationChecked) return
+    if (canRestoreMarketModule(module, access.role, salesIntegrationAvailable)) {
+      const setters = { stock: setShowStockDashboard, replenishment: setShowReplenishment, purchases: setShowPurchases,
+        commercial: setShowCommercialDashboard, imports: setShowSalesImports, duplicates: setShowDuplicateProducts,
+        replenishmentSettings: setShowReplenishmentSettings, storeProductParameters: setShowStoreProductParameters, saleMargin: setShowSaleMargin }
+      if (module !== 'dashboard') setters[module](true)
+    } else saveMarketModule(userId, accountId, 'dashboard')
+    setPositionReady(true)
+  }, [loading, positionReady, access, savedPosition, integrationChecked, salesIntegrationAvailable, userId, accountId])
+
+  const activeModule: MarketModule = showSaleMargin ? 'saleMargin' : showStoreProductParameters ? 'storeProductParameters'
+    : showReplenishmentSettings ? 'replenishmentSettings' : showDuplicateProducts ? 'duplicates'
+    : showSalesImports ? 'imports' : showCommercialDashboard ? 'commercial' : showStockDashboard ? 'stock'
+    : showPurchases ? 'purchases' : showReplenishment ? 'replenishment' : 'dashboard'
+  useEffect(() => {
+    if (positionReady && access?.member_status === 'active' && ['pilot', 'active'].includes(access.status)) {
+      saveMarketModule(userId, accountId, canRestoreMarketModule(activeModule, access.role, salesIntegrationAvailable) ? activeModule : 'dashboard')
+    }
+  }, [positionReady, access, activeModule, userId, accountId, salesIntegrationAvailable])
+
+  if (loading || !positionReady) return <main>{header}<section className="market-dashboard container"><div className="admin-message" role="status">Validando acesso à conta Market...</div></section></main>
   if (!access || access.member_status !== 'active') return <main>{header}<section className="market-dashboard container"><button className="button button-small button-outline" onClick={onBack}><ArrowLeft size={16} /> Meu painel</button><div className="market-access-blocked"><Store size={28} /><h1>Acesso ao GiroMicro Market indisponível</h1><p>Seu vínculo com esta conta não está ativo.</p></div></section></main>
   if (access.status === 'suspended' || access.status === 'cancelled') {
     return <main>{header}<section className="market-dashboard container"><button className="button button-small button-outline" onClick={onBack}><ArrowLeft size={16} /> Meu painel</button><div className="market-access-blocked"><Store size={28} /><p className="eyebrow">GiroMicro Market</p><h1>Acesso ao GiroMicro Market indisponível</h1><p>{access.status === 'suspended' ? 'Esta conta está suspensa. Entre em contato com o administrador.' : 'Esta conta do GiroMicro Market está cancelada.'}</p></div></section></main>
@@ -64,9 +95,9 @@ export function MarketDashboard({ header, accountId, onBack }: MarketDashboardPr
   if (showDuplicateProducts) return <main>{header}<section className="market-dashboard container"><MarketDuplicateProducts key={accountId} accountId={accountId} onBack={() => setShowDuplicateProducts(false)} /></section></main>
   if (showSalesImports && canAccessMarketSalesImports(access.role, salesIntegrationAvailable)) return <main>{header}<section className="market-dashboard container"><MarketSalesImports accountId={accountId} onBack={() => setShowSalesImports(false)} /></section></main>
   if (showCommercialDashboard) return <main>{header}<section className="market-dashboard container"><MarketCommercialDashboard accountId={accountId} accountName={access.name} role={access.role} onBack={() => setShowCommercialDashboard(false)} /></section></main>
-  if (showStockDashboard) return <main>{header}<section className="market-dashboard container"><MarketStockDashboard accountId={accountId} onBack={() => setShowStockDashboard(false)} /></section></main>
+  if (showStockDashboard) return <main>{header}<section className="market-dashboard container"><MarketStockDashboard userId={userId} accountId={accountId} onBack={() => setShowStockDashboard(false)} /></section></main>
   if (showPurchases && access.role !== 'operator') return <main>{header}<section className="market-dashboard container"><MarketPurchases accountId={accountId} warehouses={access.stores.filter((store) => store.store_type === 'warehouse' && store.status === 'active')} canImport={['owner', 'admin', 'manager'].includes(access.role)} onBack={() => setShowPurchases(false)} /></section></main>
-  if (showReplenishment) return <main>{header}<section className="market-dashboard container"><MarketReplenishment accountId={accountId} stores={access.stores} onBack={() => setShowReplenishment(false)} /></section></main>
+  if (showReplenishment) return <main>{header}<section className="market-dashboard container"><MarketReplenishment userId={userId} accountId={accountId} stores={access.stores} onBack={() => setShowReplenishment(false)} /></section></main>
   return <main>{header}<section className="market-dashboard container">
     <button className="button button-small button-outline" onClick={onBack}><ArrowLeft size={16} /> Meu painel</button>
     <header className="market-dashboard-header"><p className="eyebrow"><Store size={16} /> GiroMicro Market</p><h1>{access.name}</h1><p>Perfil: <strong>{roleLabels[access.role]}</strong></p></header>

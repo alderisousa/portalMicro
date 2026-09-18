@@ -20,7 +20,9 @@ import { Admin } from './pages/Admin'
 import { BusinessTemplateSelection } from './pages/BusinessTemplateSelection'
 import { Home } from './pages/Home'
 import { LegalPage } from './pages/LegalPage'
+import { readMarketPosition, clearMarketPosition, accessiblePositionAccount } from './utils/marketPosition'
 import { MarketDashboard } from './pages/MarketDashboard'
+import { createAppAccessRecorder } from './services/userAccess'
 import { listCurrentUserMarketAccounts } from './services/market'
 import { sendNotification } from './services/notifications'
 import type { Business, BusinessTemplateKey, ClientSummary } from './types/business'
@@ -264,6 +266,8 @@ function App() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [marketAccounts, setMarketAccounts] = useState<CurrentUserMarketAccess[]>([])
   const [marketAccountsLoading, setMarketAccountsLoading] = useState(false)
+  const positionRestoredUser = useRef('')
+  const [recordAppAccess] = useState(createAppAccessRecorder)
   const [selectedMarketAccountId, setSelectedMarketAccountId] = useState('')
   const [saveMessage, setSaveMessage] = useState('')
   const [savingBusiness, setSavingBusiness] = useState(false)
@@ -986,6 +990,7 @@ function App() {
 
       if (user) {
         applyAuthenticatedUser(user)
+        recordAppAccess('BOOTSTRAP', user.id)
       } else {
         applySignedOut()
       }
@@ -996,13 +1001,14 @@ function App() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
         if (!mounted) return
 
         const user = session?.user
 
         if (user) {
           applyAuthenticatedUser(user)
+          recordAppAccess(event, user.id)
         } else {
           applySignedOut()
         }
@@ -1047,7 +1053,20 @@ function App() {
     }
     setMarketAccountsLoading(true)
     void listCurrentUserMarketAccounts()
-      .then((accounts) => { if (active) setMarketAccounts(accounts) })
+      .then((accounts) => {
+        if (!active) return
+        setMarketAccounts(accounts)
+        if (positionRestoredUser.current === currentUserId) return
+        positionRestoredUser.current = currentUserId
+        const position = readMarketPosition(currentUserId)
+        if (!position) return
+        const account = accessiblePositionAccount(position, accounts)
+        if (!account) { clearMarketPosition(currentUserId); return }
+        if (!requestedSite && !getLegalRoute()) {
+          setSelectedMarketAccountId(account.id)
+          setView(current => ['home', 'login', 'dashboard'].includes(current) ? 'market' : current)
+        }
+      })
       .catch((error) => { if (active) { console.error('Falha ao carregar acessos Market:', error); setMarketAccounts([]) } })
       .finally(() => { if (active) setMarketAccountsLoading(false) })
     return () => { active = false }
@@ -1325,6 +1344,8 @@ function App() {
    * ============================================================
    */
   const logout = async () => {
+    clearMarketPosition(currentUserId)
+    positionRestoredUser.current = ''
     authGeneration.current += 1
     authenticatedUserId.current = ''
     loadedOwnedBusinessUserId.current = ''
@@ -1841,7 +1862,7 @@ function App() {
 
   if (normalizedView === 'market' && signedIn) {
     const access = marketAccounts.find((account) => account.id === selectedMarketAccountId)
-    if (access) return <MarketDashboard header={<Header requestedSite={requestedSite} signedIn={signedIn} isAdmin={isAdmin} accountName={accountName} accountEmail={accountEmail} accountAvatarUrl={accountAvatarUrl} menuOpen={menuOpen} setMenuOpen={setMenuOpen} start={start} logout={logout} goHome={goHome} setView={openInternalView} />} accountId={access.id} onBack={() => setView('dashboard')} />
+    if (access) return <MarketDashboard key={`${currentUserId}:${access.id}`} userId={currentUserId} header={<Header requestedSite={requestedSite} signedIn={signedIn} isAdmin={isAdmin} accountName={accountName} accountEmail={accountEmail} accountAvatarUrl={accountAvatarUrl} menuOpen={menuOpen} setMenuOpen={setMenuOpen} start={start} logout={logout} goHome={goHome} setView={openInternalView} />} accountId={access.id} onBack={() => setView('dashboard')} />
     return <main><Header requestedSite={requestedSite} signedIn={signedIn} isAdmin={isAdmin} accountName={accountName} accountEmail={accountEmail} accountAvatarUrl={accountAvatarUrl} menuOpen={menuOpen} setMenuOpen={setMenuOpen} start={start} logout={logout} goHome={goHome} setView={openInternalView} /><section className="dashboard container"><div className="admin-message is-error"><p>{marketAccountsLoading ? 'Validando seu acesso Market...' : 'Conta Market não encontrada ou acesso inativo.'}</p>{!marketAccountsLoading && <button className="button button-small" onClick={() => setView('dashboard')}>Voltar ao meu painel</button>}</div></section></main>
   }
 

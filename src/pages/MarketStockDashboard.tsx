@@ -11,6 +11,7 @@ import type {
   MarketInventorySessionSummary, MarketStockBalanceRow, MarketStockContext, MarketStockProduct,
 } from '../types/marketStock'
 import { BarcodeScanner } from '../components/BarcodeScanner'
+import { readMarketPosition, writeMarketPosition, validPositionStore, canResumeInventory } from '../utils/marketPosition'
 import { findAccesysIntegrationId, getMarketProductSyncStatus, synchronizeMarketProducts } from '../services/marketIntegration'
 import type { MarketProductSyncRun } from '../types/marketIntegration'
 import {
@@ -19,7 +20,7 @@ import {
   requiresDivergenceReason, runSerializedByKey, seedItemOrder, sortItemsByRecency,
 } from '../utils/marketStockBalance'
 
-interface Props { accountId: string; onBack: () => void }
+interface Props { accountId: string; userId?: string; onBack: () => void }
 // Estado de SESSAO (started_at, criacao, finalize/cancel) — nao mais o
 // array de itens, que tem sua propria concorrencia por produto (202609080005,
 // ver ItemSaveState/itemConflicts abaixo).
@@ -105,7 +106,10 @@ const isDraftUnavailable = (cause: unknown) => typeof cause === 'object' && caus
 const isDraftAlreadyActive = (cause: unknown) => typeof cause === 'object' && cause && 'message' in cause
   && String(cause.message).includes('INVENTORY_DRAFT_CONFLICT')
 
-export function MarketStockDashboard({ accountId, onBack }: Props) {
+export function MarketStockDashboard({ accountId, userId = '', onBack }: Props) {
+  const [savedPosition] = useState(() => readMarketPosition(userId, accountId)?.stock)
+  const restorePending = useRef(true)
+  const [positionReady, setPositionReady] = useState(false)
   const [context, setContext] = useState<MarketStockContext | null>(null)
   const [products, setProducts] = useState<MarketStockProduct[] | null>(null)
   const [storeId, setStoreId] = useState('')
@@ -220,7 +224,7 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     setLoading(true); setError('')
     try {
       const nextContext = await getMarketStockContext(accountId)
-      const nextStoreId = preferredStoreId && nextContext.access.stores.some((store) => store.id === preferredStoreId) ? preferredStoreId : nextContext.access.stores[0]?.id ?? ''
+      const nextStoreId = validPositionStore(preferredStoreId ?? '', nextContext.access.stores) || nextContext.access.stores.find(store => store.status === 'active')?.id || ''
       setContext(nextContext); setStoreId(nextStoreId); await applyStoreData(nextStoreId, nextContext)
       try {
         const integrationId = await findAccesysIntegrationId(accountId)
@@ -239,7 +243,7 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
     finally { setLoading(false) }
   }, [accountId])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { void load(savedPosition?.storeId) }, [load, savedPosition])
   useEffect(() => { if (counting && !confirming) window.setTimeout(() => searchRef.current?.focus(), 0) }, [counting, confirming])
 
   const selectedStore = context?.access.stores.find((store) => store.id === storeId) ?? null
@@ -539,6 +543,20 @@ export function MarketStockDashboard({ accountId, onBack }: Props) {
       setError('Não foi possível carregar o catálogo para continuar o inventário.')
     } finally { setSaving(false) }
   }
+
+  useEffect(() => {
+    if (loading || !context || !restorePending.current) return
+    restorePending.current = false
+    if (canResumeInventory(savedPosition, storeId, accountId, context.canStart, draft)) {
+      void resumeDraft().finally(() => setPositionReady(true))
+    } else setPositionReady(true)
+  }, [loading, context, draft, storeId, accountId, savedPosition])
+
+  useEffect(() => {
+    if (!positionReady || loading || !context) return
+    writeMarketPosition({ version: 1, userId, marketAccountId: accountId, module: 'stock',
+      stock: { storeId: validPositionStore(storeId, context.access.stores), counting } })
+  }, [positionReady, loading, context, userId, accountId, storeId, counting])
 
   const focusExistingItem = (productId: string) => {
     setHighlightedProductId(productId)

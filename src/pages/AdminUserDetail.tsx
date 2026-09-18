@@ -282,7 +282,7 @@ export function AdminUserDetail({ selectedUser, businesses, onBack, onEditBusine
         <dl>
           <div><dt>Provider</dt><dd>{providerLabel(user.provider)}</dd></div>
           <div><dt>Cadastro</dt><dd>{formatAdminDate(user.auth_created_at)}</dd></div>
-          <div><dt>Último acesso</dt><dd>{formatAdminDate(user.last_sign_in_at)}</dd></div>
+          <div><dt>Último acesso</dt><dd>{formatAdminDate(user.last_access_at, true)}</dd></div>
         </dl>
       </section>
 

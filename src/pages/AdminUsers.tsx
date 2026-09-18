@@ -8,12 +8,12 @@ interface AdminUsersProps {
   refreshToken?: number
 }
 
-export const formatAdminDate = (value: string | null) => {
+export const formatAdminDate = (value: string | null, includeTime = false) => {
   if (!value) return 'Não informado'
   const date = new Date(value)
   return Number.isNaN(date.getTime())
     ? 'Não informado'
-    : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(date)
+    : new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', ...(includeTime ? { timeStyle: 'short' as const } : {}) }).format(date)
 }
 
 export const providerLabel = (provider: string | null) => {
@@ -120,7 +120,7 @@ export function AdminUsers({ onSelectUser, refreshToken = 0 }: AdminUsersProps) 
               </span>
               <span className="admin-user-meta"><small>Provider</small>{providerLabel(user.provider)}</span>
               <span className="admin-user-meta"><small>Cadastro</small>{formatAdminDate(user.auth_created_at)}</span>
-              <span className="admin-user-meta"><small>Último acesso</small>{formatAdminDate(user.last_sign_in_at)}</span>
+              <span className="admin-user-meta"><small>Último acesso</small>{formatAdminDate(user.last_access_at, true)}</span>
               <span className="admin-user-counts">
                 <span><small>Páginas</small><strong>{user.business_count}</strong></span>
                 <span><small>Market</small><strong>{user.market_account_count}</strong></span>

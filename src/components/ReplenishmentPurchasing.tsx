@@ -4,7 +4,7 @@ import type { MarketReplenishmentOrderDetail, ReplenishmentPurchaseLine, Repleni
 import { purchaseWorkQueues } from '../utils/replenishmentPurchaseDisplay'
 import { ReplenishmentCycleAction } from './ReplenishmentCycleAction'
 
-interface Props { accountId: string; orderId: string; storeId: string; editable: boolean; orderDetail: MarketReplenishmentOrderDetail; onChanged?: () => Promise<void> }
+interface Props { accountId: string; orderId: string; storeId: string; editable: boolean; orderDetail: MarketReplenishmentOrderDetail; onChanged?: () => Promise<void>; initialView?: View; onViewChange?: (view: View) => void }
 type View = 'buy' | 'waiting' | 'supply'
 const format = (value: number) => new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 }).format(value)
 // Sentinela para "Sem sugestão" no filtro de fornecedor: nunca colide com um
@@ -21,10 +21,10 @@ function friendlyError(error: unknown) {
   return 'Não foi possível concluir a operação. Atualize e tente novamente.'
 }
 
-export function ReplenishmentPurchasing({ accountId, storeId, orderDetail, onChanged }: Props) {
+export function ReplenishmentPurchasing({ accountId, storeId, orderDetail, onChanged, initialView = 'buy', onViewChange }: Props) {
   const [lines, setLines] = useState<ReplenishmentPurchaseLine[]>([])
   const [supply, setSupply] = useState<ReplenishmentSupplyLine[]>([])
-  const [view, setView] = useState<View>('buy')
+  const [view, setView] = useState<View>(initialView)
   const [inputs, setInputs] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -119,7 +119,7 @@ export function ReplenishmentPurchasing({ accountId, storeId, orderDetail, onCha
     <h2>Lista de Compras / Reposição</h2>
     <p>Aquisição, entrada no Galpão e entrega na loja são acompanhadas automaticamente. O estoque aumenta somente no recebimento em Compras.</p>
     <div className="market-replenishment-order-actions">
-      {tabs.map(tab => <button key={tab.value} className="button button-small" aria-pressed={view === tab.value} onClick={() => setView(tab.value)}>{tab.label} ({loading ? '…' : tab.count})</button>)}
+      {tabs.map(tab => <button key={tab.value} className="button button-small" aria-pressed={view === tab.value} onClick={() => { setView(tab.value); onViewChange?.(tab.value) }}>{tab.label} ({loading ? '…' : tab.count})</button>)}
       <button className="button button-small button-outline" disabled={busy || loading} onClick={() => void reload().catch(error => setMessage(friendlyError(error)))}>Atualizar</button>
     </div>
     {message && <p role="status">{message}</p>}

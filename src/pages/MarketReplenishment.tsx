@@ -30,8 +30,9 @@ import type { MarketStockProduct } from '../types/marketStock'
 import { ReplenishmentPurchasing } from '../components/ReplenishmentPurchasing'
 import { ReplenishmentHistory } from '../components/ReplenishmentHistory'
 import { ReplenishmentCycleAction } from '../components/ReplenishmentCycleAction'
+import { readMarketPosition, writeMarketPosition, validPositionStore, type PurchasingView } from '../utils/marketPosition'
 
-interface Props { accountId: string; stores: MarketStore[]; onBack: () => void }
+interface Props { accountId: string; userId?: string; stores: MarketStore[]; onBack: () => void }
 
 const number = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 })
 const dailyAverage = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
@@ -163,7 +164,11 @@ function itemPriorityLabel(item: MarketReplenishmentOrderItem): string {
   return 'Baixo'
 }
 
-export function MarketReplenishment({ accountId, stores, onBack }: Props) {
+export function MarketReplenishment({ accountId, userId = '', stores, onBack }: Props) {
+  const [savedPosition] = useState(() => readMarketPosition(userId, accountId)?.replenishment)
+  const [positionReady, setPositionReady] = useState(false)
+  const [purchasingView, setPurchasingView] = useState<PurchasingView>(savedPosition?.view ?? 'buy')
+  const [purchasingViewOrderId, setPurchasingViewOrderId] = useState(savedPosition?.orderId ?? '')
   const [overview, setOverview] = useState<MarketReplenishmentOverview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -281,6 +286,31 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
     setConfirmCancelItem(null)
     setApproveConfirm(false)
   }
+
+  useEffect(() => {
+    let active = true
+    if (!savedPosition?.orderId) { setPositionReady(true); return }
+    setOrderLoading(true)
+    // Somente leitura: nunca chama generateMarketReplenishmentOrderDraft na retomada.
+    void getMarketReplenishmentOrder(accountId, savedPosition.orderId).then(result => {
+      if (!active) return
+      if (result?.order.id === savedPosition.orderId && result.order.marketAccountId === accountId
+        && !['cancelled', 'closed'].includes(result.order.status)) {
+        setOrderDetail(result)
+        const allowedStore = validPositionStore(savedPosition.storeId, stores)
+        setSelectedStoreId(result.items.some(item => item.status !== 'cancelled' && item.allocations.some(allocation =>
+          allocation.storeId === allowedStore && allocation.status !== 'cancelled' && allocation.priorityLevel !== 'low')) ? allowedStore : '')
+      } else setPurchasingView('buy')
+    }).catch(() => { if (active) setPurchasingView('buy') })
+      .finally(() => { if (active) { setOrderLoading(false); setPositionReady(true) } })
+    return () => { active = false }
+  }, [accountId, savedPosition, stores])
+
+  useEffect(() => {
+    if (!positionReady || loading) return
+    writeMarketPosition({ version: 1, userId, marketAccountId: accountId, module: 'replenishment',
+      replenishment: { orderId: orderDetail?.order.id ?? '', storeId: validPositionStore(contextStoreId, stores), view: purchasingViewOrderId === orderDetail?.order.id ? purchasingView : 'buy' } })
+  }, [positionReady, loading, userId, accountId, orderDetail?.order.id, contextStoreId, stores, purchasingView, purchasingViewOrderId])
 
   async function openPurchaseList(): Promise<void> {
     if (!await flushAllocationReviews()) return
@@ -578,7 +608,7 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
     }
   }
 
-  if (loading) return <div className="admin-message" role="status"><RefreshCw size={20} /> Carregando Abastecimento...</div>
+  if (loading || !positionReady) return <div className="admin-message" role="status"><RefreshCw size={20} /> Carregando Abastecimento...</div>
   if (error) return <div className="admin-message is-error" role="alert"><p>{error}</p><button className="button button-small button-outline" onClick={() => void leaveReplenishment()}>Voltar</button></div>
 
   return <div className="market-replenishment-dashboard">
@@ -648,7 +678,7 @@ export function MarketReplenishment({ accountId, stores, onBack }: Props) {
           }} /></div>}
         </div>
       </aside>}
-      {orderDetail && ['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <ReplenishmentPurchasing key={`${accountId}:${orderDetail.order.id}`} accountId={accountId} orderId={orderDetail.order.id} orderDetail={orderDetail} storeId={contextStoreId} editable={orderDetail.order.status !== 'completed'} onChanged={() => reloadOrder(orderDetail.order.id)} />}
+      {orderDetail && ['approved', 'in_progress', 'completed'].includes(orderDetail.order.status) && <ReplenishmentPurchasing key={`${accountId}:${orderDetail.order.id}`} accountId={accountId} orderId={orderDetail.order.id} orderDetail={orderDetail} storeId={contextStoreId} editable={orderDetail.order.status !== 'completed'} initialView={purchasingViewOrderId === orderDetail.order.id ? purchasingView : 'buy'} onViewChange={view => { setPurchasingViewOrderId(orderDetail.order.id); setPurchasingView(view) }} onChanged={() => reloadOrder(orderDetail.order.id)} />}
       {orderDetail && showReviewPanel && <section className="market-replenishment-order-panel">
         <div className="market-replenishment-order-heading">
           <div>
