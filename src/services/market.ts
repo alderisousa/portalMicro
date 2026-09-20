@@ -15,6 +15,19 @@ const throwIfError = (error: unknown) => {
   if (error) throw error
 }
 
+export async function getMarketAccountDeletionEligibility(accountId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('admin_market_account_can_delete', { p_market_account_id: accountId })
+  throwIfError(error)
+  return data === true
+}
+
+export async function deleteEmptyMarketAccount(accountId: string, confirmationName: string): Promise<void> {
+  const { error } = await supabase.rpc('admin_delete_empty_market_account', {
+    p_market_account_id: accountId, p_confirmation_name: confirmationName,
+  })
+  throwIfError(error)
+}
+
 export async function listMarketStores(accountId: string): Promise<MarketStore[]> {
   const { data, error } = await supabase
     .from('market_stores')

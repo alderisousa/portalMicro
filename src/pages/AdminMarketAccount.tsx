@@ -5,7 +5,7 @@ import { addMarketMember, createMarketStore, getMarketAccount, listMarketMembers
 import type { AdminAuthenticatedUser } from '../types/adminUsers'
 import type { MarketAccount, MarketAccountMember, MarketAccountStatus, MarketMemberRole, MarketMemberStatus, MarketPlanCode, MarketStore, MarketStoreInput, MarketStoreStatus, MarketStoreType } from '../types/market'
 import { AdminMarketIntegration } from './AdminMarketIntegration'
-import { updateMarketAccountName } from '../services/market'
+import { deleteEmptyMarketAccount, getMarketAccountDeletionEligibility, updateMarketAccountName } from '../services/market'
 
 interface AdminMarketAccountProps { accountId: string; onBack: () => void }
 type Feedback = { type: 'success' | 'error'; message: string }
@@ -36,6 +36,37 @@ export function AdminMarketAccount({ accountId, onBack }: AdminMarketAccountProp
   const [editingMemberId, setEditingMemberId] = useState('')
   const [memberForm, setMemberForm] = useState<MemberForm>(emptyMember)
   const [userSearch, setUserSearch] = useState('')
+  const [showDisabled, setShowDisabled] = useState(false)
+  const [canDelete, setCanDelete] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleteName, setDeleteName] = useState('')
+  const visibleMembers = members.filter((member) => showDisabled || member.status !== 'disabled')
+
+  useEffect(() => { setShowDisabled(false); setCanDelete(false); setConfirmDelete(false); setDeleteName('') }, [accountId])
+  useEffect(() => {
+    let active = true
+    setCanDelete(false)
+    void getMarketAccountDeletionEligibility(accountId)
+      .then((eligible) => { if (active) setCanDelete(eligible) })
+      .catch(() => { if (active) setCanDelete(false) })
+    return () => { active = false }
+  }, [accountId, stores, members])
+
+  const removeAccount = async (event: FormEvent) => {
+    event.preventDefault()
+    if (savingAction || !account || account.id !== accountId || deleteName !== account.name) return
+    setSavingAction('delete'); setFeedback(null)
+    try {
+      await deleteEmptyMarketAccount(accountId, deleteName)
+      onBack()
+    } catch (error) {
+      setConfirmDelete(false); setCanDelete(false)
+      const message = typeof error === 'object' && error && 'message' in error ? String(error.message) : ''
+      setFeedback({ type: 'error', message: message.includes('MARKET_NOT_EMPTY')
+        ? 'Este Market possui dados operacionais, catálogo ou histórico e não pode ser excluído. Nenhum dado foi apagado.'
+        : 'Não foi possível excluir o Market. Nenhum dado foi apagado. Atualize a página e tente novamente.' })
+    } finally { setSavingAction('') }
+  }
 
   const loadData = useCallback(async () => {
     setLoading(true); setErrorMessage('')
@@ -111,7 +142,13 @@ export function AdminMarketAccount({ accountId, onBack }: AdminMarketAccountProp
     setSavingAction('store'); setFeedback(null)
     const input = { ...storeForm, name: storeForm.name.trim(), external_code: storeForm.external_code?.trim() || null, description: storeForm.description?.trim() || null }
     try { if (editingStore === 'new') await createMarketStore(accountId, input); else if (editingStore) await updateMarketStore(accountId, editingStore.id, input); setEditingStore(null); setStores(await listMarketStores(accountId)); setFeedback({ type: 'success', message: editingStore === 'new' ? 'Local criado com sucesso.' : 'Local atualizado com sucesso.' }) }
-    catch (error) { console.error('Falha ao salvar local de estoque:', error); setFeedback({ type: 'error', message: 'Não foi possível salvar o local de estoque.' }) }
+    catch (error) {
+      console.error('Falha ao salvar local de estoque:', error)
+      const mappingConflict = typeof error === 'object' && error && 'message' in error && String(error.message).includes('STORE_MAPPING_CONFLICT')
+      setFeedback({ type: 'error', message: mappingConflict
+        ? 'Este código Accesys já está vinculado a outra loja ou ao seu histórico. Revise o código externo. Nenhuma alteração foi salva.'
+        : 'Não foi possível salvar o local de estoque.' })
+    }
     finally { setSavingAction('') }
   }
 
@@ -129,8 +166,11 @@ export function AdminMarketAccount({ accountId, onBack }: AdminMarketAccountProp
     <AdminMarketIntegration marketAccountId={accountId} />
     <section className="admin-market-block"><div className="admin-list-heading"><div><span className="panel-kicker">ACESSOS</span><h2>Usuários da conta</h2></div><button className="button button-small" onClick={openNewMember}><UserPlus size={15} /> Vincular usuário</button></div>
       {showMemberForm && <div className="confirm-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && savingAction !== 'member') setShowMemberForm(false) }}><form className="confirm-dialog admin-member-access-dialog" role="dialog" aria-modal="true" aria-labelledby="member-access-title" onSubmit={saveMember}><header><h2 id="member-access-title">{editingMemberId ? 'Editar acesso' : 'Vincular usuário existente'}</h2>{editingMember && <p>{editingMember.full_name?.trim() || 'Usuário'} · {editingMember.email || 'E-mail não informado'}</p>}</header>{!editingMemberId && <><label>Buscar usuário<input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="Nome ou e-mail" /></label><label className="admin-form-wide">Usuário<select required value={memberForm.userId} onChange={(event) => setMemberForm((current) => ({ ...current, userId: event.target.value }))}><option value="">Selecione</option>{availableUsers.map((user) => <option key={user.user_id} value={user.user_id}>{user.full_name?.trim() || 'Usuário'} — {user.email}</option>)}</select></label></>}<div className="admin-form-row"><label>Perfil<select value={memberForm.role} onChange={(event) => setMemberForm((current) => ({ ...current, role: event.target.value as MemberForm['role'] }))}><option value="admin">Administrador</option><option value="manager">Gerente</option><option value="operator">Operador</option><option value="viewer">Visualizador</option></select></label>{editingMemberId && <label>Status<select value={memberForm.status} onChange={(event) => setMemberForm((current) => ({ ...current, status: event.target.value as MemberForm['status'] }))}><option value="active">Ativo</option><option value="disabled">Desabilitado</option></select></label>}</div><fieldset className="admin-store-access"><legend>Acesso aos locais de estoque</legend><p>Escolha quais lojas e galpões este usuário poderá visualizar e operar.</p><label><input type="checkbox" checked={memberForm.allStores} onChange={(event) => setMemberForm((current) => ({ ...current, allStores: event.target.checked, storeIds: event.target.checked ? [] : current.storeIds }))} /> Todos os locais desta conta</label>{!memberForm.allStores && stores.map((store) => <label key={store.id}><input type="checkbox" checked={memberForm.storeIds.includes(store.id)} onChange={() => toggleStore(store.id)} /> {store.name} ({store.store_type === 'warehouse' ? 'Galpão' : 'Loja'}){store.external_code ? ` — ${store.external_code}` : ''}</label>)}</fieldset><p className="admin-form-note">Esta configuração altera somente o acesso do membro. O status global dos locais não será modificado.</p><div className="confirm-dialog-actions"><button type="button" className="button button-outline" onClick={() => setShowMemberForm(false)} disabled={savingAction === 'member'}>Cancelar</button><button className="button" disabled={savingAction === 'member'}>{savingAction === 'member' ? 'Salvando...' : editingMemberId ? 'Salvar alterações' : 'Vincular usuário'}</button></div></form></div>}
-      <div className="admin-market-member-list">{members.map((member) => <article key={member.id}><div><strong>{member.full_name?.trim() || member.email || 'Usuário'}</strong><span>{member.email || 'E-mail não informado'}</span></div><dl><div><dt>Perfil</dt><dd>{roleLabels[member.role]}</dd></div><div><dt>Status</dt><dd>{member.status === 'active' ? 'Ativo' : member.status === 'invited' ? 'Convidado' : 'Desabilitado'}</dd></div><div><dt>Acesso</dt><dd>{member.all_stores ? 'Todos os locais' : (member.store_ids ?? []).map((id) => stores.find((store) => store.id === id)?.name).filter(Boolean).join(', ') || 'Nenhum local'}</dd></div></dl>{member.role === 'owner' ? <span className="admin-status published">Proprietário</span> : <button className="button button-small button-outline" onClick={() => openMemberEdit(member)}>Editar acesso</button>}</article>)}</div>
+      {members.some((member) => member.status === 'disabled') && <label className="admin-form-note"><input type="checkbox" checked={showDisabled} onChange={(event) => setShowDisabled(event.target.checked)} /> Mostrar desativados</label>}
+      <div className="admin-market-member-list">{visibleMembers.map((member) => <article key={member.id}><div><strong>{member.full_name?.trim() || member.email || 'Usuário'}</strong><span>{member.email || 'E-mail não informado'}</span></div><dl><div><dt>Perfil</dt><dd>{roleLabels[member.role]}</dd></div><div><dt>Status</dt><dd>{member.status === 'active' ? 'Ativo' : member.status === 'invited' ? 'Convidado' : 'Desabilitado'}</dd></div><div><dt>Acesso</dt><dd>{member.all_stores ? 'Todos os locais' : (member.store_ids ?? []).map((id) => stores.find((store) => store.id === id)?.name).filter(Boolean).join(', ') || 'Nenhum local'}</dd></div></dl>{member.role === 'owner' ? <span className="admin-status published">Proprietário</span> : <button className="button button-small button-outline" onClick={() => openMemberEdit(member)}>Editar acesso</button>}</article>)}</div>
     </section>
     <section className="admin-market-block"><div className="admin-list-heading"><div><span className="panel-kicker">UNIDADES</span><h2>Locais de estoque</h2></div><button className="button button-small" onClick={() => { setEditingStore('new'); setStoreForm(emptyStore) }}><Plus size={15} /> Novo local</button></div>{editingStore && <form className="admin-inline-form" onSubmit={saveStore}><h3>{editingStore === 'new' ? 'Novo local' : 'Editar local'}</h3><div className="admin-form-row"><label>Nome<input required value={storeForm.name} onChange={(event) => setStoreForm((current) => ({ ...current, name: event.target.value }))} /></label><label>Tipo<select value={storeForm.store_type} onChange={(event) => setStoreForm((current) => ({ ...current, store_type: event.target.value as MarketStoreType }))}><option value="store">Loja</option><option value="warehouse">Galpão</option></select></label><label>Código externo<input value={storeForm.external_code ?? ''} onChange={(event) => setStoreForm((current) => ({ ...current, external_code: event.target.value }))} /></label></div><label className="admin-form-wide">Descrição<textarea value={storeForm.description ?? ''} onChange={(event) => setStoreForm((current) => ({ ...current, description: event.target.value }))} /></label><label>Status<select value={storeForm.status} onChange={(event) => setStoreForm((current) => ({ ...current, status: event.target.value as MarketStoreStatus }))}><option value="active">Ativo</option><option value="inactive">Inativo</option></select></label><div className="admin-form-actions"><button type="button" className="button button-small button-outline" onClick={() => setEditingStore(null)}>Cancelar</button><button className="button button-small" disabled={savingAction === 'store'}>{savingAction === 'store' ? 'Salvando...' : 'Salvar local'}</button></div></form>}{!stores.length ? <div className="admin-message">Nenhum local de estoque cadastrado nesta conta.</div> : <div className="admin-store-list">{stores.map((store) => <article key={store.id}><div><strong>{store.name}</strong><span>{store.store_type === 'warehouse' ? 'Galpão' : 'Loja'} · Código: {store.external_code || 'não informado'}</span>{store.description && <p>{store.description}</p>}</div><span className={`admin-status ${store.status === 'active' ? 'published' : 'paused'}`}>{store.status === 'active' ? 'Ativo' : 'Inativo'}</span><button className="button button-small button-outline" onClick={() => { setEditingStore(store); setStoreForm({ name: store.name, external_code: store.external_code, description: store.description, store_type: store.store_type, status: store.status }) }}><Pencil size={15} /> Editar</button></article>)}</div>}</section>
+    {canDelete && <section className="admin-market-block"><button className="button button-small button-outline" disabled={Boolean(savingAction)} onClick={() => { setDeleteName(''); setConfirmDelete(true) }}>Excluir Market</button><p className="admin-form-note">Disponível somente para contas sem dados operacionais, catálogo ou histórico.</p></section>}
+    {confirmDelete && <div className="confirm-dialog-backdrop"><form className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-market-title" onSubmit={removeAccount}><h2 id="delete-market-title">Excluir Market permanentemente?</h2><p>A conta {account.name}, seus vínculos de membros, locais e configurações serão removidos permanentemente. Esta ação não pode ser desfeita. Os usuários continuarão cadastrados no portal.</p><label>Digite o nome do Market para confirmar<input autoFocus value={deleteName} onChange={(event) => setDeleteName(event.target.value)} disabled={Boolean(savingAction)} /></label><div className="confirm-dialog-actions"><button type="button" className="button button-outline" disabled={Boolean(savingAction)} onClick={() => setConfirmDelete(false)}>Cancelar</button><button className="button" disabled={Boolean(savingAction) || deleteName !== account.name}>{savingAction === 'delete' ? 'Excluindo...' : 'Excluir permanentemente'}</button></div></form></div>}
   </div>
 }

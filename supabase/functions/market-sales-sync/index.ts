@@ -78,7 +78,7 @@ class SupabaseSalesSyncRepository implements SalesSyncRepository {
   async getStoreMappings(marketAccountId: string, integrationId: string) {
     const { data, error } = await this.serviceClient.from('market_store_external_refs')
       .select('id,external_store_id').eq('market_account_id', marketAccountId)
-      .eq('integration_id', integrationId)
+      .eq('integration_id', integrationId).eq('is_active', true)
     if (error) throw new Error('Store mappings lookup failed')
     return (data ?? []) as Array<{ id: string; external_store_id: string }>
   }
