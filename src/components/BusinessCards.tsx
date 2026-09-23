@@ -10,7 +10,7 @@ export function BusinessCards({ clients }: BusinessCardsProps) {
     <section className="client-list container" id="negocios" aria-labelledby="businesses-title">
       <div className="section-heading">
         <p className="eyebrow">Negócios da região</p>
-        <h2 id="businesses-title">Visite nossos clientes</h2>
+        <h2 id="businesses-title">Visite páginas criadas no GiroMicro</h2>
         <p className="section-support">
           Conheça negócios, profissionais e serviços da sua região.
         </p>

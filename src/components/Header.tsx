@@ -122,7 +122,6 @@ export function Header({
             <button className="nav-link" onClick={() => goToSection('como-funciona')}>Como funciona</button>
             {!signedIn && (
               <>
-                <button className="nav-link" onClick={() => goToSection('planos')}>Planos</button>
                 <button className="button button-small" onClick={openCreationFlow}>Comece hoje</button>
               </>
             )}
