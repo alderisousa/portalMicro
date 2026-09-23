@@ -120,6 +120,7 @@ export function Header({
           <div className="main-navigation">
             <button className="nav-link" onClick={() => goToSection('negocios')}>Negócios</button>
             <button className="nav-link" onClick={() => goToSection('como-funciona')}>Como funciona</button>
+            <button className="nav-link" onClick={() => goToSection('contato')}>Fale conosco</button>
             {!signedIn && (
               <>
                 <button className="button button-small" onClick={openCreationFlow}>Comece hoje</button>

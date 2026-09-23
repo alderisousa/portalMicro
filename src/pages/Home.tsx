@@ -208,6 +208,17 @@ export function Home({
         </section>
       )}
 
+      <section className="home-contact container" id="contato" aria-labelledby="home-contact-title">
+        <div>
+          <p className="home-contact-intro">Ficou com alguma dúvida?</p>
+          <h2 id="home-contact-title">Fale com a gente.</h2>
+          <p>Para dúvidas, suporte ou informações sobre o GiroMicro, entre em contato com a S.O.S Sistemas T.I.</p>
+        </div>
+        <a className="button button-outline" href="/negocio/s-o-s-sistemas-t-i">
+          Fale conosco <ArrowRight size={16} aria-hidden="true" />
+        </a>
+      </section>
+
       <Footer onBrandClick={onBrandClick} />
     </main>
   )

@@ -226,6 +226,24 @@ em { color: var(--coral); font-family: 'Fraunces', serif; font-style: normal; fo
   .home-hero .hero-actions .button { padding-inline: 12px; font-size: 14px; }
   .home-hero .hero-actions .text-link { justify-content: center; }
 }
+.home-contact { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 28px 0 36px; scroll-margin-top: 24px; }
+.home-contact > div { max-width: 660px; }
+.home-contact .home-contact-intro { margin: 0 0 8px; color: var(--green); font-size: 13px; font-weight: 500; }
+.home-contact h2 { font-size: 28px; line-height: 1.2; letter-spacing: -.6px; }
+.home-contact p { margin: 12px 0 0; color: var(--muted); font-size: 14px; line-height: 1.65; }
+.home-contact .button { flex-shrink: 0; min-height: 44px; }
+.home-contact .button:focus-visible { outline: 2px solid var(--green); outline-offset: 4px; }
+@media (max-width: 800px) {
+  .hero.home-hero { gap: 24px; padding-block: 24px; margin-bottom: 24px; }
+  .home-hero .hero-text { margin-block: 18px 22px; }
+  .home-hero-benefits { margin-top: 20px; padding-top: 18px; }
+  .home-hero-phone { zoom: .84; }
+  .home-page > .client-list { padding-bottom: 20px; }
+  .home-page > .home-how-it-works { padding-top: 24px; }
+  .home-how-it-works .journey-illustration { height: 136px; padding-block: 8px; }
+  .home-how-it-works .journey-illustration > div { transform: scale(.85); }
+  .home-contact { align-items: flex-start; flex-direction: column; gap: 18px; padding-block: 24px 32px; }
+}
 .text-link { display: inline-flex; align-items: center; gap: 8px; color: var(--green); font-size: 14px; font-weight: 700; }
 .panel-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .panel-actions.single-action { grid-template-columns: minmax(0, 1fr); }
