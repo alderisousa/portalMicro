@@ -33,7 +33,7 @@
     <title>GiroMicro | Seu negócio em movimento</title>
 
     <script>
-      if (new URLSearchParams(window.location.search).has('site')) {
+      if (new URLSearchParams(window.location.search).has('site') && !/^\/negocio\/[^/]+\/?$/.test(window.location.pathname)) {
         document.querySelector('link[rel="canonical"]')?.remove()
         document.querySelector('meta[name="robots"]')?.setAttribute('content', 'noindex, follow')
       }

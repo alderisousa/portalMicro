@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "api/negocio/*.js": {
+      "includeFiles": "dist/index.html"
+    }
+  },
   "rewrites": [
     {
       "source": "/sitemap.xml",
@@ -6,7 +11,7 @@
     },
     {
       "source": "/negocio/:slug",
-      "destination": "/index.html"
+      "destination": "/api/negocio/:slug"
     }
   ]
 }

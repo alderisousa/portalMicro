@@ -16,6 +16,7 @@ import { Header } from './components/Header'
 import { WizardQuestion } from './components/WizardQuestion'
 import { stepNames } from './constants/portal'
 import { supabase } from './lib/supabase'
+import { createBusinessSeo, createCanonicalBusinessUrl } from './utils/publicBusinessSeo.js'
 import { Admin } from './pages/Admin'
 import { BusinessTemplateSelection } from './pages/BusinessTemplateSelection'
 import { Home } from './pages/Home'
@@ -50,7 +51,6 @@ const getLegalRoute = (): 'privacidade' | 'termos' | null => {
 }
 const homeSeoDescription = 'Crie sua presença digital de forma simples com o GiroMicro e tenha um espaço profissional para divulgar seu negócio, serviços e trabalho.'
 const homeCanonicalUrl = 'https://www.giromicro.com.br/'
-const publicBusinessBaseUrl = 'https://www.giromicro.com.br/negocio/'
 const locationRequiredMessage = 'Informe os dados de localização do seu negócio para continuar.'
 
 const getPublicBusinessSlug = () => {
@@ -81,26 +81,12 @@ const createPublicBusinessPath = (slug: string) =>
 const createPublicBusinessUrl = (slug: string) =>
   `${window.location.origin}${createPublicBusinessPath(slug)}`
 
-const createCanonicalBusinessUrl = (slug: string) =>
-  `${publicBusinessBaseUrl}${encodeURIComponent(slug)}`
-
 const hasRequiredLocation = (business: Business) =>
   business.cep.replace(/\D/g, '').length === 8
   && Boolean(business.street.trim())
   && Boolean(business.neighborhood.trim())
   && Boolean(business.city.trim())
   && Boolean(business.number.trim())
-
-const createSeoDescription = (business: Business) => {
-  const source = business.story.trim()
-    || (business.area.trim()
-      ? `${business.name} é um negócio de ${business.area}. Conheça seus serviços e formas de contato no GiroMicro.`
-      : `Conheça ${business.name} e suas formas de contato no GiroMicro.`)
-  const normalized = source.replace(/\s+/g, ' ').trim()
-
-  if (normalized.length <= 160) return normalized
-  return `${normalized.slice(0, 157).trimEnd()}...`
-}
 
 const emptyBusiness: Business = {
   area: '',
@@ -330,10 +316,13 @@ function App() {
     const existingCanonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]')
 
     if (requestedSite) {
+      // Preserve the server metadata while the public data is loading.
+      if (publicPageStatus === 'loading') return
       const isReady = publicPageStatus === 'ready' && Boolean(business.name.trim())
-      const title = isReady ? `${business.name.trim()} | GiroMicro` : 'Página não encontrada | GiroMicro'
+      const seo = createBusinessSeo({ name: business.name, category: business.area, story: business.story })
+      const title = isReady ? seo.title : 'Página não encontrada | GiroMicro'
       const description = isReady
-        ? createSeoDescription(business)
+        ? seo.description
         : 'Este negócio não está disponível ou o endereço pode ter sido alterado.'
       const canonicalUrl = createCanonicalBusinessUrl(requestedSite)
       const socialImage = isReady
