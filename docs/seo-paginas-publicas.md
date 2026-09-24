@@ -3,6 +3,11 @@
 `/negocio/:slug` é reescrita para `api/negocio/[slug].js`. A função lê
 `dist/index.html`, incluído no pacote pela configuração `includeFiles` da
 Vercel, e substitui apenas title, description, robots, canonical e tags sociais.
+O script `vercel-build` chama `npm run build` também no builder Node das funções
+`api/`, antes do rastreamento e de `includeFiles`. Isso garante a geração de
+`dist/index.html` no ambiente que empacota a função; o build estático separado
+não garante que esse arquivo já exista nessa etapa. O caminho de leitura e
+o `includeFiles` continuam sendo `dist/index.html`.
 Os assets compilados e o body da SPA permanecem iguais. Não há SSR do conteúdo
 visual nem lista de slugs gerada no build: cada requisição consulta o cadastro,
 incluindo negócios publicados no futuro.
@@ -26,6 +31,10 @@ com o body da SPA preservado para a tela existente. Falhas de consulta retornam
 A consulta tem limite de 10 segundos. Falhas ao buscar a foto opcional podem
 resultar em metadata sem imagem. URLs de imagem usam o bucket público existente;
 não há verificação adicional da existência física do arquivo em cada acesso.
+O catch registra `[public-business-seo]` com a etapa e códigos técnicos
+permitidos (por exemplo, `read-template` / `ENOENT`). Na criação do cliente,
+registra somente se as duas variáveis públicas estão presentes. Não registra
+o erro bruto, mensagens, stack, URLs, valores de variáveis ou dados do cadastro.
 
 ## Validação local
 
@@ -55,6 +64,13 @@ Open Graph e Twitter receberam o mesmo título/descrição e a URL pública do l
 
 `vite dev` e `vite preview` sozinhos não executam funções Vercel. O teste local
 da função não valida o empacotamento/roteamento na infraestrutura Vercel.
+Na revisão do 503, o builder oficial `@vercel/node@14.0.0` foi executado
+localmente: `NodejsLambda.files` incluiu `dist/index.html` (2.527 bytes),
+idêntico ao HTML produzido pelo Vite. A função copiada com os arquivos desse
+bundle para um runtime isolado retornou HTTP 200 com dados públicos simulados.
+O 503 sem chamadas externas é compatível com HTML ausente, mas também com
+configuração pública ausente; sem o erro original do Preview, não é possível
+atribuir definitivamente o incidente a apenas uma dessas causas.
 Após aprovação, conferir isso em preview com o build da Vercel, verificando
 também os assets no navegador. Nenhum deploy foi realizado nesta implementação.
 A mudança acrescenta uma consulta pública por acesso (duas sem logo); o conteúdo

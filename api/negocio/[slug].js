@@ -59,6 +59,7 @@ export default async function handler(request, response) {
   let business = null
   let image = ''
   let status = 404
+  let stage = 'read-template'
   try {
     template = await readFile(join(process.cwd(), 'dist', 'index.html'), 'utf8')
     const pathname = new URL(request.url, 'https://www.giromicro.com.br').pathname
@@ -67,6 +68,7 @@ export default async function handler(request, response) {
       try { slug = decodeURIComponent(match[1]).trim() } catch { /* Invalid slug stays unavailable. */ }
     }
     if (slug) {
+      stage = 'create-public-client'
       // Same public credentials and visibility filters as api/sitemap.js and loadPublicBusiness.
       const supabase = createClient(
         process.env.VITE_SUPABASE_URL,
@@ -74,6 +76,7 @@ export default async function handler(request, response) {
         { auth: { persistSession: false, autoRefreshToken: false } },
       )
       const signal = AbortSignal.timeout(10000)
+      stage = 'load-business'
       const { data, error } = await supabase.from('businesses')
         .select('id, name, category, story, logo_path')
         .eq('slug', slug)
@@ -88,6 +91,7 @@ export default async function handler(request, response) {
         status = 200
         image = publicImageUrl(supabase, data.logo_path)
         if (!image) {
+          stage = 'load-image'
           const { data: items } = await supabase.from('business_items')
             .select('image_path')
             .eq('business_id', data.id)
@@ -98,7 +102,18 @@ export default async function handler(request, response) {
         }
       }
     }
-  } catch {
+  } catch (error) {
+    // Log only controlled diagnostics: raw errors may contain URLs, credentials or row data.
+    const safeCodes = ['ENOENT', 'EACCES', 'ENOTDIR', 'EISDIR', 'ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND']
+    console.error('[public-business-seo]', {
+      stage,
+      code: safeCodes.includes(error?.code) ? error.code : 'UNEXPECTED_ERROR',
+      ...(stage === 'read-template' ? { file: 'dist/index.html' } : {}),
+      ...(stage === 'create-public-client' ? {
+        hasSupabaseUrl: Boolean(process.env.VITE_SUPABASE_URL),
+        hasPublicKey: Boolean(process.env.VITE_SUPABASE_PUBLISHABLE_KEY),
+      } : {}),
+    })
     // An upstream/build failure is retryable, never an indexable Home or a cached 404.
     business = null
     image = ''
